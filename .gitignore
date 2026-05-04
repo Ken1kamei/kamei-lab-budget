@@ -1,0 +1,9 @@
+.worktrees/
+streamlit_app/.streamlit/secrets.toml
+streamlit_app/.venv/
+__pycache__/
+*.pyc
+.superpowers/
+node_modules/
+*.egg-info/
+.DS_Store
