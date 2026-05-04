@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(clasp --version)",
+      "Bash(clasp status *)",
+      "Bash(clasp push *)",
+      "Bash(clasp run *)",
+      "Bash(clasp deploy *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e \"require\\('googleapis'\\)\")",
+      "Bash(node -e \"require\\('@googleapis/sheets'\\)\")",
+      "Bash(npm install *)",
+      "Bash(node scripts/init-sheets.js)",
+      "Bash(clasp whoami *)",
+      "Bash(sed -i '' 's/\\\\.getTransactions\\(f\\)/\\\\.getTransactionsServer\\(f\\)/g; s/\\\\.getMonthlySpending\\(fy\\)/\\\\.getMonthlySpendingServer\\(fy\\)/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/index.html')",
+      "Bash(sed -i '' 's/\\\\.getTransactions\\({}\\)/\\\\.getTransactionsServer\\({}\\)/g; s/\\\\.updateTransaction\\(/\\\\.updateTransactionServer\\(/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/transactions.html')",
+      "Bash(sed -i '' 's/\\\\.getBudgetSummary\\(\\)/\\\\.getBudgetSummaryServer\\(\\)/g; s/\\\\.addTransaction\\(/\\\\.addTransactionServer\\(/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/expense-form.html')",
+      "Bash(sed -i '' 's/\\\\.uploadAndParsePDF\\(/\\\\.uploadAndParsePDFServer\\(/g; s/\\\\.addTransaction\\(/\\\\.addTransactionServer\\(/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/import.html')",
+      "Bash(sed -i '' 's/\\\\.generateReport\\(/\\\\.generateReportServer\\(/g; s/\\\\.exportReportToDoc\\(/\\\\.exportReportToDocServer\\(/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/reports.html')",
+      "Bash(sed -i '' 's/\\\\.getTransactions\\({}\\)/\\\\.getTransactionsServer\\({}\\)/g; s/\\\\.getMonthlySpending\\(null\\)/\\\\.getMonthlySpendingServer\\(null\\)/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/index.html')",
+      "Bash(sed -i '' 's/\\\\.getConfig\\(/\\\\.getConfigServer\\(/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/settings.html')",
+      "Bash(sed -i '' 's/\\\\.setConfig\\(/\\\\.setConfigServer\\(/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/settings.html')",
+      "Bash(sed -i '' 's/\\\\.getRegisteredUsers\\(\\)/\\\\.getRegisteredUsersServer\\(\\)/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/settings.html')",
+      "Bash(sed -i '' 's/\\\\.updateBudgetAllocation\\(/\\\\.updateBudgetAllocationServer\\(/g' '/Users/kkamei/Library/CloudStorage/Dropbox/Shared Folder NYUAD/Budget/gas/html/settings.html')",
+      "Bash(python3)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -m venv /tmp/xlenv)",
+      "Bash(/tmp/xlenv/bin/pip install *)",
+      "Bash(/tmp/xlenv/bin/python3)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python3 scripts/parse_invoice.py \"/Users/kkamei/Downloads/ADH_COST_ACCT_CRS_CHRG_ERB_DTL_9231008_20260502.xlsx\" --dry-run)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
