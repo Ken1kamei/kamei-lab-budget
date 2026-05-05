@@ -19,6 +19,15 @@ TXN_COLUMNS = [
     "Entry Method", "Notes", "Last Modified", "Team",
 ]
 
+SUMMARY_COLS = [
+    "Category",
+    "Budgeted (AED)", "Budgeted (USD)", "Budgeted (AED equiv)",
+    "Spent (AED)", "Spent (USD)", "Spent (AED equiv)",
+    "Remaining (AED equiv)", "% Used", "Visual",
+]
+
+_SUMMARY_CATEGORIES = {"Equipment", "Personnel", "Travel", "Other", "TOTAL"}
+
 @st.cache_resource
 def _get_client():
     creds = Credentials.from_service_account_info(
@@ -62,13 +71,13 @@ def get_teams() -> pd.DataFrame:
 
 def get_summary() -> pd.DataFrame:
     values = _ws("Summary").get_all_values()
-    if len(values) < 2:
-        return pd.DataFrame()
-    headers = values[1]   # row 2 in the sheet is the real header row
-    data = values[2:]
-    if not data:
-        return pd.DataFrame(columns=[h for h in headers if h])
-    return pd.DataFrame(data, columns=headers)
+    # Match rows by category name in col A — works regardless of title/header layout
+    data_rows = [r for r in values if r and r[0] in _SUMMARY_CATEGORIES]
+    if not data_rows:
+        return pd.DataFrame(columns=SUMMARY_COLS)
+    n = len(SUMMARY_COLS)
+    padded = [r[:n] + [""] * (n - len(r)) for r in data_rows]
+    return pd.DataFrame(padded, columns=SUMMARY_COLS)
 
 def get_config(key: str):
     ws = _ws("Config")
