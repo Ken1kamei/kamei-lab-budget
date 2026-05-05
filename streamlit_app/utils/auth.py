@@ -8,7 +8,10 @@ def get_user_role(email: str) -> tuple[str, str | None]:
     Returns (role, team_name) where role is 'pi' | 'lead' | 'member' | 'unknown'
     and team_name is None for pi/unknown.
     """
-    pi_email = st.secrets.get("PI_EMAIL", "ken1kamei@nyu.edu")
+    try:
+        pi_email = st.secrets.get("PI_EMAIL", "ken1kamei@nyu.edu")
+    except Exception:
+        pi_email = "ken1kamei@nyu.edu"
     if email.strip().lower() == pi_email.strip().lower():
         return "pi", None
 

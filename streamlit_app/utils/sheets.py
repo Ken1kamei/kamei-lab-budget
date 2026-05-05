@@ -27,7 +27,14 @@ def _get_client():
     return gspread.authorize(creds)
 
 def get_spreadsheet():
-    return _get_client().open_by_key(st.secrets["SPREADSHEET_ID"])
+    try:
+        return _get_client().open_by_key(st.secrets["SPREADSHEET_ID"])
+    except gspread.exceptions.APIError as e:
+        st.error(
+            f"Cannot open spreadsheet. Check that SPREADSHEET_ID is correct and "
+            f"the service account has been shared on the sheet. API error: {e}"
+        )
+        st.stop()
 
 def _ws(name: str):
     return get_spreadsheet().worksheet(name)
@@ -54,8 +61,14 @@ def get_teams() -> pd.DataFrame:
                                       "Description","Active"])
 
 def get_summary() -> pd.DataFrame:
-    records = _ws("Summary").get_all_records(head=2)  # skip title row
-    return pd.DataFrame(records) if records else pd.DataFrame()
+    values = _ws("Summary").get_all_values()
+    if len(values) < 2:
+        return pd.DataFrame()
+    headers = values[1]   # row 2 in the sheet is the real header row
+    data = values[2:]
+    if not data:
+        return pd.DataFrame(columns=[h for h in headers if h])
+    return pd.DataFrame(data, columns=headers)
 
 def get_config(key: str):
     ws = _ws("Config")
