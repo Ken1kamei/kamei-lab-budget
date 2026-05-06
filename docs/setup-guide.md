@@ -101,8 +101,8 @@ To import an invoice email manually: open Gmail → find the email → apply the
 
 1. Share the spreadsheet with the Google service account email as **Editor**.
 2. In Streamlit Cloud secrets, add the contents shown in `streamlit_app/.streamlit/secrets.toml.example`.
-3. Configure the Google OAuth client redirect URI as:
-   `https://YOUR-STREAMLIT-APP.streamlit.app/oauth2callback`
+3. Configure the Google OAuth client redirect URI and Streamlit Cloud `[auth].redirect_uri` as:
+   `https://YOUR-STREAMLIT-APP.streamlit.app/~/+/oauth2callback`
 4. Install dependencies from `streamlit_app/requirements.txt`.
 5. Run the Teams setup script once:
    ```bash
