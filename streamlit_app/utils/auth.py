@@ -96,15 +96,17 @@ def sync_session_from_oidc_user() -> tuple[str, str | None]:
     """Copy trusted OIDC or explicit local-dev identity into Streamlit session state."""
     email = get_authenticated_email()
     role, team = get_user_role(email) if email else ("unknown", None)
-    st.session_state.email = email
-    st.session_state.role = role
-    st.session_state.team = team
+    st.session_state["email"] = email
+    st.session_state["role"] = role
+    st.session_state["team"] = team
     return role, team
 
 
 def require_role(*allowed_roles: str):
     """Call at top of page to block access. Shows error and stops if role not allowed."""
     role = st.session_state.get("role")
+    if role not in allowed_roles and get_authenticated_email():
+        role, _ = sync_session_from_oidc_user()
     if role not in allowed_roles:
         st.error("You don't have permission to view this page.")
         st.stop()

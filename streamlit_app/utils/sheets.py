@@ -29,17 +29,22 @@ SUMMARY_COLS = [
 ]
 
 _SUMMARY_CATEGORIES = {"Equipment", "Personnel", "Travel", "Other", "TOTAL"}
+CACHE_TTL_SECONDS = 300
 
 @st.cache_resource
 def _get_client():
     creds = Credentials.from_service_account_info(
         dict(st.secrets["gcp_service_account"]), scopes=SCOPES
     )
-    return gspread.authorize(creds)
+    return gspread.authorize(creds, http_client=gspread.BackOffHTTPClient)
+
+@st.cache_resource(show_spinner=False)
+def _open_spreadsheet(spreadsheet_id: str):
+    return _get_client().open_by_key(spreadsheet_id)
 
 def get_spreadsheet():
     try:
-        return _get_client().open_by_key(st.secrets["SPREADSHEET_ID"])
+        return _open_spreadsheet(st.secrets["SPREADSHEET_ID"])
     except gspread.exceptions.APIError as e:
         st.error(
             f"Cannot open spreadsheet. Check that SPREADSHEET_ID is correct and "
@@ -53,6 +58,15 @@ def _ws(name: str):
 def _normalize_key(value) -> str:
     return " ".join(str(value or "").strip().casefold().split())
 
+def _stop_on_sheet_api_error(action: str, error: gspread.exceptions.APIError):
+    st.error(
+        "Google Sheets read quota was reached while "
+        f"{action}. Please wait about a minute and refresh. "
+        "The app now caches Sheet reads to reduce repeat requests."
+    )
+    st.caption(f"Google Sheets API error: {error}")
+    st.stop()
+
 def ensure_transaction_columns():
     """Add lifecycle columns to Transactions header if the sheet is still on v1."""
     ws = _ws("Transactions")
@@ -65,8 +79,12 @@ def ensure_transaction_columns():
 
 # ── Read ──────────────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_transactions() -> pd.DataFrame:
-    records = _ws("Transactions").get_all_records()
+    try:
+        records = _ws("Transactions").get_all_records()
+    except gspread.exceptions.APIError as e:
+        _stop_on_sheet_api_error("reading Transactions", e)
     df = pd.DataFrame(records) if records else pd.DataFrame(columns=TXN_COLUMNS)
     # Only rows with a Transaction ID
     if "Transaction ID" in df.columns:
@@ -76,6 +94,7 @@ def get_transactions() -> pd.DataFrame:
             df[col] = ""
     return df
 
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_teams() -> pd.DataFrame:
     try:
         records = _ws("Teams").get_all_records()
@@ -86,9 +105,15 @@ def get_teams() -> pd.DataFrame:
         return pd.DataFrame(columns=["Team Name","Allocation (AED)",
                                       "Lead Emails","Member Emails",
                                       "Description","Active"])
+    except gspread.exceptions.APIError as e:
+        _stop_on_sheet_api_error("reading Teams", e)
 
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_summary() -> pd.DataFrame:
-    values = _ws("Summary").get_all_values()
+    try:
+        values = _ws("Summary").get_all_values()
+    except gspread.exceptions.APIError as e:
+        _stop_on_sheet_api_error("reading Summary", e)
     # Match rows by category name in col A — works regardless of title/header layout
     data_rows = [r for r in values if r and r[0] in _SUMMARY_CATEGORIES]
     if not data_rows:
@@ -97,10 +122,15 @@ def get_summary() -> pd.DataFrame:
     padded = [r[:n] + [""] * (n - len(r)) for r in data_rows]
     return pd.DataFrame(padded, columns=SUMMARY_COLS)
 
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def get_config_values() -> list[list[str]]:
+    try:
+        return _ws("Config").get_all_values()
+    except gspread.exceptions.APIError as e:
+        _stop_on_sheet_api_error("reading Config", e)
+
 def get_config(key: str):
-    ws = _ws("Config")
-    records = ws.get_all_values()
-    for row in records:
+    for row in get_config_values():
         if row and row[0] == key:
             return row[1] if len(row) > 1 else None
     return None

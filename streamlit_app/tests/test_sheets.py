@@ -6,11 +6,16 @@ import pytest
 @pytest.fixture(autouse=True)
 def mock_secrets(monkeypatch):
     import streamlit as st
+    st.cache_data.clear()
+    st.cache_resource.clear()
     monkeypatch.setattr(st, "secrets", {
         "SPREADSHEET_ID": "TEST_ID",
         "PI_EMAIL": "pi@nyu.edu",
         "gcp_service_account": {"type": "service_account"}
     })
+    yield
+    st.cache_data.clear()
+    st.cache_resource.clear()
 
 @patch("utils.sheets.get_spreadsheet")
 def test_get_transactions_returns_dataframe(mock_ss):
@@ -27,6 +32,21 @@ def test_get_transactions_returns_dataframe(mock_ss):
     assert df.iloc[0]["Transaction ID"] == "TXN-001"
 
 @patch("utils.sheets.get_spreadsheet")
+def test_get_transactions_reuses_cached_sheet_read(mock_ss):
+    from utils.sheets import get_transactions
+    mock_ws = MagicMock()
+    mock_ws.get_all_records.return_value = [
+        {"Transaction ID": "TXN-001", "Category": "Equipment"}
+    ]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    first = get_transactions()
+    second = get_transactions()
+
+    assert first.equals(second)
+    assert mock_ws.get_all_records.call_count == 1
+
+@patch("utils.sheets.get_spreadsheet")
 def test_get_teams_returns_dataframe(mock_ss):
     from utils.sheets import get_teams
     mock_ws = MagicMock()
@@ -39,6 +59,22 @@ def test_get_teams_returns_dataframe(mock_ss):
     df = get_teams()
     assert df.iloc[0]["Team Name"] == "Synbio"
     assert df.iloc[0]["Allocation (AED)"] == 400000
+
+@patch("utils.sheets.get_spreadsheet")
+def test_get_config_reuses_single_config_sheet_read_for_multiple_keys(mock_ss):
+    from utils.sheets import get_config
+    mock_ws = MagicMock()
+    mock_ws.get_all_values.return_value = [
+        ["AED/USD Exchange Rate", "3.6725"],
+        ["Current Fiscal Year", "FY2026-27"],
+        ["Gmail Label", "Budget/Invoices"],
+    ]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    assert get_config("Current Fiscal Year") == "FY2026-27"
+    assert get_config("Gmail Label") == "Budget/Invoices"
+
+    assert mock_ws.get_all_values.call_count == 1
 
 @patch("utils.sheets.get_spreadsheet")
 def test_append_transaction_calls_append_row(mock_ss):

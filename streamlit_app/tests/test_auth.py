@@ -101,3 +101,22 @@ def test_local_dev_email_disabled_when_oidc_configured(mock_st):
     mock_st.user = {"is_logged_in": False}
     from utils.auth import get_authenticated_email
     assert get_authenticated_email() is None
+
+@patch("utils.auth.get_teams")
+@patch("utils.auth.st")
+def test_require_role_syncs_oidc_user_when_session_state_is_empty(mock_st, mock_get_teams, teams_df):
+    mock_st.secrets = {"PI_EMAIL": "pi@nyu.edu"}
+    mock_st.user = {
+        "is_logged_in": True,
+        "email": "pi@nyu.edu",
+        "email_verified": True,
+    }
+    mock_st.session_state = {}
+    mock_st.stop.side_effect = AssertionError("require_role should not stop PI users")
+    mock_get_teams.return_value = teams_df
+
+    from utils.auth import require_role
+    require_role("pi")
+
+    assert mock_st.session_state["email"] == "pi@nyu.edu"
+    assert mock_st.session_state["role"] == "pi"
