@@ -4,6 +4,8 @@ from utils.budget import (
     get_category_summary,
     get_team_summary,
     get_lab_totals,
+    fiscal_year_for_date,
+    split_commitments,
 )
 
 CATEGORIES = ["Equipment", "Personnel", "Travel", "Other"]
@@ -66,3 +68,44 @@ def test_get_lab_totals():
     assert result["total_budget"] == pytest.approx(935087.5, abs=1)
     assert result["total_spent"] == 1500.0  # 1000 + 500 (cancelled excluded)
     assert result["remaining"] == pytest.approx(935087.5 - 1500.0, abs=1)
+
+def test_fiscal_year_starts_on_september_first():
+    assert fiscal_year_for_date("2026-08-31") == "FY2025-26"
+    assert fiscal_year_for_date("2026-09-01") == "FY2026-27"
+
+def test_split_commitments_counts_requested_as_committed_and_paid_separately():
+    txns = make_txns(
+        **{
+            "Transaction ID": ["TXN-001", "TXN-002", "TXN-003", "TXN-004"],
+            "Category": ["Equipment", "Travel", "Other", "Personnel"],
+            "Amount (AED)": [100.0, 200.0, 300.0, 400.0],
+            "Amount (USD)": [0.0, 0.0, 0.0, 0.0],
+            "Status": ["Requested", "Approved", "Paid", "Cancelled"],
+            "Amount (AED equiv)": [100.0, 200.0, 300.0, 400.0],
+            "Team": ["Synbio", "Synbio", "Synbio", "Synbio"],
+            "Fiscal Year": ["FY2026-27", "FY2026-27", "FY2026-27", "FY2026-27"],
+        }
+    )
+    result = split_commitments(txns)
+    assert result["committed"] == 600.0
+    assert result["paid"] == 300.0
+
+def test_team_summary_exposes_committed_paid_and_remaining():
+    txns = make_txns(
+        **{
+            "Transaction ID": ["TXN-001", "TXN-002", "TXN-003"],
+            "Team": ["Synbio", "Synbio", "Synbio"],
+            "Status": ["Requested", "Paid", "Cancelled"],
+            "Amount (AED equiv)": [100.0, 300.0, 999.0],
+        }
+    )
+    teams_df = pd.DataFrame({
+        "Team Name": ["Synbio"],
+        "Allocation (AED)": [1000.0],
+        "Active": ["Y"],
+    })
+    result = get_team_summary(txns, teams_df)
+    assert result["Synbio"]["committed"] == 400.0
+    assert result["Synbio"]["paid"] == 300.0
+    assert result["Synbio"]["remaining"] == 600.0
+    assert result["Synbio"]["pct_used"] == 0.4

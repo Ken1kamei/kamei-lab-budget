@@ -6,7 +6,9 @@ One-time setup for the PI or lab manager. Estimated time: 30–45 minutes.
 
 - Google account with `nyu.edu` domain (NYUAD Google Workspace)
 - Node.js installed (for `clasp`)
-- An Anthropic API key (get one at console.anthropic.com)
+- Python 3.11+ for the Streamlit app
+- A Google Cloud service account with Sheets/Drive API access
+- A Google OAuth client for Streamlit OIDC login
 
 ---
 
@@ -51,7 +53,6 @@ In the Apps Script editor (**Project Settings → Script Properties**), add:
 | Property | Value |
 |----------|-------|
 | `SPREADSHEET_ID` | Your spreadsheet ID from Step 2 |
-| `CLAUDE_API_KEY` | Your Anthropic API key |
 | `TOKEN_SECRET` | Any random string (used for approval tokens) |
 
 ---
@@ -71,7 +72,7 @@ Then enter your budget allocations:
 
 ---
 
-## Step 6 — Deploy as Web App
+## Step 6 — Deploy GAS Automation Web App
 
 In the Apps Script editor:
 
@@ -82,7 +83,7 @@ In the Apps Script editor:
 5. Who has access: `Anyone in NYUAD domain` (or `Anyone` if needed)
 6. Click **Deploy** and copy the **Web App URL**
 
-Save the URL — share it with lab members so they can register.
+Save the URL for internal automation and optional PI maintenance. Lab members should normally use the Streamlit app URL.
 
 ---
 
@@ -96,7 +97,25 @@ To import an invoice email manually: open Gmail → find the email → apply the
 
 ---
 
-## Step 8 — Configure Claude Code Skills (optional, for power users)
+## Step 8 — Configure Streamlit Cloud
+
+1. Share the spreadsheet with the Google service account email as **Editor**.
+2. In Streamlit Cloud secrets, add the contents shown in `streamlit_app/.streamlit/secrets.toml.example`.
+3. Configure the Google OAuth client redirect URI as:
+   `https://YOUR-STREAMLIT-APP.streamlit.app/oauth2callback`
+4. Install dependencies from `streamlit_app/requirements.txt`.
+5. Run the Teams setup script once:
+   ```bash
+   cd streamlit_app
+   .venv/bin/python scripts/setup_teams_sheet.py
+   ```
+6. Add teams, leads, members, and allocations in **Settings → Teams**.
+
+The app uses `st.login()` / `st.user`; users cannot choose their email manually.
+
+---
+
+## Step 9 — Configure Claude Code Skills (optional, for power users)
 
 The 8 skills in `.claude/skills/` are usable from the terminal via Claude Code:
 

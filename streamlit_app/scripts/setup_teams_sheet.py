@@ -40,12 +40,16 @@ def main():
     else:
         print("  Teams sheet already exists, skipping")
 
-    # 2. Add Team column to Transactions if not present
+    # 2. Add lifecycle columns to Transactions if not present
     txn_sheet = ss.worksheet("Transactions")
     headers = txn_sheet.row_values(1)
-    if "Team" not in headers:
+    for header in ["Team", "Approved By", "Approved At"]:
+        if header in headers:
+            print(f"  {header} column already exists, skipping")
+            continue
         next_col = len(headers) + 1
-        txn_sheet.update_cell(1, next_col, "Team")
+        txn_sheet.update_cell(1, next_col, header)
+        headers.append(header)
         # Format new header cell
         col_letter = chr(64 + next_col)
         txn_sheet.format(f"{col_letter}1", {
@@ -53,9 +57,7 @@ def main():
             "textFormat": {"foregroundColor": {"red":1,"green":1,"blue":1},
                            "bold": True}
         })
-        print(f"✓ Added 'Team' column at column {next_col} of Transactions sheet")
-    else:
-        print("  Team column already exists, skipping")
+        print(f"✓ Added '{header}' column at column {next_col} of Transactions sheet")
 
     print("\nSetup complete.")
 

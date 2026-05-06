@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from utils.sheets import get_teams, get_exchange_rate, append_transaction
+from utils.sheets import get_teams, get_exchange_rate, upsert_imported_transaction
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
 from utils.auth import require_role, is_pi, current_team
 
@@ -84,7 +84,7 @@ with tab1:
                     st.info(f"Team: **{my_team}**")
 
                 status = st.selectbox(
-                    "Status", ["Pending Review", "Ordered", "Delivered", "Paid"]
+                    "Status", ["Pending Review"], disabled=True
                 )
                 submitted = st.form_submit_button("Import Transaction", type="primary")
 
@@ -92,24 +92,23 @@ with tab1:
                 if not vendor.strip():
                     st.error("Vendor is required.")
                 else:
-                    txn_id = append_transaction(
-                        {
-                            "Date": inv_date,
-                            "Category": category,
-                            "Vendor / Payee": vendor.strip(),
-                            "Description": description,
-                            "Invoice Number": inv_num,
-                            "PO Number": po_num,
-                            "Amount (AED)": aed,
-                            "Amount (USD)": usd,
-                            "Status": status,
-                            "Notes": notes,
-                            "Entry Method": "Auto-PDF",
-                            "Entered By": st.session_state.email,
-                            "Team": team_value,
-                        }
-                    )
-                    st.success(f"✓ Imported as **{txn_id}**")
+                    result = upsert_imported_transaction({
+                        "Date": inv_date,
+                        "Category": category,
+                        "Vendor / Payee": vendor.strip(),
+                        "Description": description,
+                        "Invoice Number": inv_num,
+                        "PO Number": po_num,
+                        "Amount (AED)": aed,
+                        "Amount (USD)": usd,
+                        "Status": status,
+                        "Notes": notes,
+                        "Entry Method": "Auto-PDF",
+                        "Entered By": st.session_state.email,
+                        "Team": team_value,
+                    })
+                    verb = "updated" if result["matched"] else "imported"
+                    st.success(f"Invoice {verb} as **{result['transaction_id']}**")
 
 with tab2:
     st.markdown(
@@ -149,7 +148,8 @@ with tab2:
                 for i, row in enumerate(rows):
                     row["Team"] = team_value
                     row["Entered By"] = st.session_state.email
-                    append_transaction(row)
+                    row["Status"] = "Pending Review"
+                    upsert_imported_transaction(row)
                     prog.progress((i + 1) / len(rows))
-                st.success(f"✓ Imported {len(rows)} transactions.")
+                st.success(f"Imported or updated {len(rows)} transaction(s) for review.")
                 st.balloons()

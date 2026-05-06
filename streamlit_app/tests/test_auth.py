@@ -50,3 +50,54 @@ def test_unknown_role(mock_st, mock_get_teams, teams_df):
     role, team = get_user_role("stranger@nyu.edu")
     assert role == "unknown"
     assert team is None
+
+@patch("utils.auth.get_teams")
+@patch("utils.auth.st")
+def test_role_from_oidc_user_uses_verified_nyu_email(mock_st, mock_get_teams, teams_df):
+    mock_st.secrets = {"PI_EMAIL": "pi@nyu.edu"}
+    mock_get_teams.return_value = teams_df
+    mock_st.user = {
+        "is_logged_in": True,
+        "email": "RA1@nyu.edu",
+        "email_verified": True,
+    }
+    from utils.auth import get_oidc_email, get_current_user_role
+    assert get_oidc_email() == "ra1@nyu.edu"
+    assert get_current_user_role() == ("member", "Synbio")
+
+@patch("utils.auth.st")
+def test_oidc_email_rejects_unverified_or_non_nyu_users(mock_st):
+    mock_st.user = {
+        "is_logged_in": True,
+        "email": "person@example.com",
+        "email_verified": True,
+    }
+    from utils.auth import get_oidc_email
+    assert get_oidc_email() is None
+
+@patch("utils.auth.st")
+def test_local_dev_email_requires_explicit_opt_in_and_no_oidc_config(mock_st):
+    mock_st.secrets = {
+        "ALLOW_LOCAL_DEV_LOGIN": True,
+        "DEV_AUTH_EMAIL": "PI@nyu.edu",
+    }
+    mock_st.user = {"is_logged_in": False}
+    from utils.auth import get_authenticated_email
+    assert get_authenticated_email() == "pi@nyu.edu"
+
+@patch("utils.auth.st")
+def test_local_dev_email_disabled_when_oidc_configured(mock_st):
+    mock_st.secrets = {
+        "ALLOW_LOCAL_DEV_LOGIN": True,
+        "DEV_AUTH_EMAIL": "pi@nyu.edu",
+        "auth": {
+            "redirect_uri": "https://example.streamlit.app/oauth2callback",
+            "cookie_secret": "secret",
+            "client_id": "client",
+            "client_secret": "secret",
+            "server_metadata_url": "https://accounts.google.com/.well-known/openid-configuration",
+        },
+    }
+    mock_st.user = {"is_logged_in": False}
+    from utils.auth import get_authenticated_email
+    assert get_authenticated_email() is None

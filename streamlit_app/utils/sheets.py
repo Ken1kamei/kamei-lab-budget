@@ -4,6 +4,7 @@ from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from utils.budget import fiscal_year_for_date, LIFECYCLE_STATUSES
 
 SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -16,7 +17,8 @@ TXN_COLUMNS = [
     "Vendor / Payee", "Description", "PO Number", "Invoice Number",
     "Amount (AED)", "Amount (USD)", "Amount (AED equiv)", "Status",
     "Receipt Confirmed", "PDF Link", "Email Thread ID", "Entered By",
-    "Entry Method", "Notes", "Last Modified", "Team",
+    "Entry Method", "Notes", "Last Modified", "Team", "Approved By",
+    "Approved At",
 ]
 
 SUMMARY_COLS = [
@@ -48,6 +50,19 @@ def get_spreadsheet():
 def _ws(name: str):
     return get_spreadsheet().worksheet(name)
 
+def _normalize_key(value) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+def ensure_transaction_columns():
+    """Add lifecycle columns to Transactions header if the sheet is still on v1."""
+    ws = _ws("Transactions")
+    headers = ws.row_values(1)
+    for col in TXN_COLUMNS:
+        if col not in headers:
+            ws.update_cell(1, len(headers) + 1, col)
+            headers.append(col)
+    return headers
+
 # ── Read ──────────────────────────────────────────────────────────────────────
 
 def get_transactions() -> pd.DataFrame:
@@ -56,6 +71,9 @@ def get_transactions() -> pd.DataFrame:
     # Only rows with a Transaction ID
     if "Transaction ID" in df.columns:
         df = df[df["Transaction ID"].astype(str).str.strip() != ""]
+    for col in TXN_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
     return df
 
 def get_teams() -> pd.DataFrame:
@@ -103,13 +121,12 @@ def _next_txn_id() -> str:
     return f"TXN-{date_str}-{seq}"
 
 def _current_fy() -> str:
-    now = datetime.now(DUBAI_TZ)
-    y, m = now.year, now.month
-    return f"FY{y}-{str(y+1)[2:]}" if m >= 9 else f"FY{y-1}-{str(y)[2:]}"
+    return fiscal_year_for_date(datetime.now(DUBAI_TZ))
 
 def append_transaction(data: dict) -> str:
     """Write one transaction row. Returns the Transaction ID."""
     ws = _ws("Transactions")
+    ensure_transaction_columns()
     txn_id = data.get("Transaction ID") or _next_txn_id()
     now_str = datetime.now(DUBAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -133,7 +150,7 @@ def append_transaction(data: dict) -> str:
         "Amount (AED)": aed,
         "Amount (USD)": usd,
         "Amount (AED equiv)": round(equiv, 2),
-        "Status": data.get("Status", "Pending Review"),
+        "Status": data.get("Status", "Requested"),
         "Receipt Confirmed": False,
         "PDF Link": data.get("PDF Link", ""),
         "Entered By": data.get("Entered By", ""),
@@ -141,7 +158,11 @@ def append_transaction(data: dict) -> str:
         "Notes": data.get("Notes", ""),
         "Last Modified": now_str,
         "Team": data.get("Team", ""),
+        "Approved By": data.get("Approved By", ""),
+        "Approved At": data.get("Approved At", ""),
     })
+    if row["Status"] not in LIFECYCLE_STATUSES:
+        row["Status"] = "Requested"
     ws.append_row([row[col] for col in TXN_COLUMNS])
     # Invalidate cache
     st.cache_data.clear()
@@ -150,6 +171,7 @@ def append_transaction(data: dict) -> str:
 def update_transaction(txn_id: str, updates: dict):
     """Update specific fields of a transaction row."""
     ws = _ws("Transactions")
+    ensure_transaction_columns()
     all_values = ws.get_all_values()
     if not all_values:
         return
@@ -167,6 +189,55 @@ def update_transaction(txn_id: str, updates: dict):
                     datetime.now(DUBAI_TZ).strftime("%Y-%m-%d %H:%M:%S"))
             st.cache_data.clear()
             return
+
+def approve_transaction(txn_id: str, approver_email: str, status: str = "Approved"):
+    """Mark a request approved by a lead or PI."""
+    if status not in {"Approved", "Ordered", "Pending Review", "Delivered", "Paid", "Cancelled"}:
+        status = "Approved"
+    update_transaction(txn_id, {
+        "Status": status,
+        "Approved By": approver_email,
+        "Approved At": datetime.now(DUBAI_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+    })
+
+def find_matching_transaction_id(txns: pd.DataFrame, candidate: dict) -> str | None:
+    """Find an existing request/import row by team plus PO, invoice, or vendor."""
+    if txns.empty or "Transaction ID" not in txns.columns:
+        return None
+    team = _normalize_key(candidate.get("Team", ""))
+    scoped = txns.copy()
+    if "Team" in scoped.columns:
+        scoped = scoped[scoped["Team"].map(_normalize_key) == team]
+    if scoped.empty:
+        return None
+
+    checks = [
+        ("PO Number", candidate.get("PO Number")),
+        ("Invoice Number", candidate.get("Invoice Number")),
+        ("Vendor / Payee", candidate.get("Vendor / Payee")),
+    ]
+    for col, raw_value in checks:
+        value = _normalize_key(raw_value)
+        if not value or col not in scoped.columns:
+            continue
+        matches = scoped[scoped[col].map(_normalize_key) == value]
+        if not matches.empty:
+            return str(matches.iloc[0]["Transaction ID"])
+    return None
+
+def upsert_imported_transaction(data: dict) -> dict:
+    """Update a matching request from an import, or append a new Pending Review row."""
+    row = dict(data)
+    row["Status"] = "Pending Review"
+    txns = get_transactions()
+    match_id = find_matching_transaction_id(txns, row)
+    if match_id:
+        updates = dict(row)
+        updates.pop("Transaction ID", None)
+        update_transaction(match_id, updates)
+        return {"transaction_id": match_id, "matched": True}
+    txn_id = append_transaction(row)
+    return {"transaction_id": txn_id, "matched": False}
 
 def set_budget_allocation(category: str, aed: float, usd: float):
     ws = _ws("Summary")

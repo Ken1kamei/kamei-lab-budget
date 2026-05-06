@@ -1,11 +1,11 @@
 import streamlit as st
 from datetime import date
 from utils.sheets import get_teams, get_exchange_rate, append_transaction
-from utils.auth import require_role, is_pi, current_team
+from utils.auth import require_role, is_pi, can_edit, current_team
 
-require_role("pi", "lead")
+require_role("pi", "lead", "member")
 
-st.title("➕ Add Expense")
+st.title("Add Request")
 
 teams_df  = get_teams()
 rate      = get_exchange_rate()
@@ -25,7 +25,11 @@ with st.form("add_expense_form", clear_on_submit=True):
         category = st.selectbox("Category *", ["Equipment","Personnel","Travel","Other"])
     with col2:
         subcat   = st.selectbox("Sub-category", SUBCATS.get(category, ["Other"]))
-        status   = st.selectbox("Status", ["Ordered","Delivered","Paid","Pending Review"])
+        if can_edit():
+            status = st.selectbox("Status", ["Requested", "Approved", "Ordered", "Pending Review", "Delivered", "Paid"])
+        else:
+            status = "Requested"
+            st.info("Status: Requested")
 
     vendor      = st.text_input("Vendor / Payee *")
     description = st.text_input("Description *")
@@ -59,6 +63,13 @@ if submitted:
     if not vendor.strip() or not description.strip():
         st.error("Vendor and Description are required.")
     else:
+        approved_fields = {}
+        if status in ("Approved", "Ordered", "Pending Review", "Delivered", "Paid"):
+            from datetime import datetime
+            approved_fields = {
+                "Approved By": st.session_state.email,
+                "Approved At": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
         txn_id = append_transaction({
             "Date":          exp_date.isoformat(),
             "Category":      category,
@@ -75,6 +86,7 @@ if submitted:
             "Entered By":    st.session_state.email,
             "Entry Method":  "Manual",
             "Team":          team_value,
+            **approved_fields,
         })
-        st.success(f"✓ Transaction added: **{txn_id}**")
+        st.success(f"Request saved: **{txn_id}**")
         st.balloons()

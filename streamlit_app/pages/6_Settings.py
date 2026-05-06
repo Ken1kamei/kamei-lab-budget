@@ -2,15 +2,16 @@ import streamlit as st
 import pandas as pd
 from utils.sheets import (get_teams, get_exchange_rate, get_summary,
                            set_budget_allocation, upsert_team, set_config,
-                           get_transactions, append_transaction, update_transaction)
+                           get_config, get_transactions, append_transaction,
+                           update_transaction)
 from utils.auth import require_role
 
 require_role("pi")
 
 st.title("⚙️ Settings")
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "💰 Budget Allocations", "👥 Teams", "🔧 Exchange Rate", "🧪 Test Mode"
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "💰 Budget Allocations", "👥 Teams", "🔧 Exchange Rate", "Fiscal Year", "🧪 Test Mode"
 ])
 
 with tab1:
@@ -80,6 +81,25 @@ with tab3:
             st.success(f"✓ Rate updated to {new_rate}")
 
 with tab4:
+    st.markdown("Manage the fiscal-year label and automation settings for the current spreadsheet.")
+    current_fy = get_config("Current Fiscal Year") or get_config("Fiscal Year") or "FY2025-26"
+    threshold = get_config("Notification Threshold %") or "80"
+    gmail_label = get_config("Gmail Label") or "Budget/Invoices"
+    with st.form("fiscal_year_form"):
+        fy = st.text_input("Current Fiscal Year", value=str(current_fy), placeholder="FY2026-27")
+        notify = st.number_input("Notification Threshold %", value=float(threshold), min_value=1.0, max_value=100.0, step=1.0)
+        label = st.text_input("Gmail Label", value=str(gmail_label))
+        if st.form_submit_button("Save Fiscal Year Settings", type="primary"):
+            if not fy.strip().startswith("FY"):
+                st.error("Fiscal year must look like FY2026-27.")
+            else:
+                set_config("Current Fiscal Year", fy.strip())
+                set_config("Fiscal Year", fy.strip())
+                set_config("Notification Threshold %", notify)
+                set_config("Gmail Label", label.strip() or "Budget/Invoices")
+                st.success("Fiscal year settings saved.")
+
+with tab5:
     st.warning("⚠️ Test mode loads sample data tagged with `[TEST]`. Remove it cleanly when done.")
     col1, col2 = st.columns(2)
 

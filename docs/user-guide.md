@@ -2,9 +2,9 @@
 
 ## Accessing the System
 
-Navigate to the web app URL shared by the PI. You must be signed in to your `nyu.edu` Google account.
+Navigate to the Streamlit app URL shared by the PI. You must sign in with your verified `nyu.edu` Google account.
 
-**First time?** You will be asked to register — fill in your name, role, and reason for access. The PI will approve your request by email.
+Access is based on the `Teams` sheet. If you see "Email not registered", ask the PI to add your email as a team lead or member.
 
 ---
 
@@ -13,6 +13,7 @@ Navigate to the web app URL shared by the PI. You must be signed in to your `nyu
 The dashboard shows the current fiscal year budget at a glance:
 
 - **Summary cards** — one per category (Equipment, Personnel, Travel, Other), showing amount spent, total budget, and a progress bar
+- **Team cards** — allocated, committed, paid, and remaining budget for your team
 - **Color coding** — green (<70%), yellow (70–90%), red (>90%)
 - **Currency toggle** — switch between AED and USD display
 - **Recent transactions** — the 10 most recent entries
@@ -22,13 +23,15 @@ The dashboard shows the current fiscal year budget at a glance:
 
 ## Adding an Expense
 
-Go to **Add Expense** in the navigation.
+Go to **Add Request** in the navigation.
 
 Required fields:
 - **Category** — Equipment / Personnel / Travel / Other
 - **Vendor / Payee** — who was paid
 - **Description** — what it was for
 - **Amount** — enter in AED, USD, or both (AED equivalent is calculated automatically)
+
+Members create requests with `Status = Requested`. Team leads and the PI can approve or update the request through **Requests / Transactions**.
 
 Optional:
 - PO Number and Invoice Number for cross-referencing
@@ -41,13 +44,13 @@ Optional:
 
 Go to **Import PDF** and drag-and-drop (or click to select) a PDF invoice or receipt.
 
-Claude AI will extract:
+The Python parser will extract:
 - Vendor name
 - Invoice date and number
 - Total amount and currency
 - Suggested category
 
-Review the parsed fields (highlighted if confidence is low), make any corrections, then click **Confirm & Add Transaction**.
+Review the parsed fields, assign the team, then import. PDF and ERB imports are saved as `Pending Review`. If the PO number, invoice number, or vendor matches an existing request in the same team, the existing row is updated.
 
 ---
 
@@ -55,8 +58,10 @@ Review the parsed fields (highlighted if confidence is low), make any correction
 
 | Status | Meaning |
 |--------|---------|
-| Pending Review | Auto-imported — needs human verification |
+| Requested | A member or lead has submitted a purchase request |
+| Approved | Team lead or PI approved the request |
 | Ordered | Purchase order placed, not yet received |
+| Pending Review | Auto-imported — needs human verification |
 | Delivered | Item received, not yet paid |
 | Paid | Payment processed |
 | Cancelled | Order cancelled — excluded from budget totals |

@@ -1,5 +1,5 @@
 import streamlit as st
-from utils.auth import get_user_role
+from utils.auth import get_authenticated_email, oidc_configured, sync_session_from_oidc_user
 
 st.set_page_config(
     page_title="Kamei Lab Budget",
@@ -14,26 +14,35 @@ if "email" not in st.session_state:
     st.session_state.role  = None
     st.session_state.team  = None
 
-# ── Login screen ──────────────────────────────────────────────────────────────
-if not st.session_state.email:
+# ── OIDC / local-dev login screen ─────────────────────────────────────────────
+if not get_authenticated_email():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("## 🔬 Kamei Lab Budget")
         st.markdown("*Kamei Reverse Bioengineering Lab · NYUAD*")
         st.divider()
-        email = st.text_input("Enter your nyu.edu email", placeholder="yourname@nyu.edu")
-        if st.button("Sign in", type="primary", use_container_width=True):
-            if not email.strip().endswith("@nyu.edu"):
-                st.error("Please use your nyu.edu email address.")
-            else:
-                role, team = get_user_role(email.strip().lower())
-                if role == "unknown":
-                    st.error("Email not registered. Ask the PI to add you to the lab roster (Settings → Team Management).")
-                else:
-                    st.session_state.email = email.strip().lower()
-                    st.session_state.role  = role
-                    st.session_state.team  = team
-                    st.rerun()
+        if oidc_configured():
+            st.write("Sign in with your NYU Google account to continue.")
+            if st.button("Sign in with Google", type="primary", use_container_width=True):
+                st.login()
+        else:
+            st.error("OIDC login is not configured yet. Add [auth] settings to secrets.toml or enable local dev login.")
+    st.stop()
+
+email = get_authenticated_email()
+role, team = sync_session_from_oidc_user()
+
+if not email:
+    st.error("Please sign in with a verified nyu.edu Google account.")
+    if st.button("Sign out", type="primary"):
+        st.logout()
+    st.stop()
+
+if role == "unknown":
+    st.error("Email not registered. Ask the PI to add you to the lab roster in Settings → Teams.")
+    st.caption(f"Signed in as: {email}")
+    if st.button("Sign out", type="primary"):
+        st.logout()
     st.stop()
 
 # ── Sidebar (shown after login) ───────────────────────────────────────────────
@@ -44,9 +53,7 @@ with st.sidebar:
                + (f" · {st.session_state.team}" if st.session_state.team else ""))
     st.divider()
     if st.button("Sign out", use_container_width=True):
-        for key in ("email", "role", "team"):
-            st.session_state[key] = None
-        st.rerun()
+        st.logout()
 
 # ── Default landing page ───────────────────────────────────────────────────────
 st.markdown("## Budget Dashboard")

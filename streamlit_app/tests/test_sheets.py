@@ -51,3 +51,40 @@ def test_append_transaction_calls_append_row(mock_ss):
                 "Amount (AED)": 200, "Team": "Synbio"}
     append_transaction(row_data)
     mock_ws.append_row.assert_called_once()
+    appended = mock_ws.append_row.call_args.args[0]
+    from utils.sheets import TXN_COLUMNS
+    assert len(appended) == len(TXN_COLUMNS)
+    assert "Approved By" in TXN_COLUMNS
+    assert "Approved At" in TXN_COLUMNS
+
+def test_find_matching_transaction_id_prefers_po_invoice_then_vendor_team():
+    from utils.sheets import find_matching_transaction_id
+    txns = pd.DataFrame([
+        {"Transaction ID": "TXN-001", "PO Number": "PO-7", "Invoice Number": "",
+         "Vendor / Payee": "Fisher Scientific", "Team": "Synbio"},
+        {"Transaction ID": "TXN-002", "PO Number": "", "Invoice Number": "INV-9",
+         "Vendor / Payee": "VWR", "Team": "Imaging"},
+        {"Transaction ID": "TXN-003", "PO Number": "", "Invoice Number": "",
+         "Vendor / Payee": "Sigma Aldrich", "Team": "Synbio"},
+    ])
+    assert find_matching_transaction_id(txns, {"PO Number": "PO-7", "Team": "Synbio"}) == "TXN-001"
+    assert find_matching_transaction_id(txns, {"Invoice Number": "INV-9", "Team": "Imaging"}) == "TXN-002"
+    assert find_matching_transaction_id(txns, {"Vendor / Payee": " sigma aldrich ", "Team": "Synbio"}) == "TXN-003"
+    assert find_matching_transaction_id(txns, {"PO Number": "PO-7", "Team": "Imaging"}) is None
+
+@patch("utils.sheets.update_transaction")
+@patch("utils.sheets.append_transaction")
+@patch("utils.sheets.get_transactions")
+def test_upsert_imported_transaction_updates_existing_match(mock_get, mock_append, mock_update):
+    from utils.sheets import upsert_imported_transaction
+    mock_get.return_value = pd.DataFrame([
+        {"Transaction ID": "TXN-001", "PO Number": "PO-7", "Team": "Synbio"}
+    ])
+    result = upsert_imported_transaction({
+        "PO Number": "PO-7",
+        "Team": "Synbio",
+        "Status": "Pending Review",
+    })
+    assert result == {"transaction_id": "TXN-001", "matched": True}
+    mock_update.assert_called_once()
+    mock_append.assert_not_called()

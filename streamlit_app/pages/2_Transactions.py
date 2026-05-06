@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
-from utils.sheets import get_transactions, get_teams, update_transaction
+from utils.sheets import get_transactions, get_teams, update_transaction, approve_transaction
 from utils.auth import require_role, is_pi, can_edit, current_team
+from utils.budget import LIFECYCLE_STATUSES
 
 require_role("pi", "lead", "member")
 
-st.title("📋 Transactions")
+st.title("Requests / Transactions")
 
 txns     = get_transactions()
 teams_df = get_teams()
@@ -48,7 +49,8 @@ st.caption(f"Showing {len(filtered)} of {len(txns)} transactions")
 
 SHOW_COLS = ["Transaction ID", "Date", "Category", "Team",
              "Vendor / Payee", "Description",
-             "Amount (AED)", "Amount (USD)", "Status", "Entry Method"]
+             "Amount (AED)", "Amount (USD)", "Status", "Entry Method",
+             "Approved By", "Approved At"]
 show_cols = [c for c in SHOW_COLS if c in filtered.columns]
 st.dataframe(filtered[show_cols], use_container_width=True, hide_index=True)
 
@@ -65,20 +67,44 @@ if can_edit():
 
         with st.form("edit_form"):
             new_status = st.selectbox("Status",
-                ["Pending Review", "Ordered", "Delivered", "Paid", "Cancelled"],
-                index=["Pending Review","Ordered","Delivered","Paid","Cancelled"]
-                    .index(str(row.get("Status", "Pending Review"))))
+                LIFECYCLE_STATUSES,
+                index=LIFECYCLE_STATUSES.index(str(row.get("Status", "Requested")))
+                    if str(row.get("Status", "Requested")) in LIFECYCLE_STATUSES else 0)
             new_notes  = st.text_area("Notes", value=str(row.get("Notes", "")))
             new_pdf    = st.text_input("PDF Link", value=str(row.get("PDF Link", "")))
             submitted  = st.form_submit_button("Save Changes", type="primary")
 
         if submitted:
-            update_transaction(selected_id, {
+            updates = {
                 "Status":   new_status,
                 "Notes":    new_notes,
                 "PDF Link": new_pdf,
-            })
+            }
+            old_status = str(row.get("Status", "Requested"))
+            if old_status == "Requested" and new_status in ("Approved", "Ordered", "Pending Review", "Delivered", "Paid"):
+                approve_transaction(selected_id, st.session_state.email, new_status)
+                updates.pop("Status")
+            if updates:
+                update_transaction(selected_id, updates)
             st.success(f"✓ Updated {selected_id}")
             st.rerun()
     else:
         st.info("No transactions match the current filters.")
+else:
+    st.divider()
+    st.subheader("Attach Receipt")
+    txn_ids = filtered["Transaction ID"].tolist() if "Transaction ID" in filtered.columns else []
+    if txn_ids:
+        selected_id = st.selectbox("Select your request", txn_ids)
+        row = filtered[filtered["Transaction ID"] == selected_id].iloc[0]
+        with st.form("member_receipt_form"):
+            new_notes = st.text_area("Notes", value=str(row.get("Notes", "")))
+            new_pdf = st.text_input("Receipt / PDF Link", value=str(row.get("PDF Link", "")))
+            submitted = st.form_submit_button("Save Receipt Link", type="primary")
+        if submitted:
+            update_transaction(selected_id, {
+                "Notes": new_notes,
+                "PDF Link": new_pdf,
+            })
+            st.success(f"Receipt information saved for {selected_id}")
+            st.rerun()

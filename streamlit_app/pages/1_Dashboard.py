@@ -31,16 +31,18 @@ if is_pi():
     cols = st.columns(4)
     for i, (cat, data) in enumerate(cat_summary.items()):
         with cols[i]:
-            spent  = data["spent_equiv"]  / divisor
+            committed = data["committed_equiv"]  / divisor
+            paid = data["paid_equiv"] / divisor
             budget = data["budget_equiv"] / divisor
             pct    = data["pct_used"]
             color  = "🔴" if pct > 0.9 else "🟡" if pct > 0.7 else "🟢"
             st.metric(
                 label=f"{color} {cat}",
-                value=f"{sym}{spent:,.0f}",
-                delta=f"{sym}{(budget - spent) / divisor:,.0f} remaining",
+                value=f"{sym}{committed:,.0f} committed",
+                delta=f"{sym}{budget - committed:,.0f} remaining",
                 delta_color="normal",
             )
+            st.caption(f"Paid: {sym}{paid:,.0f} / Budget: {sym}{budget:,.0f}")
             st.progress(min(pct, 1.0))
 
     st.divider()
@@ -49,13 +51,15 @@ if is_pi():
     team_summary = get_team_summary(txns, teams_df)
     if team_summary:
         team_names  = list(team_summary.keys())
-        spent_vals  = [v["spent"] / divisor for v in team_summary.values()]
+        committed_vals  = [v["committed"] / divisor for v in team_summary.values()]
+        paid_vals  = [v["paid"] / divisor for v in team_summary.values()]
         alloc_vals  = [v["allocated"] / divisor for v in team_summary.values()]
         fig = go.Figure(data=[
-            go.Bar(name="Spent",     x=team_names, y=spent_vals,  marker_color="#57068C"),
+            go.Bar(name="Committed", x=team_names, y=committed_vals, marker_color="#57068C"),
+            go.Bar(name="Paid",      x=team_names, y=paid_vals, marker_color="#2e7d32"),
             go.Bar(name="Allocated", x=team_names, y=alloc_vals,  marker_color="#e1bee7"),
         ])
-        fig.update_layout(barmode="overlay", title="Team Spending vs Allocation",
+        fig.update_layout(barmode="group", title="Team Spending vs Allocation",
                           yaxis_title=f"Amount ({currency})", height=300,
                           margin=dict(t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
@@ -72,8 +76,10 @@ else:
         st.metric(f"🏷️ {team_name} — Allocated",
                   f"{sym}{team_data.get('allocated', 0) / divisor:,.0f}")
     with col2:
-        st.metric(f"💸 {team_name} — Spent",
-                  f"{sym}{team_data.get('spent', 0) / divisor:,.0f}")
+        st.metric(f"💸 {team_name} — Committed",
+                  f"{sym}{team_data.get('committed', 0) / divisor:,.0f}",
+                  delta=f"Paid {sym}{team_data.get('paid', 0) / divisor:,.0f}",
+                  delta_color="normal")
     with col3:
         rem = team_data.get("remaining", 0)
         st.metric(f"✅ {team_name} — Remaining",
@@ -84,7 +90,8 @@ else:
     st.subheader("🔬 Lab-Wide Summary")
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Budget",  f"AED {totals['total_budget']:,.0f}")
-    c2.metric("Total Spent",   f"AED {totals['total_spent']:,.0f}")
+    c2.metric("Total Committed",   f"AED {totals['total_committed']:,.0f}",
+              delta=f"Paid AED {totals['total_paid']:,.0f}", delta_color="normal")
     c3.metric("Total Remaining", f"AED {totals['remaining']:,.0f}")
 
 # ── Monthly spending chart (all roles) ───────────────────────────────────────

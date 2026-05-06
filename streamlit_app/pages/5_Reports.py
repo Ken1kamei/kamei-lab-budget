@@ -27,14 +27,16 @@ for cat, data in cat_summary.items():
     summary_rows.append({
         "Category":           cat,
         "Budget (AED equiv)": f"AED {data['budget_equiv']:,.0f}",
-        "Spent (AED equiv)":  f"AED {data['spent_equiv']:,.0f}",
+        "Committed":          f"AED {data['committed_equiv']:,.0f}",
+        "Paid":               f"AED {data['paid_equiv']:,.0f}",
         "Remaining":          f"AED {data['remaining']:,.0f}",
         "% Used":             f"{data['pct_used']*100:.1f}%",
     })
 summary_rows.append({
     "Category":           "TOTAL",
     "Budget (AED equiv)": f"AED {totals['total_budget']:,.0f}",
-    "Spent (AED equiv)":  f"AED {totals['total_spent']:,.0f}",
+    "Committed":          f"AED {totals['total_committed']:,.0f}",
+    "Paid":               f"AED {totals['total_paid']:,.0f}",
     "Remaining":          f"AED {totals['remaining']:,.0f}",
     "% Used":             f"{totals['pct_used']*100:.1f}%",
 })
@@ -44,7 +46,7 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Spending by Category")
-    pie_data = {cat: data["spent_equiv"] for cat, data in cat_summary.items() if data["spent_equiv"] > 0}
+    pie_data = {cat: data["committed_equiv"] for cat, data in cat_summary.items() if data["committed_equiv"] > 0}
     if pie_data:
         fig = px.pie(values=list(pie_data.values()), names=list(pie_data.keys()),
                      color_discrete_sequence=["#57068C","#9c27b0","#ce93d8","#e1bee7"],
@@ -60,13 +62,15 @@ with col2:
         team_summary = get_team_summary(txns, teams_df)
         if team_summary:
             names  = list(team_summary.keys())
-            spent  = [v["spent"]     for v in team_summary.values()]
+            committed = [v["committed"] for v in team_summary.values()]
+            paid = [v["paid"] for v in team_summary.values()]
             alloc  = [v["allocated"] for v in team_summary.values()]
             fig2 = go.Figure(data=[
-                go.Bar(name="Spent",     x=names, y=spent, marker_color="#57068C"),
+                go.Bar(name="Committed", x=names, y=committed, marker_color="#57068C"),
+                go.Bar(name="Paid",      x=names, y=paid, marker_color="#2e7d32"),
                 go.Bar(name="Allocated", x=names, y=alloc, marker_color="#e1bee7"),
             ])
-            fig2.update_layout(barmode="overlay", height=300, margin=dict(t=10,b=10))
+            fig2.update_layout(barmode="group", height=300, margin=dict(t=10,b=10))
             st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info("No teams defined yet.")
