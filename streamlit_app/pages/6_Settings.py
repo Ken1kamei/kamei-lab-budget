@@ -1,5 +1,9 @@
 import streamlit as st
 import pandas as pd
+from utils.runtime import refresh_runtime_modules
+
+refresh_runtime_modules()
+
 from utils.sheets import (get_teams, get_exchange_rate, get_summary,
                            set_budget_allocation, upsert_team, set_config,
                            get_config, get_transactions, append_transaction,

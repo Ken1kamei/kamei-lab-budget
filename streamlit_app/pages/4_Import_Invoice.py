@@ -1,5 +1,9 @@
 import streamlit as st
 import pandas as pd
+from utils.runtime import refresh_runtime_modules
+
+refresh_runtime_modules()
+
 from utils.sheets import get_teams, get_exchange_rate, upsert_imported_transaction
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
 from utils.auth import require_role, is_pi, current_team

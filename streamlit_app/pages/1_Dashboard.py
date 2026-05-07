@@ -2,6 +2,10 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+from utils.runtime import refresh_runtime_modules
+
+refresh_runtime_modules()
+
 from utils.sheets import get_transactions, get_summary, get_exchange_rate, get_teams
 from utils.budget import get_category_summary, get_team_summary, get_lab_totals, monthly_spending
 from utils.auth import require_role, is_pi, current_team

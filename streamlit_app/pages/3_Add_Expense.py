@@ -1,5 +1,9 @@
 import streamlit as st
 from datetime import date
+from utils.runtime import refresh_runtime_modules
+
+refresh_runtime_modules()
+
 from utils.sheets import get_teams, get_exchange_rate, append_transaction
 from utils.auth import require_role, is_pi, can_edit, current_team
 from utils.categories import CATEGORIES, SUBCATEGORIES
