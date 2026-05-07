@@ -131,9 +131,18 @@ def _detect_currency(text):
 def _guess_category(text):
     t = text.lower()
     if re.search(
-        r"reagent|chemical|pipette|centrifug|assay|antibod|enzyme|kit|consumable|instrument|software|license",
+        r"publication|article processing|open access|page charge|color charge|apc",
         t,
     ):
+        return "Publications"
+    if re.search(r"membership|member dues|society dues|annual dues", t):
+        return "Memberships"
+    if re.search(
+        r"reagent|chemical|pipette|assay|antibod|enzyme|kit|consumable|plasticware",
+        t,
+    ):
+        return "Consumables"
+    if re.search(r"centrifug|instrument|software|license|equipment", t):
         return "Equipment"
     if re.search(r"salary|stipend|postdoc|research assistant|technician", t):
         return "Personnel"
@@ -247,8 +256,8 @@ def parse_erb_excel_bytes(excel_bytes: bytes) -> list[dict]:
         result.append(
             {
                 "Date": date_str,
-                "Category": "Equipment",
-                "Sub-category": "Consumables",
+                "Category": "Consumables",
+                "Sub-category": "NYUAD Stores",
                 "Vendor / Payee": "NYUAD ERB (Stores)",
                 "Description": descr,
                 "Amount (AED)": aed,

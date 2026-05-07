@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from utils.budget import fiscal_year_for_date, LIFECYCLE_STATUSES
+from utils.categories import CATEGORIES
 
 SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -28,7 +29,7 @@ SUMMARY_COLS = [
     "Remaining (AED equiv)", "% Used", "Visual",
 ]
 
-_SUMMARY_CATEGORIES = {"Equipment", "Personnel", "Travel", "Other", "TOTAL"}
+_SUMMARY_CATEGORIES = set(CATEGORIES) | {"TOTAL"}
 CACHE_TTL_SECONDS = 300
 
 @st.cache_resource
@@ -273,14 +274,28 @@ def set_budget_allocation(category: str, aed: float, usd: float):
     ws = _ws("Summary")
     all_values = ws.get_all_values()
     rate = get_exchange_rate()
+    equiv = round(aed + usd * rate, 2)
     for i, row in enumerate(all_values, start=1):
         if row and row[0] == category:
-            equiv = aed + usd * rate
             ws.update_cell(i, 2, aed)
             ws.update_cell(i, 3, usd)
-            ws.update_cell(i, 4, round(equiv, 2))
+            ws.update_cell(i, 4, equiv)
             st.cache_data.clear()
             return
+    new_row = [category, aed, usd, equiv, 0, 0, 0, equiv, 0, ""]
+    if category in CATEGORIES:
+        following_categories = set(CATEGORIES[CATEGORIES.index(category) + 1 :]) | {"TOTAL"}
+    else:
+        following_categories = {"TOTAL"}
+    insert_idx = next(
+        (i for i, row in enumerate(all_values, start=1) if row and row[0] in following_categories),
+        None,
+    )
+    if insert_idx:
+        ws.insert_row(new_row, insert_idx, value_input_option="USER_ENTERED")
+    else:
+        ws.append_row(new_row, value_input_option="USER_ENTERED")
+    st.cache_data.clear()
 
 def upsert_team(team_data: dict):
     """Insert or update a team row."""

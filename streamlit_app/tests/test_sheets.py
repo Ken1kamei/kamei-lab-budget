@@ -77,6 +77,31 @@ def test_get_config_reuses_single_config_sheet_read_for_multiple_keys(mock_ss):
     assert mock_ws.get_all_values.call_count == 1
 
 @patch("utils.sheets.get_spreadsheet")
+def test_get_summary_includes_all_budget_categories(mock_ss):
+    from utils.sheets import get_summary
+    mock_ws = MagicMock()
+    mock_ws.get_all_values.return_value = [
+        ["Kamei Lab Budget"],
+        ["Category", "Budgeted (AED)", "Budgeted (USD)", "Budgeted (AED equiv)"],
+        ["Equipment", "500000", "0", "500000"],
+        ["Consumables", "50000", "0", "50000"],
+        ["Publications", "25000", "5000", "43362.5"],
+        ["Memberships", "10000", "1000", "13672.5"],
+        ["TOTAL", "585000", "6000", "607035"],
+    ]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    df = get_summary()
+
+    assert df["Category"].tolist() == [
+        "Equipment",
+        "Consumables",
+        "Publications",
+        "Memberships",
+        "TOTAL",
+    ]
+
+@patch("utils.sheets.get_spreadsheet")
 def test_append_transaction_calls_append_row(mock_ss):
     from utils.sheets import append_transaction
     mock_ws = MagicMock()
@@ -92,6 +117,25 @@ def test_append_transaction_calls_append_row(mock_ss):
     assert len(appended) == len(TXN_COLUMNS)
     assert "Approved By" in TXN_COLUMNS
     assert "Approved At" in TXN_COLUMNS
+
+@patch("utils.sheets.get_exchange_rate", return_value=3.6725)
+@patch("utils.sheets.get_spreadsheet")
+def test_set_budget_allocation_inserts_missing_category_before_total(mock_ss, _rate):
+    from utils.sheets import set_budget_allocation
+    mock_ws = MagicMock()
+    mock_ws.get_all_values.return_value = [
+        ["Category", "Budgeted (AED)", "Budgeted (USD)", "Budgeted (AED equiv)"],
+        ["Equipment", "500000", "0", "500000"],
+        ["TOTAL", "500000", "0", "500000"],
+    ]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    set_budget_allocation("Consumables", 1000, 10)
+
+    mock_ws.insert_row.assert_called_once()
+    row, index = mock_ws.insert_row.call_args.args[:2]
+    assert index == 3
+    assert row[:4] == ["Consumables", 1000, 10, 1036.72]
 
 def test_find_matching_transaction_id_prefers_po_invoice_then_vendor_team():
     from utils.sheets import find_matching_transaction_id

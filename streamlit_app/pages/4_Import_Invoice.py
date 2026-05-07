@@ -3,6 +3,7 @@ import pandas as pd
 from utils.sheets import get_teams, get_exchange_rate, upsert_imported_transaction
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
 from utils.auth import require_role, is_pi, current_team
+from utils.categories import CATEGORIES
 
 require_role("pi", "lead")
 
@@ -11,6 +12,9 @@ st.title("📥 Import Invoice / Receipt")
 teams_df = get_teams()
 rate = get_exchange_rate()
 my_team = current_team()
+
+def _category_index(value: str) -> int:
+    return CATEGORIES.index(value) if value in CATEGORIES else 0
 
 tab1, tab2 = st.tabs(["📄 PDF Invoice", "📊 NYUAD ERB Excel"])
 
@@ -44,13 +48,8 @@ with tab1:
                 with col2:
                     category = st.selectbox(
                         "Category",
-                        ["Equipment", "Personnel", "Travel", "Other"],
-                        index=[
-                            "Equipment",
-                            "Personnel",
-                            "Travel",
-                            "Other",
-                        ].index(parsed.get("suggested_category", "Equipment")),
+                        CATEGORIES,
+                        index=_category_index(parsed.get("suggested_category", "Equipment")),
                     )
                     po_num = st.text_input("PO Number", value=parsed.get("po_number", ""))
 

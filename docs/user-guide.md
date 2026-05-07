@@ -12,7 +12,7 @@ Access is based on the `Teams` sheet. If you see "Email not registered", ask the
 
 The dashboard shows the current fiscal year budget at a glance:
 
-- **Summary cards** — one per category (Equipment, Personnel, Travel, Other), showing amount spent, total budget, and a progress bar
+- **Summary cards** — one per category (Equipment, Consumables, Personnel, Travel, Publications, Memberships, Other), showing amount spent, total budget, and a progress bar
 - **Team cards** — allocated, committed, paid, and remaining budget for your team
 - **Color coding** — green (<70%), yellow (70–90%), red (>90%)
 - **Currency toggle** — switch between AED and USD display
@@ -26,7 +26,7 @@ The dashboard shows the current fiscal year budget at a glance:
 Go to **Add Request** in the navigation.
 
 Required fields:
-- **Category** — Equipment / Personnel / Travel / Other
+- **Category** — Equipment / Consumables / Personnel / Travel / Publications / Memberships / Other
 - **Vendor / Payee** — who was paid
 - **Description** — what it was for
 - **Amount** — enter in AED, USD, or both (AED equivalent is calculated automatically)

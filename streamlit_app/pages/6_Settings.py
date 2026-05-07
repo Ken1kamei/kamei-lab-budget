@@ -5,6 +5,7 @@ from utils.sheets import (get_teams, get_exchange_rate, get_summary,
                            get_config, get_transactions, append_transaction,
                            update_transaction)
 from utils.auth import require_role
+from utils.categories import CATEGORIES
 
 require_role("pi")
 
@@ -17,7 +18,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.markdown("Set the lab budget per category for the current fiscal year.")
     summary_df = get_summary()
-    CATEGORIES = ["Equipment", "Personnel", "Travel", "Other"]
 
     with st.form("budget_alloc_form"):
         st.markdown("**Enter amounts in AED, USD, or both:**")
@@ -121,9 +121,12 @@ with tab5:
                  "Entry Method":"Manual","Notes":"[TEST] Auto-generated"},
             ]
             set_budget_allocation("Equipment", 500000, 0)
+            set_budget_allocation("Consumables", 50000, 0)
             set_budget_allocation("Personnel", 300000, 0)
-            set_budget_allocation("Travel",     50000, 10000)
-            set_budget_allocation("Other",      30000,  5000)
+            set_budget_allocation("Travel", 50000, 10000)
+            set_budget_allocation("Publications", 25000, 5000)
+            set_budget_allocation("Memberships", 10000, 1000)
+            set_budget_allocation("Other", 30000, 5000)
             for s in samples:
                 s["Entered By"] = st.session_state.email
                 append_transaction(s)
@@ -136,7 +139,7 @@ with tab5:
                 test_ids = txns[txns["Notes"].str.contains(r"\[TEST\]", na=False)]["Transaction ID"].tolist()
                 for txn_id in test_ids:
                     update_transaction(txn_id, {"Status": "Cancelled"})
-                for cat in ["Equipment","Personnel","Travel","Other"]:
+                for cat in CATEGORIES:
                     set_budget_allocation(cat, 0, 0)
                 st.success(f"✓ Cancelled {len(test_ids)} test transactions and reset allocations.")
             else:

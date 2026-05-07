@@ -1,14 +1,13 @@
 import pandas as pd
 import pytest
 from utils.budget import (
+    CATEGORIES,
     get_category_summary,
     get_team_summary,
     get_lab_totals,
     fiscal_year_for_date,
     split_commitments,
 )
-
-CATEGORIES = ["Equipment", "Personnel", "Travel", "Other"]
 
 def make_txns(**kwargs):
     """Build a minimal transactions DataFrame."""
@@ -27,11 +26,22 @@ def make_txns(**kwargs):
 
 def make_summary_df():
     return pd.DataFrame({
-        "Category":            ["Equipment", "Personnel", "Travel", "Other"],
-        "Budgeted (AED)":      [500000.0, 300000.0, 50000.0, 30000.0],
-        "Budgeted (USD)":      [0.0, 0.0, 10000.0, 5000.0],
-        "Budgeted (AED equiv)":[500000.0, 300000.0, 86725.0, 48362.5],
+        "Category":            CATEGORIES,
+        "Budgeted (AED)":      [500000.0, 50000.0, 300000.0, 50000.0, 25000.0, 10000.0, 30000.0],
+        "Budgeted (USD)":      [0.0, 0.0, 0.0, 10000.0, 5000.0, 1000.0, 5000.0],
+        "Budgeted (AED equiv)":[500000.0, 50000.0, 300000.0, 86725.0, 43362.5, 13672.5, 48362.5],
     })
+
+def test_categories_include_requested_lab_categories():
+    assert CATEGORIES == [
+        "Equipment",
+        "Consumables",
+        "Personnel",
+        "Travel",
+        "Publications",
+        "Memberships",
+        "Other",
+    ]
 
 def test_category_summary_excludes_cancelled():
     txns = make_txns()
@@ -47,6 +57,24 @@ def test_category_summary_pct_used():
     result = get_category_summary(txns, summary_df, 3.6725)
     pct = result["Equipment"]["pct_used"]
     assert 0.001 < pct < 0.01  # 1000/500000 = 0.2%
+
+def test_category_summary_tracks_new_categories():
+    txns = make_txns(
+        **{
+            "Transaction ID": ["TXN-001", "TXN-002", "TXN-003"],
+            "Category": ["Consumables", "Publications", "Memberships"],
+            "Amount (AED)": [1250.0, 0.0, 400.0],
+            "Amount (USD)": [0.0, 1000.0, 0.0],
+            "Amount (AED equiv)": [1250.0, 3672.5, 400.0],
+            "Status": ["Requested", "Paid", "Paid"],
+            "Team": ["Synbio", "Synbio", "Synbio"],
+            "Fiscal Year": ["FY2026-27", "FY2026-27", "FY2026-27"],
+        }
+    )
+    result = get_category_summary(txns, make_summary_df(), 3.6725)
+    assert result["Consumables"]["committed_equiv"] == 1250.0
+    assert result["Publications"]["paid_equiv"] == 3672.5
+    assert result["Memberships"]["remaining"] == 13272.5
 
 def test_get_team_summary():
     txns = make_txns()
@@ -65,9 +93,9 @@ def test_get_lab_totals():
     txns = make_txns()
     summary_df = make_summary_df()
     result = get_lab_totals(txns, summary_df, 3.6725)
-    assert result["total_budget"] == pytest.approx(935087.5, abs=1)
+    assert result["total_budget"] == pytest.approx(1042122.5, abs=1)
     assert result["total_spent"] == 1500.0  # 1000 + 500 (cancelled excluded)
-    assert result["remaining"] == pytest.approx(935087.5 - 1500.0, abs=1)
+    assert result["remaining"] == pytest.approx(1042122.5 - 1500.0, abs=1)
 
 def test_fiscal_year_starts_on_september_first():
     assert fiscal_year_for_date("2026-08-31") == "FY2025-26"

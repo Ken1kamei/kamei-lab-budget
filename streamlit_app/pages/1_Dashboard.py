@@ -5,6 +5,7 @@ import pandas as pd
 from utils.sheets import get_transactions, get_summary, get_exchange_rate, get_teams
 from utils.budget import get_category_summary, get_team_summary, get_lab_totals, monthly_spending
 from utils.auth import require_role, is_pi, current_team
+from utils.categories import CATEGORY_COLOR_SEQUENCE
 
 require_role("pi", "lead", "member")
 
@@ -28,22 +29,24 @@ if is_pi():
     totals      = get_lab_totals(txns, summary, rate)
 
     # Summary cards
-    cols = st.columns(4)
-    for i, (cat, data) in enumerate(cat_summary.items()):
-        with cols[i]:
-            committed = data["committed_equiv"]  / divisor
-            paid = data["paid_equiv"] / divisor
-            budget = data["budget_equiv"] / divisor
-            pct    = data["pct_used"]
-            color  = "🔴" if pct > 0.9 else "🟡" if pct > 0.7 else "🟢"
-            st.metric(
-                label=f"{color} {cat}",
-                value=f"{sym}{committed:,.0f} committed",
-                delta=f"{sym}{budget - committed:,.0f} remaining",
-                delta_color="normal",
-            )
-            st.caption(f"Paid: {sym}{paid:,.0f} / Budget: {sym}{budget:,.0f}")
-            st.progress(min(pct, 1.0))
+    summary_items = list(cat_summary.items())
+    for start in range(0, len(summary_items), 4):
+        cols = st.columns(min(4, len(summary_items) - start))
+        for i, (cat, data) in enumerate(summary_items[start:start + 4]):
+            with cols[i]:
+                committed = data["committed_equiv"]  / divisor
+                paid = data["paid_equiv"] / divisor
+                budget = data["budget_equiv"] / divisor
+                pct    = data["pct_used"]
+                color  = "🔴" if pct > 0.9 else "🟡" if pct > 0.7 else "🟢"
+                st.metric(
+                    label=f"{color} {cat}",
+                    value=f"{sym}{committed:,.0f} committed",
+                    delta=f"{sym}{budget - committed:,.0f} remaining",
+                    delta_color="normal",
+                )
+                st.caption(f"Paid: {sym}{paid:,.0f} / Budget: {sym}{budget:,.0f}")
+                st.progress(min(pct, 1.0))
 
     st.divider()
 
@@ -102,7 +105,7 @@ monthly_df  = monthly_spending(filtered)
 
 if not monthly_df.empty:
     fig2 = px.bar(monthly_df, x="month", y="amount_equiv", color="category",
-                  color_discrete_sequence=["#57068C","#9c27b0","#ce93d8","#e1bee7"],
+                  color_discrete_sequence=CATEGORY_COLOR_SEQUENCE,
                   labels={"amount_equiv": f"Amount (AED)", "month": "Month"},
                   title="")
     fig2.update_layout(height=280, margin=dict(t=10, b=20))

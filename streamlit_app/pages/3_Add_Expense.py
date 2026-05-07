@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import date
 from utils.sheets import get_teams, get_exchange_rate, append_transaction
 from utils.auth import require_role, is_pi, can_edit, current_team
+from utils.categories import CATEGORIES, SUBCATEGORIES
 
 require_role("pi", "lead", "member")
 
@@ -11,20 +12,13 @@ teams_df  = get_teams()
 rate      = get_exchange_rate()
 my_team   = current_team()
 
-SUBCATS = {
-    "Equipment":  ["Consumables","Capital Equipment","Software","Lab Supplies","Other"],
-    "Personnel":  ["Research Assistant","Postdoc","Technician","Visiting Researcher","Other"],
-    "Travel":     ["Conference","Field Work","Collaboration Visit","Other"],
-    "Other":      ["Office Supplies","Publication Fees","Maintenance","Other"],
-}
-
 with st.form("add_expense_form", clear_on_submit=True):
     col1, col2 = st.columns(2)
     with col1:
         exp_date = st.date_input("Date *", value=date.today())
-        category = st.selectbox("Category *", ["Equipment","Personnel","Travel","Other"])
+        category = st.selectbox("Category *", CATEGORIES)
     with col2:
-        subcat   = st.selectbox("Sub-category", SUBCATS.get(category, ["Other"]))
+        subcat   = st.selectbox("Sub-category", SUBCATEGORIES.get(category, ["Other"]))
         if can_edit():
             status = st.selectbox("Status", ["Requested", "Approved", "Ordered", "Pending Review", "Delivered", "Paid"])
         else:

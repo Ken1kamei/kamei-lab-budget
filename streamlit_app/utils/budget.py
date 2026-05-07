@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import Any
+from utils.categories import CATEGORIES
 
-CATEGORIES = ["Equipment", "Personnel", "Travel", "Other"]
 LIFECYCLE_STATUSES = [
     "Requested",
     "Approved",
