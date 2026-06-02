@@ -4,10 +4,10 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.sheets import get_teams, get_exchange_rate, upsert_imported_transaction
+from utils.sheets import get_teams, get_currency_rates_to_usd, upsert_imported_transaction
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
 from utils.auth import require_role, is_pi, current_team
-from utils.budget import to_aed_equivalent
+from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES
 
 require_role("pi", "lead")
@@ -15,7 +15,7 @@ require_role("pi", "lead")
 st.title("📥 Import Invoice / Receipt")
 
 teams_df = get_teams()
-rate = get_exchange_rate()
+rates = get_currency_rates_to_usd()
 my_team = current_team()
 
 def _category_index(value: str) -> int:
@@ -57,25 +57,25 @@ with tab1:
                 )
                 po_num = st.text_input("PO Number", value=parsed.get("po_number", ""))
 
-            currency = parsed.get("currency", "AED")
+            parsed_currency = str(parsed.get("currency", "USD")).upper()
+            if parsed_currency not in SUPPORTED_CURRENCIES:
+                parsed_currency = "USD"
             total = float(parsed.get("total_amount", 0.0))
-            col3, col4 = st.columns(2)
+            col3, col4, col5 = st.columns(3)
             with col3:
-                aed = st.number_input(
-                    "Amount (AED)",
-                    value=total if currency == "AED" else 0.0,
-                    min_value=0.0,
+                currency = st.selectbox(
+                    "Currency",
+                    SUPPORTED_CURRENCIES,
+                    index=SUPPORTED_CURRENCIES.index(parsed_currency),
                 )
             with col4:
-                usd = st.number_input(
-                    "Amount (USD)",
-                    value=total if currency == "USD" else 0.0,
-                    min_value=0.0,
-                )
+                amount = st.number_input("Amount", value=total, min_value=0.0)
+            usd_equiv = round_currency(to_usd_equivalent(currency, amount, rates))
+            with col5:
+                st.metric("Amount (USD equiv)", f"${usd_equiv:,.2f}")
 
-            if aed + usd > 0:
-                equiv = to_aed_equivalent(aed, usd, rate)
-                st.caption(f"AED equivalent: **AED {equiv:,.2f}** (rate: {rate})")
+            if amount > 0:
+                st.caption(f"{currency} {amount:,.2f} → USD ${usd_equiv:,.2f}")
 
             description = st.text_input("Description", value=pdf_file.name)
             notes = st.text_area("Notes", value=f"Parsed by Python from {pdf_file.name}")
@@ -106,8 +106,9 @@ with tab1:
                         "Description": description,
                         "Invoice Number": inv_num,
                         "PO Number": po_num,
-                        "Amount (AED)": aed,
-                        "Amount (USD)": usd,
+                        "Currency": currency,
+                        "Amount": amount,
+                        "Amount (USD equiv)": usd_equiv,
                         "Status": status,
                         "Notes": notes,
                         "Entry Method": "Auto-PDF",
@@ -136,9 +137,18 @@ with tab2:
             preview_df = pd.DataFrame(rows)[
                 ["Date", "Description", "Amount (AED)", "Notes"]
             ]
-            st.dataframe(preview_df, use_container_width=True, hide_index=True)
-            total_aed = sum(r["Amount (AED)"] for r in rows)
-            st.metric("Total", f"AED {total_aed:,.2f}")
+            preview_df["Currency"] = "AED"
+            preview_df["Amount"] = preview_df["Amount (AED)"]
+            preview_df["Amount (USD equiv)"] = preview_df["Amount"].map(
+                lambda value: round_currency(to_usd_equivalent("AED", value, rates))
+            )
+            st.dataframe(
+                preview_df[["Date", "Description", "Currency", "Amount", "Amount (USD equiv)", "Notes"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+            total_usd = float(preview_df["Amount (USD equiv)"].sum())
+            st.metric("Total", f"${total_usd:,.2f}")
 
             if is_pi():
                 team_names = ["(Lab-wide)"] + (
@@ -156,6 +166,11 @@ with tab2:
                     row["Team"] = team_value
                     row["Entered By"] = st.session_state.email
                     row["Status"] = "Pending Review"
+                    row["Currency"] = "AED"
+                    row["Amount"] = row.get("Amount (AED)", 0)
+                    row["Amount (USD equiv)"] = round_currency(
+                        to_usd_equivalent("AED", row["Amount"], rates)
+                    )
                     upsert_imported_transaction(row)
                     prog.progress((i + 1) / len(rows))
                 st.success(f"Imported or updated {len(rows)} transaction(s) for review.")

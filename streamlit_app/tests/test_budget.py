@@ -2,13 +2,16 @@ import pandas as pd
 import pytest
 from utils.budget import (
     CATEGORIES,
+    DEFAULT_RATES_TO_USD,
     get_category_summary,
     get_team_summary,
     get_lab_totals,
     fiscal_year_for_date,
     normalize_aed_equivalent,
+    normalize_usd_equivalent,
     round_currency,
     split_commitments,
+    to_usd_equivalent,
     to_aed_equivalent,
 )
 
@@ -20,19 +23,22 @@ def make_txns(**kwargs):
         "Amount (AED)":   [1000.0, 500.0, 200.0],
         "Amount (USD)":   [0.0, 0.0, 0.0],
         "Amount (AED equiv)": [1000.0, 500.0, 200.0],
+        "Amount (USD equiv)": [1000.0, 500.0, 200.0],
         "Status":         ["Paid", "Paid", "Cancelled"],
         "Team":           ["Synbio", "Imaging", "Synbio"],
         "Fiscal Year":    ["FY2025-26", "FY2025-26", "FY2025-26"],
     }
     defaults.update(kwargs)
+    if "Amount (USD equiv)" not in kwargs:
+        defaults["Amount (USD equiv)"] = defaults["Amount (AED equiv)"]
     return pd.DataFrame(defaults)
 
 def make_summary_df():
     return pd.DataFrame({
         "Category":            CATEGORIES,
-        "Budgeted (AED)":      [500000.0, 50000.0, 300000.0, 50000.0, 25000.0, 10000.0, 30000.0],
-        "Budgeted (USD)":      [0.0, 0.0, 0.0, 10000.0, 5000.0, 1000.0, 5000.0],
-        "Budgeted (AED equiv)":[500000.0, 50000.0, 300000.0, 86725.0, 43362.5, 13672.5, 48362.5],
+        "Budgeted (AED)":      [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "Budgeted (USD)":      [500000.0, 50000.0, 300000.0, 86725.0, 43362.5, 13672.5, 48362.5],
+        "Budgeted (AED equiv)":[1836250.0, 183625.0, 1101750.0, 318505.56, 159252.78, 50208.56, 177628.78],
     })
 
 def test_categories_include_requested_lab_categories():
@@ -69,6 +75,7 @@ def test_category_summary_tracks_new_categories():
             "Amount (AED)": [1250.0, 0.0, 400.0],
             "Amount (USD)": [0.0, 1000.0, 0.0],
             "Amount (AED equiv)": [1250.0, 3672.5, 400.0],
+            "Amount (USD equiv)": [1250.0, 3672.5, 400.0],
             "Status": ["Requested", "Paid", "Paid"],
             "Team": ["Synbio", "Synbio", "Synbio"],
             "Fiscal Year": ["FY2026-27", "FY2026-27", "FY2026-27"],
@@ -83,7 +90,7 @@ def test_get_team_summary():
     txns = make_txns()
     teams_df = pd.DataFrame({
         "Team Name": ["Synbio", "Imaging"],
-        "Allocation (AED)": [400000.0, 280000.0],
+        "Allocation (USD)": [400000.0, 280000.0],
         "Active": ["Y", "Y"],
     })
     result = get_team_summary(txns, teams_df)
@@ -113,6 +120,7 @@ def test_split_commitments_counts_requested_as_committed_and_paid_separately():
             "Amount (USD)": [0.0, 0.0, 0.0, 0.0],
             "Status": ["Requested", "Approved", "Paid", "Cancelled"],
             "Amount (AED equiv)": [100.0, 200.0, 300.0, 400.0],
+            "Amount (USD equiv)": [100.0, 200.0, 300.0, 400.0],
             "Team": ["Synbio", "Synbio", "Synbio", "Synbio"],
             "Fiscal Year": ["FY2026-27", "FY2026-27", "FY2026-27", "FY2026-27"],
         }
@@ -124,8 +132,41 @@ def test_split_commitments_counts_requested_as_committed_and_paid_separately():
 def test_to_aed_equivalent_converts_usd_with_configured_rate():
     assert to_aed_equivalent(0.0, 2506.0, 3.6725) == pytest.approx(9203.285)
 
+def test_to_usd_equivalent_converts_supported_currencies():
+    rates = {
+        **DEFAULT_RATES_TO_USD,
+        "AED": 1 / 3.6725,
+        "EUR": 1.08,
+        "JPY": 0.0064,
+        "GBP": 1.27,
+    }
+    assert to_usd_equivalent("USD", 2506.0, rates) == pytest.approx(2506.0)
+    assert to_usd_equivalent("AED", 9203.285, rates) == pytest.approx(2506.0)
+    assert to_usd_equivalent("EUR", 100.0, rates) == pytest.approx(108.0)
+    assert to_usd_equivalent("JPY", 1000.0, rates) == pytest.approx(6.4)
+    assert to_usd_equivalent("GBP", 100.0, rates) == pytest.approx(127.0)
+
 def test_round_currency_uses_half_up_accounting_rounding():
     assert round_currency(9203.285) == 9203.29
+
+def test_normalize_usd_equivalent_repairs_old_aed_usd_rows():
+    txns = pd.DataFrame({
+        "Amount (AED)": [9203.285, 0.0],
+        "Amount (USD)": [0.0, 2506.0],
+        "Amount (AED equiv)": [9203.29, 9203.29],
+        "Currency": ["", ""],
+        "Amount": ["", ""],
+        "Amount (USD equiv)": ["", ""],
+    })
+
+    result = normalize_usd_equivalent(txns, {"AED": 1 / 3.6725, "USD": 1.0})
+
+    assert result.loc[0, "Currency"] == "AED"
+    assert result.loc[0, "Amount"] == pytest.approx(9203.285)
+    assert result.loc[0, "Amount (USD equiv)"] == pytest.approx(2506.0)
+    assert result.loc[1, "Currency"] == "USD"
+    assert result.loc[1, "Amount"] == pytest.approx(2506.0)
+    assert result.loc[1, "Amount (USD equiv)"] == pytest.approx(2506.0)
 
 def test_normalize_aed_equivalent_repairs_usd_only_rows_with_zero_equiv():
     txns = pd.DataFrame({
@@ -150,7 +191,7 @@ def test_team_summary_exposes_committed_paid_and_remaining():
     )
     teams_df = pd.DataFrame({
         "Team Name": ["Synbio"],
-        "Allocation (AED)": [1000.0],
+        "Allocation (USD)": [1000.0],
         "Active": ["Y"],
     })
     result = get_team_summary(txns, teams_df)

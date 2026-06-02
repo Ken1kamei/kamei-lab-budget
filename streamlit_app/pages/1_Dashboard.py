@@ -21,10 +21,10 @@ summary   = get_summary()
 teams_df  = get_teams()
 rate      = get_exchange_rate()
 
-# ── Currency toggle ───────────────────────────────────────────────────────────
-currency = st.radio("Display in", ["AED", "USD"], horizontal=True)
-divisor  = rate if currency == "USD" else 1.0
-sym      = "$" if currency == "USD" else "AED "
+# ── Main currency ─────────────────────────────────────────────────────────────
+currency = "USD"
+divisor  = 1.0
+sym      = "$"
 
 # ── Role-specific view ────────────────────────────────────────────────────────
 if is_pi():
@@ -67,7 +67,7 @@ if is_pi():
             go.Bar(name="Allocated", x=team_names, y=alloc_vals,  marker_color="#e1bee7"),
         ])
         fig.update_layout(barmode="group", title="Team Spending vs Allocation",
-                          yaxis_title=f"Amount ({currency})", height=300,
+                          yaxis_title="Amount (USD)", height=300,
                           margin=dict(t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
@@ -96,10 +96,10 @@ else:
     st.divider()
     st.subheader("🔬 Lab-Wide Summary")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Budget",  f"AED {totals['total_budget']:,.0f}")
-    c2.metric("Total Committed",   f"AED {totals['total_committed']:,.0f}",
-              delta=f"Paid AED {totals['total_paid']:,.0f}", delta_color="normal")
-    c3.metric("Total Remaining", f"AED {totals['remaining']:,.0f}")
+    c1.metric("Total Budget",  f"${totals['total_budget']:,.0f}")
+    c2.metric("Total Committed",   f"${totals['total_committed']:,.0f}",
+              delta=f"Paid ${totals['total_paid']:,.0f}", delta_color="normal")
+    c3.metric("Total Remaining", f"${totals['remaining']:,.0f}")
 
 # ── Monthly spending chart (all roles) ───────────────────────────────────────
 st.subheader("📈 Monthly Spending Trend")
@@ -110,7 +110,7 @@ monthly_df  = monthly_spending(filtered)
 if not monthly_df.empty:
     fig2 = px.bar(monthly_df, x="month", y="amount_equiv", color="category",
                   color_discrete_sequence=CATEGORY_COLOR_SEQUENCE,
-                  labels={"amount_equiv": f"Amount (AED)", "month": "Month"},
+                  labels={"amount_equiv": "Amount (USD)", "month": "Month"},
                   title="")
     fig2.update_layout(height=280, margin=dict(t=10, b=20))
     st.plotly_chart(fig2, use_container_width=True)
@@ -123,8 +123,8 @@ display_txns = txns if is_pi() else txns[txns["Team"] == current_team()] if "Tea
 recent = display_txns.tail(10).iloc[::-1]  # newest first
 if not recent.empty:
     show_cols = ["Date", "Vendor / Payee", "Description",
-                 "Category", "Team", "Amount (AED)", "Amount (USD)",
-                 "Amount (AED equiv)", "Status"]
+                 "Category", "Team", "Currency", "Amount",
+                 "Amount (USD equiv)", "Status"]
     show_cols = [c for c in show_cols if c in recent.columns]
     st.dataframe(recent[show_cols], use_container_width=True, hide_index=True)
 else:

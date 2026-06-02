@@ -49,7 +49,7 @@ st.caption(f"Showing {len(filtered)} of {len(txns)} transactions")
 
 SHOW_COLS = ["Transaction ID", "Date", "Category", "Team",
              "Vendor / Payee", "Description",
-             "Amount (AED)", "Amount (USD)", "Amount (AED equiv)", "Status", "Entry Method",
+             "Currency", "Amount", "Amount (USD equiv)", "Status", "Entry Method",
              "Approved By", "Approved At"]
 show_cols = [c for c in SHOW_COLS if c in filtered.columns]
 st.dataframe(filtered[show_cols], use_container_width=True, hide_index=True)

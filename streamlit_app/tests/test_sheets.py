@@ -107,6 +107,7 @@ def test_append_transaction_calls_append_row(mock_ss):
     mock_ws = MagicMock()
     mock_ws.get_all_records.return_value = []
     mock_ws.get_all_values.return_value = [["Transaction ID"]]
+    mock_ws.row_values.return_value = ["Transaction ID"]
     mock_ss.return_value.worksheet.return_value = mock_ws
     row_data = {"Transaction ID": "TXN-002", "Category": "Equipment",
                 "Amount (AED)": 200, "Team": "Synbio"}
@@ -117,6 +118,34 @@ def test_append_transaction_calls_append_row(mock_ss):
     assert len(appended) == len(TXN_COLUMNS)
     assert "Approved By" in TXN_COLUMNS
     assert "Approved At" in TXN_COLUMNS
+    assert "Currency" in TXN_COLUMNS
+    assert "Amount" in TXN_COLUMNS
+    assert "Amount (USD equiv)" in TXN_COLUMNS
+
+@patch("utils.sheets.get_currency_rates_to_usd", return_value={"USD": 1.0, "AED": 1 / 3.6725, "EUR": 1.08, "JPY": 0.0064, "GBP": 1.27})
+@patch("utils.sheets.get_spreadsheet")
+def test_append_transaction_writes_selected_currency_amount_and_usd_equiv(mock_ss, _rates):
+    from utils.sheets import TXN_COLUMNS, append_transaction
+    mock_ws = MagicMock()
+    mock_ws.get_all_records.return_value = []
+    mock_ws.get_all_values.return_value = [TXN_COLUMNS]
+    mock_ws.row_values.return_value = TXN_COLUMNS
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    append_transaction({
+        "Transaction ID": "TXN-003",
+        "Category": "Consumables",
+        "Currency": "EUR",
+        "Amount": 100,
+        "Team": "Synbio",
+    })
+
+    appended = mock_ws.append_row.call_args.args[0]
+    assert appended[TXN_COLUMNS.index("Currency")] == "EUR"
+    assert appended[TXN_COLUMNS.index("Amount")] == 100.0
+    assert appended[TXN_COLUMNS.index("Amount (USD equiv)")] == 108.0
+    assert appended[TXN_COLUMNS.index("Amount (AED)")] == 0.0
+    assert appended[TXN_COLUMNS.index("Amount (USD)")] == 0.0
 
 @patch("utils.sheets.get_exchange_rate", return_value=3.6725)
 @patch("utils.sheets.get_spreadsheet")
@@ -136,6 +165,25 @@ def test_update_transaction_recalculates_aed_equiv_when_amounts_change(mock_ss, 
 
     calls = [call.args[:3] for call in mock_ws.update_cell.call_args_list]
     assert (2, TXN_COLUMNS.index("Amount (AED equiv)") + 1, 9203.29) in calls
+
+@patch("utils.sheets.get_currency_rates_to_usd", return_value={"USD": 1.0, "AED": 1 / 3.6725, "EUR": 1.08, "JPY": 0.0064, "GBP": 1.27})
+@patch("utils.sheets.get_spreadsheet")
+def test_update_transaction_recalculates_usd_equiv_when_currency_amount_changes(mock_ss, _rates):
+    from utils.sheets import TXN_COLUMNS, update_transaction
+    mock_ws = MagicMock()
+    row = [""] * len(TXN_COLUMNS)
+    row[TXN_COLUMNS.index("Transaction ID")] = "TXN-001"
+    row[TXN_COLUMNS.index("Currency")] = "USD"
+    row[TXN_COLUMNS.index("Amount")] = "0"
+    row[TXN_COLUMNS.index("Amount (USD equiv)")] = "0"
+    mock_ws.get_all_values.return_value = [TXN_COLUMNS, row]
+    mock_ws.row_values.return_value = TXN_COLUMNS
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    update_transaction("TXN-001", {"Currency": "GBP", "Amount": 100})
+
+    calls = [call.args[:3] for call in mock_ws.update_cell.call_args_list]
+    assert (2, TXN_COLUMNS.index("Amount (USD equiv)") + 1, 127.0) in calls
 
 @patch("utils.sheets.get_exchange_rate", return_value=3.6725)
 @patch("utils.sheets.get_spreadsheet")

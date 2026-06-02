@@ -4,7 +4,7 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.sheets import (get_teams, get_exchange_rate, get_summary,
+from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_usd, get_summary,
                            set_budget_allocation, upsert_team, set_config,
                            get_config, get_transactions, append_transaction,
                            update_transaction)
@@ -24,20 +24,18 @@ with tab1:
     summary_df = get_summary()
 
     with st.form("budget_alloc_form"):
-        st.markdown("**Enter amounts in AED, USD, or both:**")
+        st.markdown("**Enter category budgets in USD:**")
         alloc_data = {}
         for cat in CATEGORIES:
             row = summary_df[summary_df["Category"] == cat] if "Category" in summary_df.columns else pd.DataFrame()
-            curr_aed = float(row["Budgeted (AED)"].iloc[0]) if not row.empty else 0.0
             curr_usd = float(row["Budgeted (USD)"].iloc[0]) if not row.empty else 0.0
-            c1, c2, c3 = st.columns([2, 1, 1])
+            c1, c2 = st.columns([2, 1])
             c1.markdown(f"**{cat}**")
-            aed = c2.number_input(f"AED##{cat}", value=curr_aed, min_value=0.0, step=1000.0, label_visibility="collapsed")
-            usd = c3.number_input(f"USD##{cat}", value=curr_usd, min_value=0.0, step=1000.0, label_visibility="collapsed")
-            alloc_data[cat] = (aed, usd)
+            usd = c2.number_input(f"USD##{cat}", value=curr_usd, min_value=0.0, step=1000.0, label_visibility="collapsed")
+            alloc_data[cat] = usd
         if st.form_submit_button("Save Allocations", type="primary"):
-            for cat, (aed, usd) in alloc_data.items():
-                set_budget_allocation(cat, aed, usd)
+            for cat, usd in alloc_data.items():
+                set_budget_allocation(cat, 0, usd)
             st.success("✓ Budget allocations saved.")
 
 with tab2:
@@ -53,7 +51,7 @@ with tab2:
     st.markdown("**Add / Update Team:**")
     with st.form("team_form"):
         team_name     = st.text_input("Team Name *")
-        allocation    = st.number_input("Total Allocation (AED)", min_value=0.0, step=1000.0)
+        allocation    = st.number_input("Total Allocation (USD)", min_value=0.0, step=1000.0)
         lead_emails   = st.text_input("Lead Emails (comma-separated nyu.edu)", placeholder="lead@nyu.edu")
         member_emails = st.text_input("Member Emails (comma-separated nyu.edu)", placeholder="ra@nyu.edu")
         description   = st.text_input("Description (optional)")
@@ -64,7 +62,7 @@ with tab2:
             else:
                 upsert_team({
                     "Team Name":       team_name.strip(),
-                    "Allocation (AED)":allocation,
+                    "Allocation (USD)":allocation,
                     "Lead Emails":     lead_emails.strip(),
                     "Member Emails":   member_emails.strip(),
                     "Description":     description.strip(),
@@ -75,14 +73,27 @@ with tab2:
 
 with tab3:
     current_rate = get_exchange_rate()
-    st.metric("Current AED/USD Rate", f"1 USD = {current_rate} AED")
+    rates = get_currency_rates_to_usd()
+    st.metric("Current AED Rate", f"1 AED = ${rates['AED']:.4f}")
     with st.form("rate_form"):
         new_rate = st.number_input("New Rate (1 USD = ? AED)",
                                    value=float(current_rate), min_value=0.001,
                                    step=0.0001, format="%.4f")
+        eur = st.number_input("EUR/USD Exchange Rate (1 EUR = ? USD)",
+                              value=float(rates["EUR"]), min_value=0.0001,
+                              step=0.0001, format="%.4f")
+        jpy = st.number_input("JPY/USD Exchange Rate (1 JPY = ? USD)",
+                              value=float(rates["JPY"]), min_value=0.000001,
+                              step=0.0001, format="%.6f")
+        gbp = st.number_input("GBP/USD Exchange Rate (1 GBP = ? USD)",
+                              value=float(rates["GBP"]), min_value=0.0001,
+                              step=0.0001, format="%.4f")
         if st.form_submit_button("Update Rate", type="primary"):
             set_config("AED/USD Exchange Rate", new_rate)
-            st.success(f"✓ Rate updated to {new_rate}")
+            set_config("EUR/USD Exchange Rate", eur)
+            set_config("JPY/USD Exchange Rate", jpy)
+            set_config("GBP/USD Exchange Rate", gbp)
+            st.success("✓ Currency rates updated.")
 
 with tab4:
     st.markdown("Manage the fiscal-year label and automation settings for the current spreadsheet.")
@@ -113,24 +124,24 @@ with tab5:
             samples = [
                 {"Date": (date.today() - timedelta(days=80)).isoformat(), "Category":"Equipment",
                  "Vendor / Payee":"Fisher Scientific","Description":"Pipette tips 1000uL",
-                 "Amount (AED)":3450,"Amount (USD)":0,"Status":"Delivered","Team":"",
+                 "Currency":"AED","Amount":3450,"Status":"Delivered","Team":"",
                  "Entry Method":"Manual","Notes":"[TEST] Auto-generated"},
                 {"Date": (date.today() - timedelta(days=60)).isoformat(), "Category":"Travel",
                  "Vendor / Payee":"Emirates Airlines","Description":"AUH-BOS-AUH conference",
-                 "Amount (AED)":0,"Amount (USD)":1850,"Status":"Paid","Team":"",
+                 "Currency":"USD","Amount":1850,"Status":"Paid","Team":"",
                  "Entry Method":"Manual","Notes":"[TEST] Auto-generated"},
                 {"Date": (date.today() - timedelta(days=30)).isoformat(), "Category":"Personnel",
                  "Vendor / Payee":"Postdoc — October","Description":"Monthly stipend",
-                 "Amount (AED)":18000,"Amount (USD)":0,"Status":"Paid","Team":"",
+                 "Currency":"AED","Amount":18000,"Status":"Paid","Team":"",
                  "Entry Method":"Manual","Notes":"[TEST] Auto-generated"},
             ]
-            set_budget_allocation("Equipment", 500000, 0)
-            set_budget_allocation("Consumables", 50000, 0)
-            set_budget_allocation("Personnel", 300000, 0)
-            set_budget_allocation("Travel", 50000, 10000)
-            set_budget_allocation("Publications", 25000, 5000)
-            set_budget_allocation("Memberships", 10000, 1000)
-            set_budget_allocation("Other", 30000, 5000)
+            set_budget_allocation("Equipment", 0, 135000)
+            set_budget_allocation("Consumables", 0, 14000)
+            set_budget_allocation("Personnel", 0, 82000)
+            set_budget_allocation("Travel", 0, 24000)
+            set_budget_allocation("Publications", 0, 12000)
+            set_budget_allocation("Memberships", 0, 4000)
+            set_budget_allocation("Other", 0, 13000)
             for s in samples:
                 s["Entered By"] = st.session_state.email
                 append_transaction(s)

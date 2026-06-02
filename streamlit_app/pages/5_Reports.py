@@ -26,18 +26,18 @@ summary_rows = []
 for cat, data in cat_summary.items():
     summary_rows.append({
         "Category":           cat,
-        "Budget (AED equiv)": f"AED {data['budget_equiv']:,.0f}",
-        "Committed":          f"AED {data['committed_equiv']:,.0f}",
-        "Paid":               f"AED {data['paid_equiv']:,.0f}",
-        "Remaining":          f"AED {data['remaining']:,.0f}",
+        "Budget (USD)":       f"${data['budget_equiv']:,.0f}",
+        "Committed":          f"${data['committed_equiv']:,.0f}",
+        "Paid":               f"${data['paid_equiv']:,.0f}",
+        "Remaining":          f"${data['remaining']:,.0f}",
         "% Used":             f"{data['pct_used']*100:.1f}%",
     })
 summary_rows.append({
     "Category":           "TOTAL",
-    "Budget (AED equiv)": f"AED {totals['total_budget']:,.0f}",
-    "Committed":          f"AED {totals['total_committed']:,.0f}",
-    "Paid":               f"AED {totals['total_paid']:,.0f}",
-    "Remaining":          f"AED {totals['remaining']:,.0f}",
+    "Budget (USD)":       f"${totals['total_budget']:,.0f}",
+    "Committed":          f"${totals['total_committed']:,.0f}",
+    "Paid":               f"${totals['total_paid']:,.0f}",
+    "Remaining":          f"${totals['remaining']:,.0f}",
     "% Used":             f"{totals['pct_used']*100:.1f}%",
 })
 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
@@ -90,7 +90,7 @@ monthly_df = monthly_spending(team_txns)
 if not monthly_df.empty:
     fig4 = px.bar(monthly_df, x="month", y="amount_equiv", color="category",
                   color_discrete_sequence=["#57068C","#9c27b0","#ce93d8","#e1bee7"],
-                  labels={"amount_equiv":"Amount (AED)","month":"Month"})
+                  labels={"amount_equiv":"Amount (USD)","month":"Month"})
     fig4.update_layout(height=320, margin=dict(t=10,b=20))
     st.plotly_chart(fig4, use_container_width=True)
 else:

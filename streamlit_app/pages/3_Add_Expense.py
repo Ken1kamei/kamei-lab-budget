@@ -4,8 +4,9 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.sheets import get_teams, get_exchange_rate, append_transaction
+from utils.sheets import get_teams, get_currency_rates_to_usd, append_transaction
 from utils.auth import require_role, is_pi, can_edit, current_team
+from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 
 require_role("pi", "lead", "member")
@@ -13,7 +14,7 @@ require_role("pi", "lead", "member")
 st.title("Add Request")
 
 teams_df  = get_teams()
-rate      = get_exchange_rate()
+rates     = get_currency_rates_to_usd()
 my_team   = current_team()
 
 with st.form("add_expense_form", clear_on_submit=True):
@@ -37,12 +38,12 @@ with st.form("add_expense_form", clear_on_submit=True):
         po_num  = st.text_input("PO Number (optional)")
         inv_num = st.text_input("Invoice Number (optional)")
     with col4:
-        aed_amt = st.number_input("Amount (AED) — 0 if paid in USD", min_value=0.0, step=0.01)
-        usd_amt = st.number_input("Amount (USD) — 0 if paid in AED", min_value=0.0, step=0.01)
+        currency = st.selectbox("Currency", SUPPORTED_CURRENCIES)
+        amount = st.number_input("Amount", min_value=0.0, step=0.01)
 
-    if aed_amt + usd_amt > 0:
-        equiv = aed_amt + usd_amt * rate
-        st.caption(f"AED equivalent: **AED {equiv:,.2f}** (rate: {rate})")
+    usd_equiv = round_currency(to_usd_equivalent(currency, amount, rates))
+    if amount > 0:
+        st.caption(f"USD equivalent: **${usd_equiv:,.2f}**")
 
     pdf_link = st.text_input("PDF Link (Google Drive URL, optional)")
     notes    = st.text_area("Notes", height=80)
@@ -76,8 +77,9 @@ if submitted:
             "Description":   description.strip(),
             "PO Number":     po_num.strip(),
             "Invoice Number": inv_num.strip(),
-            "Amount (AED)":  aed_amt,
-            "Amount (USD)":  usd_amt,
+            "Currency":      currency,
+            "Amount":        amount,
+            "Amount (USD equiv)": usd_equiv,
             "Status":        status,
             "PDF Link":      pdf_link.strip(),
             "Notes":         notes.strip(),

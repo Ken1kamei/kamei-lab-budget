@@ -97,8 +97,8 @@ def _normalise_date(s):
 
 def _find_total(text, tables):
     for pat in [
-        r"(?:Grand\s+)?Total[:\s]+(?:AED|USD|\$)?\s*([\d,]+\.?\d*)",
-        r"Amount\s+(?:Due|Payable)[:\s]+(?:AED|USD|\$)?\s*([\d,]+\.?\d*)",
+        r"(?:Grand\s+)?Total[:\s]+(?:AED|USD|EUR|JPY|GBP|€|¥|£|\$)?\s*([\d,]+\.?\d*)",
+        r"Amount\s+(?:Due|Payable)[:\s]+(?:AED|USD|EUR|JPY|GBP|€|¥|£|\$)?\s*([\d,]+\.?\d*)",
     ]:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
@@ -123,9 +123,15 @@ def _find_total(text, tables):
 def _detect_currency(text):
     if re.search(r"AED|د\.إ|Dhs\.?|Dirham", text, re.IGNORECASE):
         return "AED"
+    if re.search(r"EUR|Euro|€", text, re.IGNORECASE):
+        return "EUR"
+    if re.search(r"JPY|Japanese Yen|¥", text, re.IGNORECASE):
+        return "JPY"
+    if re.search(r"GBP|Pound Sterling|£", text, re.IGNORECASE):
+        return "GBP"
     if re.search(r"\$|USD|US Dollar", text):
         return "USD"
-    return "AED"
+    return "USD"
 
 
 def _guess_category(text):

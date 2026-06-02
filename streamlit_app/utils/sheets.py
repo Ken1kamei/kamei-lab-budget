@@ -7,10 +7,14 @@ from zoneinfo import ZoneInfo
 from utils.budget import (
     fiscal_year_for_date,
     DEFAULT_AED_USD_EXCHANGE_RATE,
+    DEFAULT_RATES_TO_USD,
     LIFECYCLE_STATUSES,
     normalize_aed_equivalent,
+    normalize_usd_equivalent,
     round_currency,
+    SUPPORTED_CURRENCIES,
     to_aed_equivalent,
+    to_usd_equivalent,
 )
 from utils.categories import CATEGORIES
 
@@ -23,6 +27,7 @@ DUBAI_TZ = ZoneInfo("Asia/Dubai")
 TXN_COLUMNS = [
     "Transaction ID", "Date", "Fiscal Year", "Category", "Sub-category",
     "Vendor / Payee", "Description", "PO Number", "Invoice Number",
+    "Currency", "Amount", "Amount (USD equiv)",
     "Amount (AED)", "Amount (USD)", "Amount (AED equiv)", "Status",
     "Receipt Confirmed", "PDF Link", "Email Thread ID", "Entered By",
     "Entry Method", "Notes", "Last Modified", "Team", "Approved By",
@@ -100,18 +105,19 @@ def get_transactions() -> pd.DataFrame:
     for col in TXN_COLUMNS:
         if col not in df.columns:
             df[col] = ""
-    return normalize_aed_equivalent(df, DEFAULT_AED_USD_EXCHANGE_RATE)
+    df = normalize_aed_equivalent(df, DEFAULT_AED_USD_EXCHANGE_RATE)
+    return normalize_usd_equivalent(df, DEFAULT_RATES_TO_USD)
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_teams() -> pd.DataFrame:
     try:
         records = _ws("Teams").get_all_records()
         return pd.DataFrame(records) if records else pd.DataFrame(
-            columns=["Team Name","Allocation (AED)","Lead Emails",
+            columns=["Team Name","Allocation (AED)","Allocation (USD)","Lead Emails",
                      "Member Emails","Description","Active"])
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame(columns=["Team Name","Allocation (AED)",
-                                      "Lead Emails","Member Emails",
+                                      "Allocation (USD)","Lead Emails","Member Emails",
                                       "Description","Active"])
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Teams", e)
@@ -150,6 +156,18 @@ def get_exchange_rate() -> float:
     except (TypeError, ValueError):
         return 3.6725
 
+def get_currency_rates_to_usd() -> dict[str, float]:
+    rates = dict(DEFAULT_RATES_TO_USD)
+    aed_per_usd = get_exchange_rate()
+    rates["AED"] = 1 / aed_per_usd if aed_per_usd else DEFAULT_RATES_TO_USD["AED"]
+    for code in ("EUR", "JPY", "GBP"):
+        val = get_config(f"{code}/USD Exchange Rate")
+        try:
+            rates[code] = float(val)
+        except (TypeError, ValueError):
+            pass
+    return rates
+
 # ── Write ─────────────────────────────────────────────────────────────────────
 
 def _next_txn_id() -> str:
@@ -164,15 +182,25 @@ def _current_fy() -> str:
 def append_transaction(data: dict) -> str:
     """Write one transaction row. Returns the Transaction ID."""
     ws = _ws("Transactions")
-    ensure_transaction_columns()
+    headers = ensure_transaction_columns()
     txn_id = data.get("Transaction ID") or _next_txn_id()
     now_str = datetime.now(DUBAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     # Build row in TXN_COLUMNS order
     rate = get_exchange_rate()
-    aed = float(data.get("Amount (AED)") or 0)
-    usd = float(data.get("Amount (USD)") or 0)
-    equiv = to_aed_equivalent(aed, usd, rate)
+    rates_to_usd = get_currency_rates_to_usd()
+    legacy_aed = float(data.get("Amount (AED)") or 0)
+    legacy_usd = float(data.get("Amount (USD)") or 0)
+    currency = str(data.get("Currency") or "").upper()
+    if currency not in SUPPORTED_CURRENCIES:
+        currency = "AED" if legacy_aed else "USD"
+    amount = float(data.get("Amount") or 0)
+    if amount == 0:
+        amount = legacy_aed if currency == "AED" else legacy_usd
+    usd_equiv = round_currency(to_usd_equivalent(currency, amount, rates_to_usd))
+    aed = amount if currency == "AED" else 0.0
+    usd = amount if currency == "USD" else 0.0
+    equiv = usd_equiv * rate
 
     row = {col: "" for col in TXN_COLUMNS}
     row.update({
@@ -185,6 +213,9 @@ def append_transaction(data: dict) -> str:
         "Description": data.get("Description", ""),
         "PO Number": data.get("PO Number", ""),
         "Invoice Number": data.get("Invoice Number", ""),
+        "Currency": currency,
+        "Amount": amount,
+        "Amount (USD equiv)": usd_equiv,
         "Amount (AED)": aed,
         "Amount (USD)": usd,
         "Amount (AED equiv)": round_currency(equiv),
@@ -201,7 +232,7 @@ def append_transaction(data: dict) -> str:
     })
     if row["Status"] not in LIFECYCLE_STATUSES:
         row["Status"] = "Requested"
-    ws.append_row([row[col] for col in TXN_COLUMNS])
+    ws.append_row([row.get(col, "") for col in headers])
     # Invalidate cache
     st.cache_data.clear()
     return txn_id
@@ -216,20 +247,40 @@ def update_transaction(txn_id: str, updates: dict):
     headers = all_values[0]
     for i, row in enumerate(all_values[1:], start=2):
         if row and row[0] == txn_id:
+            current = {
+                header: row[idx] if idx < len(row) else ""
+                for idx, header in enumerate(headers)
+            }
+            if (
+                {"Currency", "Amount"} & updates.keys()
+                and "Amount (USD equiv)" in headers
+            ):
+                currency = str(updates.get("Currency", current.get("Currency", "USD"))).upper()
+                amount = updates.get("Amount", current.get("Amount", 0))
+                usd_equiv = round_currency(
+                    to_usd_equivalent(currency, amount, get_currency_rates_to_usd())
+                )
+                updates = {**updates, "Amount (USD equiv)": usd_equiv}
+                if "Amount (AED equiv)" in headers:
+                    updates["Amount (AED equiv)"] = round_currency(usd_equiv * get_exchange_rate())
+                if "Amount (AED)" in headers:
+                    updates["Amount (AED)"] = float(amount or 0) if currency == "AED" else 0.0
+                if "Amount (USD)" in headers:
+                    updates["Amount (USD)"] = float(amount or 0) if currency == "USD" else 0.0
             if (
                 {"Amount (AED)", "Amount (USD)"} & updates.keys()
                 and "Amount (AED equiv)" in headers
             ):
-                current = {
-                    header: row[idx] if idx < len(row) else ""
-                    for idx, header in enumerate(headers)
-                }
                 aed = updates.get("Amount (AED)", current.get("Amount (AED)", 0))
                 usd = updates.get("Amount (USD)", current.get("Amount (USD)", 0))
                 recalculated_equiv = round_currency(
                     to_aed_equivalent(aed, usd, get_exchange_rate()),
                 )
                 updates = {**updates, "Amount (AED equiv)": recalculated_equiv}
+                if "Amount (USD equiv)" in headers and not ({"Currency", "Amount"} & updates.keys()):
+                    updates["Amount (USD equiv)"] = round_currency(
+                        float(recalculated_equiv or 0) / get_exchange_rate()
+                    )
             for field, value in updates.items():
                 if field in headers:
                     col = headers.index(field) + 1
@@ -323,18 +374,29 @@ def upsert_team(team_data: dict):
     ws = _ws("Teams")
     records = ws.get_all_values()
     headers = records[0] if records else []
-    team_names = [r[0] for r in records[1:]] if len(records) > 1 else []
-    row = [
-        team_data.get("Team Name", ""),
-        team_data.get("Allocation (AED)", 0),
-        team_data.get("Lead Emails", ""),
-        team_data.get("Member Emails", ""),
-        team_data.get("Description", ""),
-        team_data.get("Active", "Y"),
+    required_headers = [
+        "Team Name", "Allocation (AED)", "Allocation (USD)", "Lead Emails",
+        "Member Emails", "Description", "Active",
     ]
+    for header in required_headers:
+        if header not in headers:
+            ws.update_cell(1, len(headers) + 1, header)
+            headers.append(header)
+    team_names = [r[0] for r in records[1:]] if len(records) > 1 else []
+    values = {
+        "Team Name": team_data.get("Team Name", ""),
+        "Allocation (AED)": team_data.get("Allocation (AED)", 0),
+        "Allocation (USD)": team_data.get("Allocation (USD)", ""),
+        "Lead Emails": team_data.get("Lead Emails", ""),
+        "Member Emails": team_data.get("Member Emails", ""),
+        "Description": team_data.get("Description", ""),
+        "Active": team_data.get("Active", "Y"),
+    }
+    row = [values.get(header, "") for header in headers]
     if team_data["Team Name"] in team_names:
         row_idx = team_names.index(team_data["Team Name"]) + 2
-        ws.update(f"A{row_idx}:F{row_idx}", [row])
+        end_col = chr(ord("A") + len(headers) - 1)
+        ws.update(f"A{row_idx}:{end_col}{row_idx}", [row])
     else:
         ws.append_row(row)
     st.cache_data.clear()
