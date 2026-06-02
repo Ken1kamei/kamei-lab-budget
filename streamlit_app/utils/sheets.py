@@ -4,7 +4,14 @@ from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from utils.budget import fiscal_year_for_date, LIFECYCLE_STATUSES, to_aed_equivalent
+from utils.budget import (
+    fiscal_year_for_date,
+    DEFAULT_AED_USD_EXCHANGE_RATE,
+    LIFECYCLE_STATUSES,
+    normalize_aed_equivalent,
+    round_currency,
+    to_aed_equivalent,
+)
 from utils.categories import CATEGORIES
 
 SCOPES = [
@@ -93,7 +100,7 @@ def get_transactions() -> pd.DataFrame:
     for col in TXN_COLUMNS:
         if col not in df.columns:
             df[col] = ""
-    return df
+    return normalize_aed_equivalent(df, DEFAULT_AED_USD_EXCHANGE_RATE)
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_teams() -> pd.DataFrame:
@@ -180,7 +187,7 @@ def append_transaction(data: dict) -> str:
         "Invoice Number": data.get("Invoice Number", ""),
         "Amount (AED)": aed,
         "Amount (USD)": usd,
-        "Amount (AED equiv)": round(equiv, 2),
+        "Amount (AED equiv)": round_currency(equiv),
         "Status": data.get("Status", "Requested"),
         "Receipt Confirmed": False,
         "PDF Link": data.get("PDF Link", ""),
@@ -209,6 +216,20 @@ def update_transaction(txn_id: str, updates: dict):
     headers = all_values[0]
     for i, row in enumerate(all_values[1:], start=2):
         if row and row[0] == txn_id:
+            if (
+                {"Amount (AED)", "Amount (USD)"} & updates.keys()
+                and "Amount (AED equiv)" in headers
+            ):
+                current = {
+                    header: row[idx] if idx < len(row) else ""
+                    for idx, header in enumerate(headers)
+                }
+                aed = updates.get("Amount (AED)", current.get("Amount (AED)", 0))
+                usd = updates.get("Amount (USD)", current.get("Amount (USD)", 0))
+                recalculated_equiv = round_currency(
+                    to_aed_equivalent(aed, usd, get_exchange_rate()),
+                )
+                updates = {**updates, "Amount (AED equiv)": recalculated_equiv}
             for field, value in updates.items():
                 if field in headers:
                     col = headers.index(field) + 1
@@ -274,7 +295,7 @@ def set_budget_allocation(category: str, aed: float, usd: float):
     ws = _ws("Summary")
     all_values = ws.get_all_values()
     rate = get_exchange_rate()
-    equiv = round(to_aed_equivalent(aed, usd, rate), 2)
+    equiv = round_currency(to_aed_equivalent(aed, usd, rate))
     for i, row in enumerate(all_values, start=1):
         if row and row[0] == category:
             ws.update_cell(i, 2, aed)

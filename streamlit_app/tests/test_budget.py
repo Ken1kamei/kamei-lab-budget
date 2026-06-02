@@ -6,6 +6,8 @@ from utils.budget import (
     get_team_summary,
     get_lab_totals,
     fiscal_year_for_date,
+    normalize_aed_equivalent,
+    round_currency,
     split_commitments,
     to_aed_equivalent,
 )
@@ -121,6 +123,21 @@ def test_split_commitments_counts_requested_as_committed_and_paid_separately():
 
 def test_to_aed_equivalent_converts_usd_with_configured_rate():
     assert to_aed_equivalent(0.0, 2506.0, 3.6725) == pytest.approx(9203.285)
+
+def test_round_currency_uses_half_up_accounting_rounding():
+    assert round_currency(9203.285) == 9203.29
+
+def test_normalize_aed_equivalent_repairs_usd_only_rows_with_zero_equiv():
+    txns = pd.DataFrame({
+        "Amount (AED)": [0.0, 558.04],
+        "Amount (USD)": [2506.0, 0.0],
+        "Amount (AED equiv)": [0.0, 558.04],
+    })
+
+    result = normalize_aed_equivalent(txns, 3.6725)
+
+    assert result.loc[0, "Amount (AED equiv)"] == pytest.approx(9203.29)
+    assert result.loc[1, "Amount (AED equiv)"] == pytest.approx(558.04)
 
 def test_team_summary_exposes_committed_paid_and_remaining():
     txns = make_txns(

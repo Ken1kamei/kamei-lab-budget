@@ -120,6 +120,25 @@ def test_append_transaction_calls_append_row(mock_ss):
 
 @patch("utils.sheets.get_exchange_rate", return_value=3.6725)
 @patch("utils.sheets.get_spreadsheet")
+def test_update_transaction_recalculates_aed_equiv_when_amounts_change(mock_ss, _rate):
+    from utils.sheets import TXN_COLUMNS, update_transaction
+    mock_ws = MagicMock()
+    row = [""] * len(TXN_COLUMNS)
+    row[TXN_COLUMNS.index("Transaction ID")] = "TXN-001"
+    row[TXN_COLUMNS.index("Amount (AED)")] = "0"
+    row[TXN_COLUMNS.index("Amount (USD)")] = "0"
+    row[TXN_COLUMNS.index("Amount (AED equiv)")] = "0"
+    mock_ws.get_all_values.return_value = [TXN_COLUMNS, row]
+    mock_ws.row_values.return_value = TXN_COLUMNS
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    update_transaction("TXN-001", {"Amount (AED)": 0, "Amount (USD)": 2506})
+
+    calls = [call.args[:3] for call in mock_ws.update_cell.call_args_list]
+    assert (2, TXN_COLUMNS.index("Amount (AED equiv)") + 1, 9203.29) in calls
+
+@patch("utils.sheets.get_exchange_rate", return_value=3.6725)
+@patch("utils.sheets.get_spreadsheet")
 def test_set_budget_allocation_inserts_missing_category_before_total(mock_ss, _rate):
     from utils.sheets import set_budget_allocation
     mock_ws = MagicMock()
@@ -135,7 +154,7 @@ def test_set_budget_allocation_inserts_missing_category_before_total(mock_ss, _r
     mock_ws.insert_row.assert_called_once()
     row, index = mock_ws.insert_row.call_args.args[:2]
     assert index == 3
-    assert row[:4] == ["Consumables", 1000, 10, 1036.72]
+    assert row[:4] == ["Consumables", 1000, 10, 1036.73]
 
 def test_find_matching_transaction_id_prefers_po_invoice_then_vendor_team():
     from utils.sheets import find_matching_transaction_id

@@ -123,7 +123,8 @@ display_txns = txns if is_pi() else txns[txns["Team"] == current_team()] if "Tea
 recent = display_txns.tail(10).iloc[::-1]  # newest first
 if not recent.empty:
     show_cols = ["Date", "Vendor / Payee", "Description",
-                 "Category", "Team", "Amount (AED)", "Amount (USD)", "Status"]
+                 "Category", "Team", "Amount (AED)", "Amount (USD)",
+                 "Amount (AED equiv)", "Status"]
     show_cols = [c for c in show_cols if c in recent.columns]
     st.dataframe(recent[show_cols], use_container_width=True, hide_index=True)
 else:

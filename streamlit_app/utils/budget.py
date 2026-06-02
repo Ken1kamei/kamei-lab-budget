@@ -1,4 +1,5 @@
 import pandas as pd
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from utils.categories import CATEGORIES
 
@@ -20,11 +21,34 @@ COMMITTED_STATUSES = {
     "Paid",
 }
 PAID_STATUSES = {"Paid"}
+DEFAULT_AED_USD_EXCHANGE_RATE = 3.6725
 
 
 def to_aed_equivalent(aed: float, usd: float, exchange_rate: float) -> float:
     """Convert AED plus USD amounts into a single AED-equivalent total."""
     return float(aed or 0) + float(usd or 0) * float(exchange_rate or 0)
+
+
+def round_currency(value: float) -> float:
+    """Round currency values to cents using half-up accounting rounding."""
+    return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def normalize_aed_equivalent(txns: pd.DataFrame, exchange_rate: float) -> pd.DataFrame:
+    """Repair missing or zero AED-equivalent values from raw AED/USD amounts."""
+    if txns.empty:
+        return txns
+    df = txns.copy()
+    for col in ("Amount (AED)", "Amount (USD)", "Amount (AED equiv)"):
+        if col not in df.columns:
+            df[col] = 0.0
+    aed = pd.to_numeric(df["Amount (AED)"], errors="coerce").fillna(0.0)
+    usd = pd.to_numeric(df["Amount (USD)"], errors="coerce").fillna(0.0)
+    equiv = pd.to_numeric(df["Amount (AED equiv)"], errors="coerce")
+    derived = (aed + usd * float(exchange_rate or 0)).map(round_currency)
+    needs_repair = equiv.isna() | ((equiv == 0) & (derived != 0))
+    df["Amount (AED equiv)"] = equiv.mask(needs_repair, derived).fillna(0.0)
+    return df
 
 
 def fiscal_year_for_date(value: str | pd.Timestamp) -> str:
