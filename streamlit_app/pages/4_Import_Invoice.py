@@ -9,8 +9,10 @@ from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
 from utils.auth import require_role, is_pi, current_team
 from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES
+from utils.theme import apply_theme
 
 require_role("pi", "lead")
+apply_theme()
 
 st.title("📥 Import Invoice / Receipt")
 

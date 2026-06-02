@@ -8,8 +8,10 @@ from utils.sheets import get_teams, get_currency_rates_to_usd, append_transactio
 from utils.auth import require_role, is_pi, can_edit, current_team
 from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
+from utils.theme import apply_theme
 
 require_role("pi", "lead", "member")
+apply_theme()
 
 st.title("Add Request")
 

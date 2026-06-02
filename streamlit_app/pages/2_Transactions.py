@@ -3,8 +3,10 @@ import pandas as pd
 from utils.sheets import get_transactions, get_teams, update_transaction, approve_transaction
 from utils.auth import require_role, is_pi, can_edit, current_team
 from utils.budget import LIFECYCLE_STATUSES
+from utils.theme import apply_theme
 
 require_role("pi", "lead", "member")
+apply_theme()
 
 st.title("Requests / Transactions")
 

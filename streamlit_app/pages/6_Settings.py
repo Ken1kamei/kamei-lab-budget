@@ -10,8 +10,10 @@ from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_us
                            update_transaction)
 from utils.auth import require_role
 from utils.categories import CATEGORIES
+from utils.theme import apply_theme
 
 require_role("pi")
+apply_theme()
 
 st.title("⚙️ Settings")
 

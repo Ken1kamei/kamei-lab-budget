@@ -5,8 +5,10 @@ import pandas as pd
 from utils.sheets import get_transactions, get_summary, get_exchange_rate, get_teams
 from utils.budget import get_category_summary, get_team_summary, get_lab_totals, monthly_spending
 from utils.auth import require_role, is_pi, current_team
+from utils.theme import apply_theme
 
 require_role("pi", "lead", "member")
+apply_theme()
 
 st.title("📈 Reports")
 

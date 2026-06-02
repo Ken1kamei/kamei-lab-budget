@@ -1,5 +1,6 @@
 import streamlit as st
 from utils.auth import get_authenticated_email, oidc_configured, sync_session_from_oidc_user
+from utils.theme import apply_theme
 
 st.set_page_config(
     page_title="Kamei Lab Budget",
@@ -31,6 +32,7 @@ if not get_authenticated_email():
 
 email = get_authenticated_email()
 role, team = sync_session_from_oidc_user()
+apply_theme()
 
 if not email:
     st.error("Please sign in with a verified nyu.edu Google account.")
