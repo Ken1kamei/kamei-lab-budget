@@ -6,28 +6,51 @@ import streamlit as st
 THEME_MODES = ("Day", "Night")
 
 
+def _mode_from_query() -> str | None:
+    raw = st.query_params.get("theme")
+    if isinstance(raw, list):
+        raw = raw[0] if raw else None
+    value = str(raw or "").strip().lower()
+    if value == "night":
+        return "Night"
+    if value == "day":
+        return "Day"
+    return None
+
+
 def apply_theme() -> str:
     """Apply the shared app styling and return the selected visual mode."""
+    query_mode = _mode_from_query()
     if "theme_mode" not in st.session_state:
-        st.session_state.theme_mode = "Day"
+        st.session_state.theme_mode = query_mode or "Day"
+    elif query_mode and query_mode != st.session_state.theme_mode:
+        st.session_state.theme_mode = query_mode
+    if (
+        "_theme_mode_widget" not in st.session_state
+        or st.session_state._theme_mode_widget != st.session_state.theme_mode
+    ):
+        st.session_state._theme_mode_widget = st.session_state.theme_mode
 
     with st.sidebar:
         selected = st.radio(
             "Mode",
             THEME_MODES,
-            index=THEME_MODES.index(st.session_state.theme_mode),
             horizontal=True,
-            key="theme_mode",
+            key="_theme_mode_widget",
         )
+    st.session_state.theme_mode = selected
+    st.query_params["theme"] = selected.lower()
 
     dark = selected == "Night"
     colors = {
-        "bg": "#f6f5f2" if not dark else "#111315",
-        "surface": "#ffffff" if not dark else "#181b1f",
-        "surface_alt": "#f0efec" if not dark else "#20242a",
-        "text": "#202124" if not dark else "#f2f0ec",
-        "muted": "#72716d" if not dark else "#a3a09a",
-        "line": "#e3e0da" if not dark else "#2d3238",
+        "bg": "#f6f5f2" if not dark else "#101214",
+        "surface": "#ffffff" if not dark else "#191d22",
+        "surface_alt": "#f0efec" if not dark else "#222832",
+        "text": "#202124" if not dark else "#f6f3ee",
+        "muted": "#72716d" if not dark else "#d0cbc4",
+        "subtle": "#a09d96" if not dark else "#aaa49c",
+        "line": "#e3e0da" if not dark else "#39414b",
+        "grid": "#dedbd4" if not dark else "#414954",
         "cyan": "#29b8c8",
         "green": "#69c83d",
         "amber": "#ffb000",
@@ -37,6 +60,7 @@ def apply_theme() -> str:
         if not dark
         else "0 24px 55px rgba(0, 0, 0, .34)",
     }
+    st.session_state["_theme_colors"] = colors
 
     st.markdown(
         f"""
@@ -47,7 +71,9 @@ def apply_theme() -> str:
           --lab-surface-alt: {colors["surface_alt"]};
           --lab-text: {colors["text"]};
           --lab-muted: {colors["muted"]};
+          --lab-subtle: {colors["subtle"]};
           --lab-line: {colors["line"]};
+          --lab-grid: {colors["grid"]};
           --lab-cyan: {colors["cyan"]};
           --lab-green: {colors["green"]};
           --lab-amber: {colors["amber"]};
@@ -80,7 +106,7 @@ def apply_theme() -> str:
           padding-top: 2.1rem;
           max-width: 1280px;
         }}
-        h1, h2, h3, p, label, span {{
+        h1, h2, h3, p, label {{
           color: var(--lab-text);
         }}
         [data-testid="stMetric"],
@@ -110,13 +136,13 @@ def apply_theme() -> str:
           margin-bottom: 24px;
         }}
         .lab-eyebrow {{
-          color: var(--lab-muted);
+          color: var(--lab-subtle, var(--lab-muted));
           font-size: 0.92rem;
           margin-bottom: 6px;
         }}
         .lab-title {{
           color: var(--lab-text);
-          font-size: clamp(2.1rem, 4vw, 4.25rem);
+          font-size: clamp(1.9rem, 3.2vw, 3rem);
           line-height: .98;
           font-weight: 500;
           letter-spacing: 0;
@@ -124,7 +150,7 @@ def apply_theme() -> str:
         }}
         .lab-subtitle {{
           color: var(--lab-muted);
-          font-size: 1.08rem;
+          font-size: 1rem;
           margin-top: 12px;
         }}
         .lab-pill {{
@@ -137,23 +163,25 @@ def apply_theme() -> str:
           border: 1px solid var(--lab-line);
           box-shadow: var(--lab-shadow);
           color: var(--lab-muted);
+          font-size: .95rem;
           white-space: nowrap;
         }}
         .lab-card {{
           background: var(--lab-surface);
           border: 1px solid var(--lab-line);
           border-radius: 8px;
-          padding: 24px;
-          min-height: 178px;
+          padding: 22px;
+          min-height: 160px;
           box-shadow: var(--lab-shadow);
+          overflow: hidden;
         }}
         .lab-card-title {{
           display: flex;
           gap: 12px;
           align-items: center;
           color: var(--lab-text);
-          font-size: 1.06rem;
-          margin-bottom: 24px;
+          font-size: 1rem;
+          margin-bottom: 20px;
         }}
         .lab-handle {{
           color: var(--lab-muted);
@@ -162,10 +190,14 @@ def apply_theme() -> str:
         }}
         .lab-kpi {{
           color: var(--lab-text);
-          font-size: clamp(2.15rem, 5vw, 4.1rem);
-          line-height: 1;
+          font-size: clamp(1.8rem, 2.45vw, 2.75rem);
+          line-height: 1.05;
           font-weight: 500;
           letter-spacing: 0;
+          white-space: nowrap;
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: clip;
         }}
         .lab-dollar {{
           color: color-mix(in srgb, var(--lab-muted) 65%, transparent);
@@ -174,10 +206,11 @@ def apply_theme() -> str:
         .lab-caption {{
           color: var(--lab-muted);
           margin-top: 10px;
-          font-size: .95rem;
+          font-size: .9rem;
+          line-height: 1.35;
         }}
         .lab-positive {{
-          color: #2f9b57;
+          color: var(--lab-green);
           font-weight: 600;
         }}
         .lab-warning {{
@@ -198,7 +231,7 @@ def apply_theme() -> str:
         }}
         .lab-mini-grid {{
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 10px;
           margin-top: 18px;
         }}
@@ -217,6 +250,18 @@ def apply_theme() -> str:
           color: var(--lab-text);
           font-size: 1.02rem;
           font-weight: 600;
+          white-space: nowrap;
+        }}
+        @media (max-width: 900px) {{
+          .lab-hero {{
+            flex-direction: column;
+          }}
+          .lab-kpi {{
+            font-size: clamp(1.7rem, 8vw, 2.35rem);
+          }}
+          .lab-mini-grid {{
+            grid-template-columns: 1fr;
+          }}
         }}
         div[data-testid="stDataFrame"] {{
           border: 1px solid var(--lab-line);
@@ -233,6 +278,16 @@ def apply_theme() -> str:
         unsafe_allow_html=True,
     )
     return selected
+
+
+def chart_theme() -> dict[str, str]:
+    colors = st.session_state.get("_theme_colors", {})
+    return {
+        "text": colors.get("text", "#202124"),
+        "muted": colors.get("muted", "#72716d"),
+        "grid": colors.get("grid", "#dedbd4"),
+        "surface": colors.get("surface", "#ffffff"),
+    }
 
 
 def metric_card(

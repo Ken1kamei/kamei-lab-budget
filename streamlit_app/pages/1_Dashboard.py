@@ -12,10 +12,11 @@ from utils.auth import current_team, is_pi, require_role
 from utils.budget import get_category_summary, get_lab_totals, get_team_summary, monthly_spending
 from utils.categories import CATEGORY_COLOR_SEQUENCE
 from utils.sheets import get_exchange_rate, get_summary, get_teams, get_transactions
-from utils.theme import apply_theme, metric_card, section_card
+from utils.theme import apply_theme, chart_theme, metric_card, section_card
 
 require_role("pi", "lead", "member")
 theme_mode = apply_theme()
+chart_colors = chart_theme()
 
 txns = get_transactions()
 summary = get_summary()
@@ -91,10 +92,29 @@ with team_col:
             margin=dict(t=8, b=8, l=8, r=8),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#72716d"),
+            font=dict(color=chart_colors["muted"]),
             yaxis_title="USD",
             xaxis_title="",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="left",
+                x=0,
+                font=dict(color=chart_colors["muted"]),
+            ),
+            xaxis=dict(
+                tickfont=dict(color=chart_colors["muted"]),
+                title_font=dict(color=chart_colors["muted"]),
+                gridcolor=chart_colors["grid"],
+                zerolinecolor=chart_colors["grid"],
+            ),
+            yaxis=dict(
+                tickfont=dict(color=chart_colors["muted"]),
+                title_font=dict(color=chart_colors["muted"]),
+                gridcolor=chart_colors["grid"],
+                zerolinecolor=chart_colors["grid"],
+            ),
         )
         with st.container(border=True):
             st.markdown('<div class="lab-card-title"><span class="lab-handle">⠿</span>Team budget</div>', unsafe_allow_html=True)
@@ -160,7 +180,8 @@ with breakdown_col:
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
                 showlegend=True,
-                font=dict(color="#72716d"),
+                font=dict(color=chart_colors["muted"]),
+                legend=dict(font=dict(color=chart_colors["muted"])),
             )
             st.plotly_chart(fig_pie, use_container_width=True)
         else:
@@ -183,8 +204,27 @@ with trend_col:
                 margin=dict(t=8, b=8, l=8, r=8),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#72716d"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                font=dict(color=chart_colors["muted"]),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="left",
+                    x=0,
+                    font=dict(color=chart_colors["muted"]),
+                ),
+                xaxis=dict(
+                    tickfont=dict(color=chart_colors["muted"]),
+                    title_font=dict(color=chart_colors["muted"]),
+                    gridcolor=chart_colors["grid"],
+                    zerolinecolor=chart_colors["grid"],
+                ),
+                yaxis=dict(
+                    tickfont=dict(color=chart_colors["muted"]),
+                    title_font=dict(color=chart_colors["muted"]),
+                    gridcolor=chart_colors["grid"],
+                    zerolinecolor=chart_colors["grid"],
+                ),
             )
             st.plotly_chart(fig_trend, use_container_width=True)
         else:
