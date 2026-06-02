@@ -23,12 +23,7 @@ def apply_theme() -> str:
     query_mode = _mode_from_query()
     if "theme_mode" not in st.session_state:
         st.session_state.theme_mode = query_mode or "Day"
-    elif query_mode and query_mode != st.session_state.theme_mode:
-        st.session_state.theme_mode = query_mode
-    if (
-        "_theme_mode_widget" not in st.session_state
-        or st.session_state._theme_mode_widget != st.session_state.theme_mode
-    ):
+    if "_theme_mode_widget" not in st.session_state:
         st.session_state._theme_mode_widget = st.session_state.theme_mode
 
     with st.sidebar:
@@ -171,7 +166,8 @@ def apply_theme() -> str:
           border: 1px solid var(--lab-line);
           border-radius: 8px;
           padding: 22px;
-          min-height: 160px;
+          min-height: 190px;
+          height: 100%;
           box-shadow: var(--lab-shadow);
           overflow: hidden;
         }}
@@ -190,7 +186,7 @@ def apply_theme() -> str:
         }}
         .lab-kpi {{
           color: var(--lab-text);
-          font-size: clamp(1.8rem, 2.45vw, 2.75rem);
+          font-size: clamp(1.55rem, 2.15vw, 2.35rem);
           line-height: 1.05;
           font-weight: 500;
           letter-spacing: 0;
@@ -238,7 +234,7 @@ def apply_theme() -> str:
         .lab-mini {{
           background: var(--lab-surface-alt);
           border-radius: 8px;
-          padding: 12px;
+          padding: 10px;
           border: 1px solid var(--lab-line);
         }}
         .lab-mini-label {{
@@ -248,9 +244,20 @@ def apply_theme() -> str:
         }}
         .lab-mini-value {{
           color: var(--lab-text);
-          font-size: 1.02rem;
+          font-size: .95rem;
           font-weight: 600;
           white-space: nowrap;
+        }}
+        .lab-chart-title {{
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          color: var(--lab-text);
+          font-size: 1rem;
+          margin: 8px 8px 12px;
+        }}
+        .lab-chart-empty {{
+          min-height: 330px;
         }}
         @media (max-width: 900px) {{
           .lab-hero {{
@@ -272,6 +279,7 @@ def apply_theme() -> str:
           border-color: var(--lab-line);
           border-radius: 8px;
           box-shadow: var(--lab-shadow);
+          min-height: 390px;
         }}
         </style>
         """,

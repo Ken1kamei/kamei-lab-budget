@@ -54,8 +54,8 @@ total_paid = totals["total_paid"]
 total_remaining = totals["remaining"]
 overall_pct = totals["pct_used"]
 
-top_left, top_right = st.columns([2.1, 1], gap="large")
-with top_left:
+budget_col, paid_col, outcome_col = st.columns(3, gap="large")
+with budget_col:
     metric_card(
         "Budget",
         f"{total_budget:,.2f}",
@@ -66,7 +66,7 @@ with top_left:
         progress=overall_pct,
         accent="cyan",
     )
-with top_right:
+with paid_col:
     metric_card(
         "Paid",
         f"{total_paid:,.2f}",
@@ -75,7 +75,27 @@ with top_right:
         accent="green",
     )
 
-team_col, outcome_col = st.columns([1.35, 1], gap="large")
+with outcome_col:
+    risk = "Low"
+    risk_class = "lab-positive"
+    if overall_pct > 0.9:
+        risk = "High"
+        risk_class = "lab-warning"
+    elif overall_pct > 0.7:
+        risk = "Watch"
+        risk_class = "lab-warning"
+    body = f"""
+      <div class="lab-kpi"><span class="lab-dollar">$</span>{total_remaining:,.2f}</div>
+      <div class="lab-caption"><span class="{risk_class}">{risk}</span> budget pressure</div>
+      <div class="lab-mini-grid">
+        <div class="lab-mini"><div class="lab-mini-label">Committed</div><div class="lab-mini-value">${total_committed:,.0f}</div></div>
+        <div class="lab-mini"><div class="lab-mini-label">Paid</div><div class="lab-mini-value">${total_paid:,.0f}</div></div>
+        <div class="lab-mini"><div class="lab-mini-label">Open</div><div class="lab-mini-value">${max(total_committed - total_paid, 0):,.0f}</div></div>
+      </div>
+    """
+    section_card("Outcome", body)
+
+team_col, breakdown_col, trend_col = st.columns([1, 1, 1.55], gap="large")
 with team_col:
     if is_pi() and team_summary:
         names = list(team_summary.keys())
@@ -88,7 +108,7 @@ with team_col:
         )
         fig.update_layout(
             barmode="group",
-            height=300,
+            height=330,
             margin=dict(t=8, b=8, l=8, r=8),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
@@ -117,7 +137,7 @@ with team_col:
             ),
         )
         with st.container(border=True):
-            st.markdown('<div class="lab-card-title"><span class="lab-handle">⠿</span>Team budget</div>', unsafe_allow_html=True)
+            st.markdown('<div class="lab-chart-title"><span class="lab-handle">⠿</span>Team budget</div>', unsafe_allow_html=True)
             st.plotly_chart(fig, use_container_width=True)
     else:
         team_name = current_team()
@@ -130,27 +150,6 @@ with team_col:
             accent="cyan",
         )
 
-with outcome_col:
-    risk = "Low"
-    risk_class = "lab-positive"
-    if overall_pct > 0.9:
-        risk = "High"
-        risk_class = "lab-warning"
-    elif overall_pct > 0.7:
-        risk = "Watch"
-        risk_class = "lab-warning"
-    body = f"""
-      <div class="lab-kpi"><span class="lab-dollar">$</span>{total_remaining:,.2f}</div>
-      <div class="lab-caption"><span class="{risk_class}">{risk}</span> budget pressure</div>
-      <div class="lab-mini-grid">
-        <div class="lab-mini"><div class="lab-mini-label">Committed</div><div class="lab-mini-value">${total_committed:,.0f}</div></div>
-        <div class="lab-mini"><div class="lab-mini-label">Paid</div><div class="lab-mini-value">${total_paid:,.0f}</div></div>
-        <div class="lab-mini"><div class="lab-mini-label">Open</div><div class="lab-mini-value">${max(total_committed - total_paid, 0):,.0f}</div></div>
-      </div>
-    """
-    section_card("Outcome", body)
-
-breakdown_col, trend_col = st.columns([1, 1.15], gap="large")
 with breakdown_col:
     category_rows = []
     for cat, data in cat_summary.items():
@@ -165,7 +164,7 @@ with breakdown_col:
             )
     category_df = pd.DataFrame(category_rows).sort_values("Committed", ascending=False) if category_rows else pd.DataFrame()
     with st.container(border=True):
-        st.markdown('<div class="lab-card-title"><span class="lab-handle">⠿</span>Expenses breakdown</div>', unsafe_allow_html=True)
+        st.markdown('<div class="lab-chart-title"><span class="lab-handle">⠿</span>Expenses breakdown</div>', unsafe_allow_html=True)
         if not category_df.empty:
             fig_pie = px.pie(
                 category_df,
@@ -175,7 +174,7 @@ with breakdown_col:
                 color_discrete_sequence=CATEGORY_COLOR_SEQUENCE,
             )
             fig_pie.update_layout(
-                height=300,
+                height=330,
                 margin=dict(t=8, b=8, l=8, r=8),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
@@ -189,18 +188,20 @@ with breakdown_col:
 
 with trend_col:
     with st.container(border=True):
-        st.markdown('<div class="lab-card-title"><span class="lab-handle">⠿</span>Monthly spending</div>', unsafe_allow_html=True)
+        st.markdown('<div class="lab-chart-title"><span class="lab-handle">⠿</span>Monthly spending</div>', unsafe_allow_html=True)
         if not monthly_df.empty:
-            fig_trend = px.bar(
+            fig_trend = px.area(
                 monthly_df,
                 x="month",
                 y="amount_equiv",
                 color="category",
                 color_discrete_sequence=CATEGORY_COLOR_SEQUENCE,
                 labels={"amount_equiv": "USD", "month": "Month"},
+                line_shape="spline",
             )
+            fig_trend.update_traces(fill="tozeroy", opacity=0.5, line=dict(width=2.5))
             fig_trend.update_layout(
-                height=300,
+                height=330,
                 margin=dict(t=8, b=8, l=8, r=8),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
