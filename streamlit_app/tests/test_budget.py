@@ -7,6 +7,7 @@ from utils.budget import (
     get_lab_totals,
     fiscal_year_for_date,
     split_commitments,
+    to_aed_equivalent,
 )
 
 def make_txns(**kwargs):
@@ -117,6 +118,9 @@ def test_split_commitments_counts_requested_as_committed_and_paid_separately():
     result = split_commitments(txns)
     assert result["committed"] == 600.0
     assert result["paid"] == 300.0
+
+def test_to_aed_equivalent_converts_usd_with_configured_rate():
+    assert to_aed_equivalent(0.0, 2506.0, 3.6725) == pytest.approx(9203.285)
 
 def test_team_summary_exposes_committed_paid_and_remaining():
     txns = make_txns(

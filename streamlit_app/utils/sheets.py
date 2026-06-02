@@ -4,7 +4,7 @@ from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from utils.budget import fiscal_year_for_date, LIFECYCLE_STATUSES
+from utils.budget import fiscal_year_for_date, LIFECYCLE_STATUSES, to_aed_equivalent
 from utils.categories import CATEGORIES
 
 SCOPES = [
@@ -165,7 +165,7 @@ def append_transaction(data: dict) -> str:
     rate = get_exchange_rate()
     aed = float(data.get("Amount (AED)") or 0)
     usd = float(data.get("Amount (USD)") or 0)
-    equiv = aed + usd * rate
+    equiv = to_aed_equivalent(aed, usd, rate)
 
     row = {col: "" for col in TXN_COLUMNS}
     row.update({
@@ -274,7 +274,7 @@ def set_budget_allocation(category: str, aed: float, usd: float):
     ws = _ws("Summary")
     all_values = ws.get_all_values()
     rate = get_exchange_rate()
-    equiv = round(aed + usd * rate, 2)
+    equiv = round(to_aed_equivalent(aed, usd, rate), 2)
     for i, row in enumerate(all_values, start=1):
         if row and row[0] == category:
             ws.update_cell(i, 2, aed)

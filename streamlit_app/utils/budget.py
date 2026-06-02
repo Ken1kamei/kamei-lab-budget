@@ -22,6 +22,11 @@ COMMITTED_STATUSES = {
 PAID_STATUSES = {"Paid"}
 
 
+def to_aed_equivalent(aed: float, usd: float, exchange_rate: float) -> float:
+    """Convert AED plus USD amounts into a single AED-equivalent total."""
+    return float(aed or 0) + float(usd or 0) * float(exchange_rate or 0)
+
+
 def fiscal_year_for_date(value: str | pd.Timestamp) -> str:
     """Return the NYUAD fiscal year label for a date. FY starts September 1."""
     dt = pd.to_datetime(value, errors="raise")

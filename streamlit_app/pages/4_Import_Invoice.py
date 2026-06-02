@@ -7,6 +7,7 @@ refresh_runtime_modules()
 from utils.sheets import get_teams, get_exchange_rate, upsert_imported_transaction
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
 from utils.auth import require_role, is_pi, current_team
+from utils.budget import to_aed_equivalent
 from utils.categories import CATEGORIES
 
 require_role("pi", "lead")
@@ -37,59 +38,62 @@ with tab1:
         else:
             st.success("Parsed successfully. Review fields below before importing.")
 
-            with st.form("pdf_import_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    vendor = st.text_input(
-                        "Vendor *", value=parsed.get("vendor", "")
-                    )
-                    inv_num = st.text_input(
-                        "Invoice #", value=parsed.get("invoice_number", "")
-                    )
-                    inv_date = st.text_input(
-                        "Date", value=parsed.get("invoice_date", "")
-                    )
-                with col2:
-                    category = st.selectbox(
-                        "Category",
-                        CATEGORIES,
-                        index=_category_index(parsed.get("suggested_category", "Equipment")),
-                    )
-                    po_num = st.text_input("PO Number", value=parsed.get("po_number", ""))
-
-                currency = parsed.get("currency", "AED")
-                total = float(parsed.get("total_amount", 0.0))
-                col3, col4 = st.columns(2)
-                with col3:
-                    aed = st.number_input(
-                        "Amount (AED)",
-                        value=total if currency == "AED" else 0.0,
-                        min_value=0.0,
-                    )
-                with col4:
-                    usd = st.number_input(
-                        "Amount (USD)",
-                        value=total if currency == "USD" else 0.0,
-                        min_value=0.0,
-                    )
-
-                description = st.text_input("Description", value=pdf_file.name)
-                notes = st.text_area("Notes", value=f"Parsed by Python from {pdf_file.name}")
-
-                if is_pi():
-                    team_names = ["(Lab-wide)"] + (
-                        teams_df["Team Name"].tolist() if not teams_df.empty else []
-                    )
-                    team_sel = st.selectbox("Team", team_names)
-                    team_value = "" if team_sel == "(Lab-wide)" else team_sel
-                else:
-                    team_value = my_team
-                    st.info(f"Team: **{my_team}**")
-
-                status = st.selectbox(
-                    "Status", ["Pending Review"], disabled=True
+            col1, col2 = st.columns(2)
+            with col1:
+                vendor = st.text_input(
+                    "Vendor *", value=parsed.get("vendor", "")
                 )
-                submitted = st.form_submit_button("Import Transaction", type="primary")
+                inv_num = st.text_input(
+                    "Invoice #", value=parsed.get("invoice_number", "")
+                )
+                inv_date = st.text_input(
+                    "Date", value=parsed.get("invoice_date", "")
+                )
+            with col2:
+                category = st.selectbox(
+                    "Category",
+                    CATEGORIES,
+                    index=_category_index(parsed.get("suggested_category", "Equipment")),
+                )
+                po_num = st.text_input("PO Number", value=parsed.get("po_number", ""))
+
+            currency = parsed.get("currency", "AED")
+            total = float(parsed.get("total_amount", 0.0))
+            col3, col4 = st.columns(2)
+            with col3:
+                aed = st.number_input(
+                    "Amount (AED)",
+                    value=total if currency == "AED" else 0.0,
+                    min_value=0.0,
+                )
+            with col4:
+                usd = st.number_input(
+                    "Amount (USD)",
+                    value=total if currency == "USD" else 0.0,
+                    min_value=0.0,
+                )
+
+            if aed + usd > 0:
+                equiv = to_aed_equivalent(aed, usd, rate)
+                st.caption(f"AED equivalent: **AED {equiv:,.2f}** (rate: {rate})")
+
+            description = st.text_input("Description", value=pdf_file.name)
+            notes = st.text_area("Notes", value=f"Parsed by Python from {pdf_file.name}")
+
+            if is_pi():
+                team_names = ["(Lab-wide)"] + (
+                    teams_df["Team Name"].tolist() if not teams_df.empty else []
+                )
+                team_sel = st.selectbox("Team", team_names)
+                team_value = "" if team_sel == "(Lab-wide)" else team_sel
+            else:
+                team_value = my_team
+                st.info(f"Team: **{my_team}**")
+
+            status = st.selectbox(
+                "Status", ["Pending Review"], disabled=True
+            )
+            submitted = st.button("Import Transaction", type="primary")
 
             if submitted:
                 if not vendor.strip():
