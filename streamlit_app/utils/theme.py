@@ -171,6 +171,12 @@ def apply_theme() -> str:
           box-shadow: var(--lab-shadow);
           overflow: hidden;
         }}
+        .lab-card-wide {{
+          min-height: 170px;
+        }}
+        .lab-card-chart {{
+          min-height: 390px;
+        }}
         .lab-card-title {{
           display: flex;
           gap: 12px;
@@ -194,6 +200,9 @@ def apply_theme() -> str:
           max-width: 100%;
           overflow: hidden;
           text-overflow: clip;
+        }}
+        .lab-kpi-wide {{
+          font-size: clamp(1.75rem, 2.5vw, 2.8rem);
         }}
         .lab-dollar {{
           color: color-mix(in srgb, var(--lab-muted) 65%, transparent);
@@ -230,6 +239,9 @@ def apply_theme() -> str:
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 10px;
           margin-top: 18px;
+        }}
+        .lab-mini-grid-wide {{
+          grid-template-columns: repeat(3, minmax(150px, 1fr));
         }}
         .lab-mini {{
           background: var(--lab-surface-alt);
@@ -304,7 +316,9 @@ def metric_card(
     caption: str = "",
     progress: float | None = None,
     accent: str = "cyan",
+    class_name: str = "",
 ) -> None:
+    extra_class = f" {html.escape(class_name)}" if class_name else ""
     accent_var = {
         "cyan": "var(--lab-cyan)",
         "green": "var(--lab-green)",
@@ -322,7 +336,7 @@ def metric_card(
         )
     st.markdown(
         f"""
-        <div class="lab-card">
+        <div class="lab-card{extra_class}">
           <div class="lab-card-title"><span class="lab-handle">⠿</span>{html.escape(title)}</div>
           <div class="lab-kpi"><span class="lab-dollar">$</span>{html.escape(value)}</div>
           <div class="lab-caption">{caption}</div>
@@ -333,10 +347,11 @@ def metric_card(
     )
 
 
-def section_card(title: str, body_html: str) -> None:
+def section_card(title: str, body_html: str, class_name: str = "") -> None:
+    extra_class = f" {html.escape(class_name)}" if class_name else ""
     st.markdown(
         f"""
-        <div class="lab-card">
+        <div class="lab-card{extra_class}">
           <div class="lab-card-title"><span class="lab-handle">⠿</span>{html.escape(title)}</div>
           {body_html}
         </div>
