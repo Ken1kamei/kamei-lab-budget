@@ -26,8 +26,9 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
     invoice_date = _find_invoice_date(text)
     due_date = _find_due_date(text)
     po_number = _find_po_number(text)
-    total_amount = _find_total(text, tables)
-    currency = _detect_currency(text)
+    total_candidate = _find_total_candidate(text, tables)
+    total_amount = total_candidate["amount"]
+    currency = total_candidate.get("currency") or _detect_currency(text)
     suggested_category = _guess_category(text)
     suggested_description = _guess_description(line_items, lines, filename)
     confidence = _confidence_scores(
@@ -50,6 +51,7 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
         "due_date": due_date,
         "total_amount": total_amount,
         "currency": currency,
+        "amount_source": total_candidate.get("source", ""),
         "po_number": po_number,
         "suggested_category": suggested_category,
         "suggested_description": suggested_description,
@@ -83,9 +85,14 @@ def _find_vendor(lines):
 def _find_pattern(text, patterns):
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
-        if m:
+        if m and _looks_like_identifier(m.group(1)):
             return m.group(1).strip()
     return ""
+
+
+def _looks_like_identifier(value: str) -> bool:
+    value = str(value or "").strip()
+    return bool(value) and bool(re.search(r"\d|[-_/]", value))
 
 
 def _find_invoice_number(text):
@@ -182,27 +189,90 @@ def _money_to_float(value: str) -> float:
         return 0.0
 
 
-def _find_total(text, tables):
-    money = r"(?:AED|USD|EUR|JPY|GBP|€|¥|£|\$)?\s*([\d,]+(?:\.\d{1,2})?)"
-    labeled_patterns = [
-        rf"(?:Grand\s+Total|Invoice\s+Total|Total\s+Due|Amount\s+Due|Amount\s+Payable|Balance\s+Due)[:\s]+{money}",
-        rf"(?:Total)[:\s]+{money}",
+def _normalize_currency(value: str) -> str:
+    value = str(value or "").strip().upper()
+    symbols = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "￥": "JPY"}
+    if value in symbols:
+        return symbols[value]
+    if value in {"US$", "USD"}:
+        return "USD"
+    if value in {"AED", "DHS", "DHS.", "DIRHAM"}:
+        return "AED"
+    if value in {"EUR", "JPY", "GBP"}:
+        return value
+    return ""
+
+
+def _money_mentions(line: str) -> list[dict]:
+    amount = r"[\d,]+(?:\.\d{1,2})?"
+    currency = r"AED|USD|EUR|JPY|GBP|US\$|Dhs\.?|Dirham|[$€£¥￥]"
+    mentions = []
+    patterns = [
+        rf"(?P<currency>{currency})\s*(?P<amount>{amount})",
+        rf"(?P<amount>{amount})\s*(?P<currency>{currency})",
     ]
-    for pat in labeled_patterns:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            amount = _money_to_float(m.group(1))
-            if amount > 0:
-                return amount
+    for pat in patterns:
+        for match in re.finditer(pat, line, re.IGNORECASE):
+            parsed_amount = _money_to_float(match.group("amount"))
+            parsed_currency = _normalize_currency(match.group("currency"))
+            if parsed_amount > 0 and parsed_currency:
+                mentions.append(
+                    {
+                        "amount": parsed_amount,
+                        "currency": parsed_currency,
+                        "text": match.group(0),
+                        "start": match.start(),
+                    }
+                )
+    return sorted(mentions, key=lambda item: item["start"])
+
+
+def _amount_label_score(line: str) -> int:
+    label = line.casefold()
+    if re.search(r"amount\s+paid|paid\s+amount|payment\s+amount|支払|支払い", label):
+        return 100
+    if re.search(r"grand\s+total|invoice\s+total|total\s+due|amount\s+due|amount\s+payable|balance\s+due", label):
+        return 95
+    if re.search(r"合計|請求金額|請求額|総額|total", label):
+        return 90
+    if re.search(r"小計|subtotal", label):
+        return 30
+    return 0
+
+
+def _find_total_candidate(text, tables):
+    candidates = []
+    for line in text.splitlines():
+        mentions = _money_mentions(line)
+        if not mentions:
+            continue
+        score = _amount_label_score(line)
+        if score:
+            # The rightmost/last amount on a labelled line is usually the row total.
+            mention = mentions[-1]
+            candidates.append({**mention, "score": score, "source": line.strip()[:180]})
+
+    if candidates:
+        candidates.sort(key=lambda item: (item["score"], item["amount"]), reverse=True)
+        return candidates[0]
+
     for table in tables:
         for row in table or []:
             cells = [str(c or "").strip() for c in row]
             if any(re.search(r"total", c, re.IGNORECASE) for c in cells):
                 for cell in reversed(cells):
-                    v = _money_to_float(cell)
-                    if v > 0:
-                        return v
-    return 0.0
+                    mentions = _money_mentions(cell)
+                    if mentions:
+                        mention = mentions[-1]
+                        return {**mention, "score": 80, "source": "table total row"}
+                    value = _money_to_float(cell)
+                    if value > 0:
+                        return {"amount": value, "currency": "", "score": 50, "source": "table total row"}
+    return {"amount": 0.0, "currency": "", "score": 0, "source": ""}
+
+
+def _find_total(text, tables):
+    return _find_total_candidate(text, tables)["amount"]
 
 
 def _detect_currency(text):
