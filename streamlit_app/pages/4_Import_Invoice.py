@@ -11,7 +11,7 @@ from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES
 from utils.theme import apply_theme
 
-require_role("pi", "lead")
+require_role("pi", "lead", "member")
 apply_theme()
 
 st.title("📥 Import Invoice / Receipt")
@@ -53,7 +53,7 @@ with tab1:
                 )
             with col2:
                 category = st.selectbox(
-                    "Category",
+                    "Category to import as",
                     CATEGORIES,
                     index=_category_index(parsed.get("suggested_category", "Equipment")),
                 )
@@ -152,6 +152,13 @@ with tab2:
             total_usd = float(preview_df["Amount (USD equiv)"].sum())
             st.metric("Total", f"${total_usd:,.2f}")
 
+            excel_category = st.selectbox(
+                "Assign category to imported rows",
+                CATEGORIES,
+                index=_category_index(rows[0].get("Category", "Consumables")),
+                key="excel_category",
+            )
+
             if is_pi():
                 team_names = ["(Lab-wide)"] + (
                     teams_df["Team Name"].tolist() if not teams_df.empty else []
@@ -165,6 +172,7 @@ with tab2:
             if st.button(f"Import all {len(rows)} transactions", type="primary"):
                 prog = st.progress(0)
                 for i, row in enumerate(rows):
+                    row["Category"] = excel_category
                     row["Team"] = team_value
                     row["Entered By"] = st.session_state.email
                     row["Status"] = "Pending Review"
