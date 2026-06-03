@@ -8,7 +8,7 @@ from utils.sheets import get_teams, get_currency_rates_to_usd, upsert_imported_t
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
 from utils.auth import require_role, is_pi, current_team
 from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
-from utils.categories import CATEGORIES
+from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
 require_role("pi", "lead", "member")
@@ -22,6 +22,12 @@ my_team = current_team()
 
 def _category_index(value: str) -> int:
     return CATEGORIES.index(value) if value in CATEGORIES else 0
+
+def _subcategory_options(category: str) -> list[str]:
+    return SUBCATEGORIES.get(category, ["Other"])
+
+def _confidence_badge(score: str) -> str:
+    return {"high": "🟢 high", "medium": "🟡 medium", "low": "🔴 needs review"}.get(score, "⚪ unknown")
 
 tab1, tab2 = st.tabs(["📄 PDF Invoice", "📊 NYUAD ERB Excel"])
 
@@ -39,6 +45,27 @@ with tab1:
             st.error(f"Parse error: {parsed['_error']}")
         else:
             st.success("Parsed successfully. Review fields below before importing.")
+            confidence = parsed.get("confidence", {})
+            missing_fields = parsed.get("missing_fields", [])
+            if missing_fields:
+                st.warning(
+                    "Some fields need review: "
+                    + ", ".join(field.replace("_", " ") for field in missing_fields)
+                )
+
+            confidence_rows = [
+                {"Field": field.replace("_", " ").title(), "Confidence": _confidence_badge(score)}
+                for field, score in confidence.items()
+            ]
+            with st.expander("Auto-extracted details", expanded=bool(missing_fields)):
+                if confidence_rows:
+                    st.dataframe(pd.DataFrame(confidence_rows), use_container_width=True, hide_index=True)
+                line_items = parsed.get("line_items", [])
+                if line_items:
+                    st.caption("Detected line items")
+                    st.dataframe(pd.DataFrame(line_items), use_container_width=True, hide_index=True)
+                if parsed.get("due_date"):
+                    st.caption(f"Detected due date: {parsed['due_date']}")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -56,6 +83,11 @@ with tab1:
                     "Category to import as",
                     CATEGORIES,
                     index=_category_index(parsed.get("suggested_category", "Equipment")),
+                )
+                subcategory = st.selectbox(
+                    "Sub-category",
+                    _subcategory_options(category),
+                    index=0,
                 )
                 po_num = st.text_input("PO Number", value=parsed.get("po_number", ""))
 
@@ -79,8 +111,19 @@ with tab1:
             if amount > 0:
                 st.caption(f"{currency} {amount:,.2f} → USD ${usd_equiv:,.2f}")
 
-            description = st.text_input("Description", value=pdf_file.name)
-            notes = st.text_area("Notes", value=f"Parsed by Python from {pdf_file.name}")
+            description = st.text_input(
+                "Description",
+                value=parsed.get("suggested_description") or pdf_file.name,
+            )
+            extracted_notes = [
+                f"Parsed by Python from {pdf_file.name}",
+                f"Extraction confidence: {confidence}",
+            ]
+            if parsed.get("due_date"):
+                extracted_notes.append(f"Detected due date: {parsed['due_date']}")
+            if parsed.get("line_items"):
+                extracted_notes.append(f"Detected {len(parsed['line_items'])} line item(s)")
+            notes = st.text_area("Notes", value="\n".join(extracted_notes))
 
             if is_pi():
                 team_names = ["(Lab-wide)"] + (
@@ -104,6 +147,7 @@ with tab1:
                     result = upsert_imported_transaction({
                         "Date": inv_date,
                         "Category": category,
+                        "Sub-category": subcategory,
                         "Vendor / Payee": vendor.strip(),
                         "Description": description,
                         "Invoice Number": inv_num,
@@ -158,6 +202,12 @@ with tab2:
                 index=_category_index(rows[0].get("Category", "Consumables")),
                 key="excel_category",
             )
+            excel_subcategory = st.selectbox(
+                "Assign sub-category to imported rows",
+                _subcategory_options(excel_category),
+                index=0,
+                key="excel_subcategory",
+            )
 
             if is_pi():
                 team_names = ["(Lab-wide)"] + (
@@ -173,6 +223,7 @@ with tab2:
                 prog = st.progress(0)
                 for i, row in enumerate(rows):
                     row["Category"] = excel_category
+                    row["Sub-category"] = excel_subcategory
                     row["Team"] = team_value
                     row["Entered By"] = st.session_state.email
                     row["Status"] = "Pending Review"
