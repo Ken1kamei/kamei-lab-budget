@@ -337,12 +337,11 @@ def metric_card(
 
 def section_card(title: str, body_html: str, class_name: str = "") -> None:
     extra_class = f" {html.escape(class_name)}" if class_name else ""
-    st.markdown(
+    st.html(
         f"""
         <div class="lab-card{extra_class}">
           <div class="lab-card-title"><span class="lab-handle">⠿</span>{html.escape(title)}</div>
           {body_html}
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
