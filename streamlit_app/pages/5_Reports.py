@@ -11,6 +11,7 @@ from utils.theme import apply_theme, chart_theme
 require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 chart_colors = chart_theme()
+axis_line_color = chart_colors.get("line", chart_colors.get("grid", "#3d4652"))
 
 
 def _night_chart(fig, height: int):
@@ -30,14 +31,14 @@ def _night_chart(fig, height: int):
         title_font=dict(color=chart_colors["muted"]),
         gridcolor=chart_colors["grid"],
         zerolinecolor=chart_colors["grid"],
-        linecolor=chart_colors["line"],
+        linecolor=axis_line_color,
     )
     fig.update_yaxes(
         tickfont=dict(color=chart_colors["muted"]),
         title_font=dict(color=chart_colors["muted"]),
         gridcolor=chart_colors["grid"],
         zerolinecolor=chart_colors["grid"],
-        linecolor=chart_colors["line"],
+        linecolor=axis_line_color,
     )
     return fig
 

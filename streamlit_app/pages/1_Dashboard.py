@@ -17,6 +17,7 @@ from utils.theme import apply_theme, chart_theme, metric_card, section_card
 require_role("pi", "budget_manager", "lead", "member")
 theme_mode = apply_theme()
 chart_colors = chart_theme()
+axis_line_color = chart_colors.get("line", chart_colors.get("grid", "#3d4652"))
 
 txns = get_transactions()
 summary = get_summary()
@@ -135,14 +136,14 @@ with st.container(border=True):
                 title_font=dict(color=chart_colors["muted"]),
                 gridcolor=chart_colors["grid"],
                 zerolinecolor=chart_colors["grid"],
-                linecolor=chart_colors["line"],
+                linecolor=axis_line_color,
             ),
             yaxis=dict(
                 tickfont=dict(color=chart_colors["muted"]),
                 title_font=dict(color=chart_colors["muted"]),
                 gridcolor=chart_colors["grid"],
                 zerolinecolor=chart_colors["grid"],
-                linecolor=chart_colors["line"],
+                linecolor=axis_line_color,
             ),
         )
         st.plotly_chart(fig_trend, use_container_width=True)

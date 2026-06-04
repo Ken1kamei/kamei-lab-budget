@@ -3,7 +3,7 @@ import sys
 
 import streamlit as st
 
-RUNTIME_SCHEMA_VERSION = "2026-05-07-categories-v2"
+RUNTIME_SCHEMA_VERSION = "2026-06-04-night-theme-v1"
 
 
 def refresh_runtime_modules():
@@ -15,6 +15,7 @@ def refresh_runtime_modules():
         "utils.budget",
         "utils.sheets",
         "utils.parse_invoice",
+        "utils.theme",
     ):
         module = sys.modules.get(module_name)
         if module is not None:
