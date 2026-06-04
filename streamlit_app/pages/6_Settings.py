@@ -17,6 +17,65 @@ apply_theme()
 
 st.title("⚙️ Settings")
 
+
+def _split_emails(value: str) -> list[str]:
+    seen = set()
+    emails = []
+    for raw in str(value or "").replace(";", ",").split(","):
+        email = raw.strip().lower()
+        if email and email not in seen:
+            seen.add(email)
+            emails.append(email)
+    return emails
+
+
+def _join_emails(emails: list[str]) -> str:
+    return ", ".join(sorted(dict.fromkeys(e.strip().lower() for e in emails if e.strip())))
+
+
+def _valid_nyu_email(email: str) -> bool:
+    return email.strip().lower().endswith("@nyu.edu")
+
+
+def _team_payload(row: pd.Series) -> dict:
+    return {
+        "Team Name": str(row.get("Team Name", "")).strip(),
+        "Allocation (AED)": row.get("Allocation (AED)", 0),
+        "Allocation (USD)": row.get("Allocation (USD)", 0),
+        "Lead Emails": row.get("Lead Emails", ""),
+        "Member Emails": row.get("Member Emails", ""),
+        "Description": row.get("Description", ""),
+        "Active": row.get("Active", "Y"),
+    }
+
+
+def _member_roster(teams_df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    if teams_df.empty:
+        return pd.DataFrame(columns=["Email", "Team", "Access"])
+    for _, row in teams_df.iterrows():
+        team = str(row.get("Team Name", "")).strip()
+        for email in _split_emails(row.get("Lead Emails", "")):
+            rows.append({"Email": email, "Team": team, "Access": "Team Lead"})
+        for email in _split_emails(row.get("Member Emails", "")):
+            rows.append({"Email": email, "Team": team, "Access": "Member"})
+    return pd.DataFrame(rows).sort_values(["Team", "Access", "Email"]) if rows else pd.DataFrame(columns=["Email", "Team", "Access"])
+
+
+def _set_member_access(teams_df: pd.DataFrame, email: str, target_team: str, access: str) -> None:
+    normalized_email = email.strip().lower()
+    for _, row in teams_df.iterrows():
+        payload = _team_payload(row)
+        leads = [e for e in _split_emails(payload["Lead Emails"]) if e != normalized_email]
+        members = [e for e in _split_emails(payload["Member Emails"]) if e != normalized_email]
+        if payload["Team Name"] == target_team and access == "Team Lead":
+            leads.append(normalized_email)
+        elif payload["Team Name"] == target_team and access == "Member":
+            members.append(normalized_email)
+        payload["Lead Emails"] = _join_emails(leads)
+        payload["Member Emails"] = _join_emails(members)
+        upsert_team(payload)
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "💰 Budget Allocations", "👥 Teams", "🔧 Exchange Rate", "Fiscal Year", "🧪 Test Mode"
 ])
@@ -48,6 +107,64 @@ with tab2:
         st.dataframe(teams_df, use_container_width=True, hide_index=True)
     else:
         st.info("No teams defined yet.")
+
+    st.divider()
+    st.markdown("**Member access:**")
+    roster_df = _member_roster(teams_df)
+    if not roster_df.empty:
+        st.dataframe(roster_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No team members registered yet.")
+
+    existing_options = [""] + (roster_df["Email"].drop_duplicates().tolist() if not roster_df.empty else [])
+    selected_email = st.selectbox(
+        "Load existing member",
+        existing_options,
+        format_func=lambda value: "Add new member..." if not value else value,
+    )
+    selected_row = (
+        roster_df[roster_df["Email"] == selected_email].iloc[0].to_dict()
+        if selected_email and not roster_df.empty
+        else {}
+    )
+    team_options = teams_df["Team Name"].dropna().astype(str).tolist() if not teams_df.empty else []
+
+    with st.form("member_access_form"):
+        member_email = st.text_input("NYU email *", value=selected_email, placeholder="member@nyu.edu")
+        current_team_value = selected_row.get("Team", team_options[0] if team_options else "")
+        default_team_idx = team_options.index(current_team_value) if current_team_value in team_options else 0
+        team_select_options = team_options or [""]
+        target_team = st.selectbox(
+            "Team",
+            team_select_options,
+            index=default_team_idx,
+            disabled=not team_options,
+        )
+        access_options = ["Member", "Team Lead", "No access / remove from teams"]
+        current_access = selected_row.get("Access", "Member")
+        default_access_idx = access_options.index(current_access) if current_access in access_options else 0
+        access = st.selectbox("Access", access_options, index=default_access_idx)
+        if st.form_submit_button("Save Member Access", type="primary"):
+            email = member_email.strip().lower()
+            if not email:
+                st.error("NYU email is required.")
+            elif not _valid_nyu_email(email):
+                st.error("Email must end with @nyu.edu.")
+            elif not team_options:
+                st.error("Create at least one active team first.")
+            else:
+                final_access = "No access" if access.startswith("No access") else access
+                _set_member_access(
+                    teams_df,
+                    email,
+                    target_team,
+                    final_access,
+                )
+                if final_access == "No access":
+                    st.success(f"Removed {email} from all team access lists.")
+                else:
+                    st.success(f"Saved {email} as {final_access} for {target_team}.")
+                st.rerun()
 
     st.divider()
     st.markdown("**Add / Update Team:**")
