@@ -53,12 +53,12 @@ st.html(
         <div class="lab-subtitle">{html.escape(scope)} · Hello, {html.escape(display_name)} · USD base</div>
       </div>
       <div class="lab-top-tabs">
-        <span class="lab-top-tab lab-top-tab-active">Overview</span>
-        <span class="lab-top-tab">Requests</span>
-        <span class="lab-top-tab">Import</span>
-        <span class="lab-top-tab">Reports</span>
-        <span class="lab-top-tab">Teams</span>
-        <span class="lab-top-tab">Settings</span>
+        <a class="lab-top-tab lab-top-tab-active" href="/Dashboard">Overview</a>
+        <a class="lab-top-tab" href="/Transactions">Requests</a>
+        <a class="lab-top-tab" href="/Import_Invoice">Import</a>
+        <a class="lab-top-tab" href="/Reports">Reports</a>
+        <a class="lab-top-tab" href="/Settings">Teams</a>
+        <a class="lab-top-tab" href="/Settings">Settings</a>
       </div>
     </div>
     """
@@ -75,31 +75,31 @@ st.html(
         <div class="lab-stat-title">Total Budget</div>
         <div class="lab-stat-value">${total_budget:,.0f}</div>
         <div class="lab-stat-caption">allocated lab budget<br>for current fiscal year</div>
-        <div class="lab-stat-button">Open ledger</div>
+        <a class="lab-stat-button" href="/Transactions">Open ledger</a>
       </div>
       <div class="lab-stat-card lab-stat-card-magenta">
         <div class="lab-stat-title">Committed</div>
         <div class="lab-stat-value lab-stat-value-cyan">${total_committed:,.0f}</div>
         <div class="lab-stat-caption">${open_commitments:,.0f}<br>not yet paid</div>
-        <div class="lab-stat-button">Review requests</div>
+        <a class="lab-stat-button" href="/Transactions">Review requests</a>
       </div>
       <div class="lab-stat-card">
         <div class="lab-stat-title">Paid</div>
         <div class="lab-stat-value lab-stat-value-amber">${total_paid:,.0f}</div>
         <div class="lab-stat-caption">posted spending<br>against lab budget</div>
-        <div class="lab-stat-button">Open report</div>
+        <a class="lab-stat-button" href="/Reports">Open report</a>
       </div>
       <div class="lab-stat-card lab-stat-card-magenta">
         <div class="lab-stat-title">Review Queue</div>
         <div class="lab-stat-value">{review_count}</div>
         <div class="lab-stat-caption">pending invoice<br>or import reviews</div>
-        <div class="lab-stat-button">Open queue</div>
+        <a class="lab-stat-button" href="/Import_Invoice">Open queue</a>
       </div>
       <div class="lab-stat-card">
         <div class="lab-stat-title">Teams</div>
         <div class="lab-stat-value lab-stat-value-cyan">{team_count}</div>
         <div class="lab-stat-caption">{active_months} active month(s)<br>${avg_monthly:,.0f} monthly average</div>
-        <div class="lab-stat-button">Open teams</div>
+        <a class="lab-stat-button" href="/Settings">Open teams</a>
       </div>
     </div>
     """

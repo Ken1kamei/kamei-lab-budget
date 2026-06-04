@@ -211,6 +211,10 @@ def apply_theme() -> str:
           text-transform: uppercase;
           letter-spacing: .04em;
           padding: 8px 0;
+          text-decoration: none;
+        }}
+        .lab-top-tab:hover {{
+          color: var(--lab-text);
         }}
         .lab-top-tab-active {{
           color: var(--lab-cyan);
@@ -219,37 +223,43 @@ def apply_theme() -> str:
         }}
         .lab-stat-grid {{
           display: grid;
-          grid-template-columns: repeat(5, minmax(150px, 1fr));
-          gap: 18px;
-          margin-bottom: 18px;
+          grid-template-columns: repeat(3, minmax(260px, 1fr));
+          gap: 22px;
+          margin-bottom: 22px;
         }}
         .lab-stat-card {{
-          min-height: 250px;
-          padding: 28px 24px 22px;
+          min-height: 290px;
+          padding: 30px 30px 26px;
           border-radius: 8px;
           border: 1px solid #425074;
           background: linear-gradient(145deg, #303851, #202842);
           box-shadow: 0 18px 46px rgba(4, 7, 18, .35);
           border-top: 4px solid var(--lab-cyan);
+          display: flex;
+          flex-direction: column;
         }}
         .lab-stat-card-magenta {{
           border-top-color: #ff2fcf;
         }}
         .lab-stat-title {{
           color: var(--lab-text);
-          font-size: .88rem;
+          font-size: .98rem;
           font-weight: 900;
           text-transform: uppercase;
           letter-spacing: .04em;
-          margin-bottom: 28px;
+          margin-bottom: 24px;
         }}
         .lab-stat-value {{
           color: var(--lab-text);
-          font-size: clamp(2.35rem, 4vw, 4.25rem);
-          line-height: .95;
+          font-size: clamp(2.4rem, 3.35vw, 4.15rem);
+          line-height: 1;
           font-weight: 900;
           letter-spacing: 0;
-          margin-bottom: 22px;
+          margin-bottom: 18px;
+          white-space: nowrap;
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: clip;
         }}
         .lab-stat-value-cyan {{
           color: var(--lab-cyan);
@@ -261,16 +271,24 @@ def apply_theme() -> str:
           color: var(--lab-muted);
           font-size: 1rem;
           line-height: 1.28;
+          margin-bottom: 18px;
         }}
         .lab-stat-button {{
           display: inline-flex;
+          align-self: flex-start;
           color: var(--lab-text);
           border: 1px solid #5c6b9a;
           border-radius: 6px;
           padding: 10px 18px;
           font-size: .86rem;
           font-weight: 800;
-          margin-top: 24px;
+          margin-top: auto;
+          text-decoration: none;
+        }}
+        .lab-stat-button:hover {{
+          border-color: var(--lab-cyan);
+          color: var(--lab-cyan);
+          box-shadow: 0 0 16px rgba(46, 230, 207, .2);
         }}
         .lab-card-wide {{
           min-height: 150px;
@@ -392,6 +410,14 @@ def apply_theme() -> str:
           }}
           .lab-mini-grid {{
             grid-template-columns: 1fr;
+          }}
+        }}
+        @media (min-width: 901px) and (max-width: 1320px) {{
+          .lab-stat-grid {{
+            grid-template-columns: repeat(2, minmax(280px, 1fr));
+          }}
+          .lab-stat-value {{
+            font-size: clamp(2.3rem, 4.4vw, 3.6rem);
           }}
         }}
         div[data-testid="stDataFrame"] {{
