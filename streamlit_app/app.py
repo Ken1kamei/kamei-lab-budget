@@ -15,6 +15,8 @@ if "email" not in st.session_state:
     st.session_state.role  = None
     st.session_state.team  = None
 
+apply_theme()
+
 # ── OIDC / local-dev login screen ─────────────────────────────────────────────
 if not get_authenticated_email():
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -32,7 +34,6 @@ if not get_authenticated_email():
 
 email = get_authenticated_email()
 role, team = sync_session_from_oidc_user()
-apply_theme()
 
 if not email:
     st.error("Please sign in with a verified nyu.edu Google account.")

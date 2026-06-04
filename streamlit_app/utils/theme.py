@@ -3,57 +3,30 @@ import html
 import streamlit as st
 
 
-THEME_MODES = ("Day", "Night")
-
-
-def _mode_from_query() -> str | None:
-    raw = st.query_params.get("theme")
-    if isinstance(raw, list):
-        raw = raw[0] if raw else None
-    value = str(raw or "").strip().lower()
-    if value == "night":
-        return "Night"
-    if value == "day":
-        return "Day"
-    return None
-
-
 def apply_theme() -> str:
     """Apply the shared app styling and return the selected visual mode."""
-    query_mode = _mode_from_query()
-    if "theme_mode" not in st.session_state:
-        st.session_state.theme_mode = query_mode or "Day"
-    if "_theme_mode_widget" not in st.session_state:
-        st.session_state._theme_mode_widget = st.session_state.theme_mode
-
-    with st.sidebar:
-        selected = st.radio(
-            "Mode",
-            THEME_MODES,
-            horizontal=True,
-            key="_theme_mode_widget",
-        )
+    selected = "Night"
     st.session_state.theme_mode = selected
-    st.query_params["theme"] = selected.lower()
+    st.session_state._theme_mode_widget = selected
+    if st.query_params.get("theme") != "night":
+        st.query_params["theme"] = "night"
 
-    dark = selected == "Night"
+    dark = True
     colors = {
-        "bg": "#f6f5f2" if not dark else "#101214",
-        "surface": "#ffffff" if not dark else "#191d22",
-        "surface_alt": "#f0efec" if not dark else "#222832",
-        "text": "#202124" if not dark else "#f6f3ee",
-        "muted": "#72716d" if not dark else "#d0cbc4",
-        "subtle": "#a09d96" if not dark else "#aaa49c",
-        "line": "#e3e0da" if not dark else "#39414b",
-        "grid": "#dedbd4" if not dark else "#414954",
-        "cyan": "#29b8c8",
-        "green": "#69c83d",
-        "amber": "#ffb000",
-        "violet": "#bd65d8",
-        "danger": "#e53935",
-        "shadow": "0 22px 55px rgba(36, 38, 42, .08)"
-        if not dark
-        else "0 24px 55px rgba(0, 0, 0, .34)",
+        "bg": "#0d1114",
+        "surface": "#171c21",
+        "surface_alt": "#20262e",
+        "text": "#f7f3ec",
+        "muted": "#d6d0c7",
+        "subtle": "#b5ada3",
+        "line": "#343d48",
+        "grid": "#3d4652",
+        "cyan": "#35c4d5",
+        "green": "#76d04a",
+        "amber": "#ffb51c",
+        "violet": "#c56be8",
+        "danger": "#ff6861",
+        "shadow": "0 24px 55px rgba(0, 0, 0, .38)",
     }
     st.session_state["_theme_colors"] = colors
 
@@ -80,6 +53,13 @@ def apply_theme() -> str:
           background:
             radial-gradient(circle at 16% 0%, rgba(41, 184, 200, .08), transparent 28rem),
             linear-gradient(180deg, var(--lab-bg), var(--lab-bg));
+          color: var(--lab-text);
+        }}
+        header[data-testid="stHeader"] {{
+          background: var(--lab-bg);
+          color: var(--lab-text);
+        }}
+        header[data-testid="stHeader"] * {{
           color: var(--lab-text);
         }}
         section[data-testid="stSidebar"] {{
@@ -121,6 +101,12 @@ def apply_theme() -> str:
         .stFormSubmitButton > button[kind="primary"] {{
           background: var(--lab-text);
           color: var(--lab-bg);
+          border-color: var(--lab-text);
+        }}
+        button[data-testid="stBaseButton-primary"],
+        button[data-testid="stBaseButton-primary"] * {{
+          background: var(--lab-text);
+          color: var(--lab-bg) !important;
           border-color: var(--lab-text);
         }}
         .lab-hero {{
@@ -303,10 +289,12 @@ def apply_theme() -> str:
 def chart_theme() -> dict[str, str]:
     colors = st.session_state.get("_theme_colors", {})
     return {
-        "text": colors.get("text", "#202124"),
-        "muted": colors.get("muted", "#72716d"),
-        "grid": colors.get("grid", "#dedbd4"),
-        "surface": colors.get("surface", "#ffffff"),
+        "text": colors.get("text", "#f7f3ec"),
+        "muted": colors.get("muted", "#d6d0c7"),
+        "grid": colors.get("grid", "#3d4652"),
+        "surface": colors.get("surface", "#171c21"),
+        "bg": colors.get("bg", "#0d1114"),
+        "line": colors.get("line", "#343d48"),
     }
 
 

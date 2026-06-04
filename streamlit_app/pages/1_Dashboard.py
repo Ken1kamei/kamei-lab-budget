@@ -100,22 +100,27 @@ section_card("Outcome", body, class_name="lab-card-wide")
 with st.container(border=True):
     st.markdown('<div class="lab-chart-title"><span class="lab-handle">⠿</span>Monthly spending</div>', unsafe_allow_html=True)
     if not monthly_df.empty:
-        fig_trend = px.area(
+        fig_trend = px.line(
             monthly_df,
             x="month",
             y="amount_equiv",
             color="category",
             color_discrete_sequence=CATEGORY_COLOR_SEQUENCE,
             labels={"amount_equiv": "USD", "month": "Month"},
-            line_shape="spline",
+            line_shape="linear",
         )
-        fig_trend.update_traces(fill="tozeroy", opacity=0.5, line=dict(width=2.5))
+        fig_trend.update_traces(
+            mode="lines+markers",
+            line=dict(width=2.8),
+            marker=dict(size=6, line=dict(width=1.2, color=chart_colors["surface"])),
+        )
         fig_trend.update_layout(
             height=360,
-            margin=dict(t=8, b=8, l=8, r=8),
+            margin=dict(t=8, b=24, l=8, r=8),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color=chart_colors["muted"]),
+            hovermode="x unified",
+            font=dict(color=chart_colors["muted"], size=13),
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
@@ -123,18 +128,21 @@ with st.container(border=True):
                 xanchor="left",
                 x=0,
                 font=dict(color=chart_colors["muted"]),
+                bgcolor="rgba(0,0,0,0)",
             ),
             xaxis=dict(
                 tickfont=dict(color=chart_colors["muted"]),
                 title_font=dict(color=chart_colors["muted"]),
                 gridcolor=chart_colors["grid"],
                 zerolinecolor=chart_colors["grid"],
+                linecolor=chart_colors["line"],
             ),
             yaxis=dict(
                 tickfont=dict(color=chart_colors["muted"]),
                 title_font=dict(color=chart_colors["muted"]),
                 gridcolor=chart_colors["grid"],
                 zerolinecolor=chart_colors["grid"],
+                linecolor=chart_colors["line"],
             ),
         )
         st.plotly_chart(fig_trend, use_container_width=True)
