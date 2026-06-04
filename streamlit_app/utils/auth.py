@@ -72,17 +72,52 @@ def get_user_role(email: str) -> tuple[str, str | None]:
     if teams_df.empty:
         return "unknown", None
 
+    role, teams = get_user_access(email, teams_df)
+    return role, teams[0] if teams else None
+
+
+def _split_emails(value: str) -> list[str]:
+    return [e.strip().lower() for e in str(value or "").replace(";", ",").split(",") if e.strip()]
+
+
+def get_user_access(email: str, teams_df=None) -> tuple[str, list[str]]:
+    """Return highest role and all active teams for an email."""
+    normalized = email.strip().lower()
+    pi_email = _secret("PI_EMAIL", "ken1kamei@nyu.edu").strip().lower()
+    if normalized == pi_email:
+        return "pi", []
+
+    if teams_df is None:
+        teams_df = get_teams()
+    if teams_df.empty:
+        return "unknown", []
+
+    budget_manager_teams = []
+    lead_teams = []
+    member_teams = []
     for _, row in teams_df.iterrows():
         if str(row.get("Active", "Y")).strip().upper() != "Y":
             continue
-        leads   = [e.strip().lower() for e in str(row.get("Lead Emails", "")).split(",") if e.strip()]
-        members = [e.strip().lower() for e in str(row.get("Member Emails", "")).split(",") if e.strip()]
-        if email.strip().lower() in leads:
-            return "lead", str(row["Team Name"])
-        if email.strip().lower() in members:
-            return "member", str(row["Team Name"])
+        team = str(row.get("Team Name", "")).strip()
+        if not team:
+            continue
+        budget_managers = _split_emails(row.get("Budget Manager Emails", ""))
+        leads = _split_emails(row.get("Lead Emails", ""))
+        members = _split_emails(row.get("Member Emails", ""))
+        if normalized in budget_managers:
+            budget_manager_teams.append(team)
+        if normalized in leads:
+            lead_teams.append(team)
+        if normalized in members:
+            member_teams.append(team)
 
-    return "unknown", None
+    if budget_manager_teams:
+        return "budget_manager", sorted(dict.fromkeys(budget_manager_teams))
+    if lead_teams:
+        return "lead", sorted(dict.fromkeys(lead_teams))
+    if member_teams:
+        return "member", sorted(dict.fromkeys(member_teams))
+    return "unknown", []
 
 
 def get_current_user_role() -> tuple[str, str | None]:
@@ -95,10 +130,12 @@ def get_current_user_role() -> tuple[str, str | None]:
 def sync_session_from_oidc_user() -> tuple[str, str | None]:
     """Copy trusted OIDC or explicit local-dev identity into Streamlit session state."""
     email = get_authenticated_email()
-    role, team = get_user_role(email) if email else ("unknown", None)
+    role, teams = get_user_access(email) if email else ("unknown", [])
+    team = teams[0] if teams else None
     st.session_state["email"] = email
     st.session_state["role"] = role
     st.session_state["team"] = team
+    st.session_state["teams"] = teams
     return role, team
 
 
@@ -115,11 +152,24 @@ def require_role(*allowed_roles: str):
 def is_pi() -> bool:
     return st.session_state.get("role") == "pi"
 
+def is_budget_manager() -> bool:
+    return st.session_state.get("role") == "budget_manager"
+
 def is_lead() -> bool:
     return st.session_state.get("role") == "lead"
 
+def can_manage_all_budgets() -> bool:
+    return st.session_state.get("role") in ("pi", "budget_manager")
+
 def can_edit() -> bool:
-    return st.session_state.get("role") in ("pi", "lead")
+    return st.session_state.get("role") in ("pi", "budget_manager", "lead")
 
 def current_team() -> str | None:
     return st.session_state.get("team")
+
+def current_teams() -> list[str]:
+    teams = st.session_state.get("teams")
+    if isinstance(teams, list):
+        return teams
+    team = current_team()
+    return [team] if team else []

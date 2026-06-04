@@ -6,12 +6,12 @@ refresh_runtime_modules()
 
 from utils.sheets import get_teams, get_currency_rates_to_usd, upsert_imported_transaction
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
-from utils.auth import require_role, is_pi, current_team
+from utils.auth import require_role, can_manage_all_budgets, current_team, current_teams
 from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
-require_role("pi", "lead", "member")
+require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 
 st.title("📥 Import Invoice / Receipt")
@@ -19,6 +19,7 @@ st.title("📥 Import Invoice / Receipt")
 teams_df = get_teams()
 rates = get_currency_rates_to_usd()
 my_team = current_team()
+my_teams = current_teams()
 
 def _category_index(value: str) -> int:
     return CATEGORIES.index(value) if value in CATEGORIES else 0
@@ -125,12 +126,14 @@ with tab1:
                 extracted_notes.append(f"Detected {len(parsed['line_items'])} line item(s)")
             notes = st.text_area("Notes", value="\n".join(extracted_notes))
 
-            if is_pi():
+            if can_manage_all_budgets():
                 team_names = ["(Lab-wide)"] + (
                     teams_df["Team Name"].tolist() if not teams_df.empty else []
                 )
                 team_sel = st.selectbox("Team", team_names)
                 team_value = "" if team_sel == "(Lab-wide)" else team_sel
+            elif len(my_teams) > 1:
+                team_value = st.selectbox("Team", my_teams)
             else:
                 team_value = my_team
                 st.info(f"Team: **{my_team}**")
@@ -209,12 +212,14 @@ with tab2:
                 key="excel_subcategory",
             )
 
-            if is_pi():
+            if can_manage_all_budgets():
                 team_names = ["(Lab-wide)"] + (
                     teams_df["Team Name"].tolist() if not teams_df.empty else []
                 )
                 team_sel = st.selectbox("Assign all rows to team", team_names, key="excel_team")
                 team_value = "" if team_sel == "(Lab-wide)" else team_sel
+            elif len(my_teams) > 1:
+                team_value = st.selectbox("Assign all rows to team", my_teams, key="excel_team_member")
             else:
                 team_value = my_team
                 st.info(f"Team: **{my_team}**")

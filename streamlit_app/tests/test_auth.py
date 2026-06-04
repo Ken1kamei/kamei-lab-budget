@@ -6,8 +6,9 @@ from unittest.mock import patch
 def teams_df():
     return pd.DataFrame({
         "Team Name":    ["Synbio", "Imaging"],
+        "Budget Manager Emails": ["manager@nyu.edu", ""],
         "Lead Emails":  ["lead1@nyu.edu, lead2@nyu.edu", "lead3@nyu.edu"],
-        "Member Emails":["ra1@nyu.edu", "ra2@nyu.edu, ra3@nyu.edu"],
+        "Member Emails":["ra1@nyu.edu, shared@nyu.edu", "ra2@nyu.edu, ra3@nyu.edu, shared@nyu.edu"],
         "Active":       ["Y", "Y"],
     })
 
@@ -43,6 +44,27 @@ def test_member_role(mock_st, mock_get_teams, teams_df):
 
 @patch("utils.auth.get_teams")
 @patch("utils.auth.st")
+def test_budget_manager_role(mock_st, mock_get_teams, teams_df):
+    mock_st.secrets = {"PI_EMAIL": "pi@nyu.edu"}
+    mock_get_teams.return_value = teams_df
+    from utils.auth import get_user_role
+    role, team = get_user_role("manager@nyu.edu")
+    assert role == "budget_manager"
+    assert team == "Synbio"
+
+@patch("utils.auth.get_teams")
+@patch("utils.auth.st")
+def test_user_access_returns_multiple_teams(mock_st, mock_get_teams, teams_df):
+    mock_st.secrets = {"PI_EMAIL": "pi@nyu.edu"}
+    mock_get_teams.return_value = teams_df
+    from utils.auth import get_user_access, get_user_role
+    role, teams = get_user_access("shared@nyu.edu")
+    assert role == "member"
+    assert teams == ["Imaging", "Synbio"]
+    assert get_user_role("shared@nyu.edu") == ("member", "Imaging")
+
+@patch("utils.auth.get_teams")
+@patch("utils.auth.st")
 def test_unknown_role(mock_st, mock_get_teams, teams_df):
     mock_st.secrets = {"PI_EMAIL": "pi@nyu.edu"}
     mock_get_teams.return_value = teams_df
@@ -64,6 +86,21 @@ def test_role_from_oidc_user_uses_verified_nyu_email(mock_st, mock_get_teams, te
     from utils.auth import get_oidc_email, get_current_user_role
     assert get_oidc_email() == "ra1@nyu.edu"
     assert get_current_user_role() == ("member", "Synbio")
+
+@patch("utils.auth.get_teams")
+@patch("utils.auth.st")
+def test_sync_session_stores_all_teams(mock_st, mock_get_teams, teams_df):
+    mock_st.secrets = {"PI_EMAIL": "pi@nyu.edu"}
+    mock_get_teams.return_value = teams_df
+    mock_st.user = {
+        "is_logged_in": True,
+        "email": "shared@nyu.edu",
+        "email_verified": True,
+    }
+    mock_st.session_state = {}
+    from utils.auth import sync_session_from_oidc_user
+    assert sync_session_from_oidc_user() == ("member", "Imaging")
+    assert mock_st.session_state["teams"] == ["Imaging", "Synbio"]
 
 @patch("utils.auth.st")
 def test_oidc_email_rejects_unverified_or_non_nyu_users(mock_st):

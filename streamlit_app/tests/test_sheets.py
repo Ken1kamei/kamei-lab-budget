@@ -204,6 +204,53 @@ def test_set_budget_allocation_inserts_missing_category_before_total(mock_ss, _r
     assert index == 3
     assert row[:4] == ["Consumables", 1000, 10, 1036.73]
 
+@patch("utils.sheets.get_spreadsheet")
+def test_upsert_team_expands_columns_before_header_update(mock_ss):
+    from utils.sheets import TEAM_COLUMNS, upsert_team
+    mock_ws = MagicMock()
+    mock_ws.col_count = 6
+    mock_ws.get_all_values.return_value = [[
+        "Team Name",
+        "Allocation (AED)",
+        "Allocation (USD)",
+        "Lead Emails",
+        "Member Emails",
+        "Active",
+    ]]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    upsert_team({
+        "Team Name": "Diabetes",
+        "Allocation (USD)": 55000,
+        "Budget Manager Emails": "manager@nyu.edu",
+        "Budget Manager Names": "Budget Manager",
+        "Lead Emails": "lead@nyu.edu",
+        "Lead Names": "Team Lead",
+        "Member Emails": "ra@nyu.edu",
+        "Member Names": "Lab Member",
+        "Active": "Y",
+    })
+
+    mock_ws.add_cols.assert_called_once_with(len(TEAM_COLUMNS) - 6)
+    expected_headers = [
+        "Team Name",
+        "Allocation (AED)",
+        "Allocation (USD)",
+        "Lead Emails",
+        "Member Emails",
+        "Active",
+        "Budget Manager Emails",
+        "Budget Manager Names",
+        "Lead Names",
+        "Member Names",
+        "Description",
+    ]
+    mock_ws.update.assert_any_call("A1:K1", [expected_headers])
+    mock_ws.update_cell.assert_not_called()
+    appended = mock_ws.append_row.call_args.args[0]
+    assert appended[expected_headers.index("Budget Manager Emails")] == "manager@nyu.edu"
+    assert appended[expected_headers.index("Lead Names")] == "Team Lead"
+
 def test_find_matching_transaction_id_prefers_po_invoice_then_vendor_team():
     from utils.sheets import find_matching_transaction_id
     txns = pd.DataFrame([

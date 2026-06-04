@@ -1,21 +1,21 @@
 import streamlit as st
 import pandas as pd
 from utils.sheets import get_transactions, get_teams, update_transaction, approve_transaction
-from utils.auth import require_role, is_pi, can_edit, current_team
+from utils.auth import require_role, can_edit, can_manage_all_budgets, current_teams
 from utils.budget import LIFECYCLE_STATUSES
 from utils.theme import apply_theme
 
-require_role("pi", "lead", "member")
+require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 
 st.title("Requests / Transactions")
 
 txns     = get_transactions()
 teams_df = get_teams()
-team     = current_team()
+teams = current_teams()
 
-if not is_pi() and "Team" in txns.columns:
-    txns = txns[txns["Team"] == team]
+if not can_manage_all_budgets() and "Team" in txns.columns:
+    txns = txns[txns["Team"].isin(teams)]
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -25,7 +25,7 @@ with col2:
     statuses = ["All"] + sorted(txns["Status"].dropna().unique().tolist()) if "Status" in txns.columns else ["All"]
     status_filter = st.selectbox("Status", statuses)
 with col3:
-    if is_pi() and "Team" in txns.columns:
+    if can_manage_all_budgets() and "Team" in txns.columns:
         team_opts = ["All"] + sorted(txns["Team"].dropna().unique().tolist())
         team_filter = st.selectbox("Team", team_opts)
     else:

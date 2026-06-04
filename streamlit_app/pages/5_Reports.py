@@ -4,10 +4,10 @@ import plotly.graph_objects as go
 import pandas as pd
 from utils.sheets import get_transactions, get_summary, get_exchange_rate, get_teams
 from utils.budget import get_category_summary, get_team_summary, get_lab_totals, monthly_spending
-from utils.auth import require_role, is_pi, current_team
+from utils.auth import require_role, can_manage_all_budgets, current_team, current_teams
 from utils.theme import apply_theme
 
-require_role("pi", "lead", "member")
+require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 
 st.title("📈 Reports")
@@ -17,8 +17,11 @@ summary  = get_summary()
 teams_df = get_teams()
 rate     = get_exchange_rate()
 team     = current_team()
+teams    = current_teams()
 
-team_txns = txns if is_pi() else txns[txns["Team"] == team] if "Team" in txns.columns else txns
+team_txns = txns
+if not can_manage_all_budgets() and "Team" in txns.columns:
+    team_txns = txns[txns["Team"].isin(teams)]
 
 st.subheader("Budget Summary")
 cat_summary = get_category_summary(txns, summary, rate)
@@ -59,7 +62,7 @@ with col1:
         st.info("No spending data yet.")
 
 with col2:
-    if is_pi():
+    if can_manage_all_budgets():
         st.subheader("Team Spending vs Allocation")
         team_summary = get_team_summary(txns, teams_df)
         if team_summary:

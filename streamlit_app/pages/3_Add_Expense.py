@@ -5,12 +5,12 @@ from utils.runtime import refresh_runtime_modules
 refresh_runtime_modules()
 
 from utils.sheets import get_teams, get_currency_rates_to_usd, append_transaction
-from utils.auth import require_role, is_pi, can_edit, current_team
+from utils.auth import require_role, can_edit, can_manage_all_budgets, current_team, current_teams
 from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
-require_role("pi", "lead", "member")
+require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 
 st.title("Add Request")
@@ -18,6 +18,7 @@ st.title("Add Request")
 teams_df  = get_teams()
 rates     = get_currency_rates_to_usd()
 my_team   = current_team()
+my_teams  = current_teams()
 
 with st.form("add_expense_form", clear_on_submit=True):
     col1, col2 = st.columns(2)
@@ -50,10 +51,12 @@ with st.form("add_expense_form", clear_on_submit=True):
     pdf_link = st.text_input("PDF Link (Google Drive URL, optional)")
     notes    = st.text_area("Notes", height=80)
 
-    if is_pi():
+    if can_manage_all_budgets():
         team_names = ["(Lab-wide / unassigned)"] + (teams_df["Team Name"].tolist() if not teams_df.empty else [])
         team_sel   = st.selectbox("Team", team_names)
         team_value = "" if team_sel == "(Lab-wide / unassigned)" else team_sel
+    elif len(my_teams) > 1:
+        team_value = st.selectbox("Team", my_teams)
     else:
         st.info(f"Team: **{my_team}** (pre-assigned)")
         team_value = my_team

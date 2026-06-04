@@ -43,6 +43,19 @@ SUMMARY_COLS = [
 
 _SUMMARY_CATEGORIES = set(CATEGORIES) | {"TOTAL"}
 CACHE_TTL_SECONDS = 300
+TEAM_COLUMNS = [
+    "Team Name",
+    "Allocation (AED)",
+    "Allocation (USD)",
+    "Budget Manager Emails",
+    "Budget Manager Names",
+    "Lead Emails",
+    "Lead Names",
+    "Member Emails",
+    "Member Names",
+    "Description",
+    "Active",
+]
 
 @st.cache_resource
 def _get_client():
@@ -71,6 +84,18 @@ def _ws(name: str):
 def _normalize_key(value) -> str:
     return " ".join(str(value or "").strip().casefold().split())
 
+def _column_label(index: int) -> str:
+    label = ""
+    while index:
+        index, rem = divmod(index - 1, 26)
+        label = chr(65 + rem) + label
+    return label
+
+def _ensure_sheet_columns(ws, needed: int) -> None:
+    current = int(getattr(ws, "col_count", 0) or 0)
+    if current and needed > current:
+        ws.add_cols(needed - current)
+
 def _stop_on_sheet_api_error(action: str, error: gspread.exceptions.APIError):
     st.error(
         "Google Sheets read quota was reached while "
@@ -86,8 +111,10 @@ def ensure_transaction_columns():
     headers = ws.row_values(1)
     for col in TXN_COLUMNS:
         if col not in headers:
-            ws.update_cell(1, len(headers) + 1, col)
             headers.append(col)
+    _ensure_sheet_columns(ws, len(headers))
+    end_col = _column_label(len(headers))
+    ws.update(f"A1:{end_col}1", [headers])
     return headers
 
 # ── Read ──────────────────────────────────────────────────────────────────────
@@ -112,13 +139,13 @@ def get_transactions() -> pd.DataFrame:
 def get_teams() -> pd.DataFrame:
     try:
         records = _ws("Teams").get_all_records()
-        return pd.DataFrame(records) if records else pd.DataFrame(
-            columns=["Team Name","Allocation (AED)","Allocation (USD)","Lead Emails",
-                     "Member Emails","Description","Active"])
+        df = pd.DataFrame(records) if records else pd.DataFrame(columns=TEAM_COLUMNS)
+        for col in TEAM_COLUMNS:
+            if col not in df.columns:
+                df[col] = ""
+        return df
     except gspread.exceptions.WorksheetNotFound:
-        return pd.DataFrame(columns=["Team Name","Allocation (AED)",
-                                      "Allocation (USD)","Lead Emails","Member Emails",
-                                      "Description","Active"])
+        return pd.DataFrame(columns=TEAM_COLUMNS)
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Teams", e)
 
@@ -374,28 +401,29 @@ def upsert_team(team_data: dict):
     ws = _ws("Teams")
     records = ws.get_all_values()
     headers = records[0] if records else []
-    required_headers = [
-        "Team Name", "Allocation (AED)", "Allocation (USD)", "Lead Emails",
-        "Member Emails", "Description", "Active",
-    ]
-    for header in required_headers:
+    for header in TEAM_COLUMNS:
         if header not in headers:
-            ws.update_cell(1, len(headers) + 1, header)
             headers.append(header)
+    _ensure_sheet_columns(ws, len(headers))
+    end_col = _column_label(len(headers))
+    ws.update(f"A1:{end_col}1", [headers])
     team_names = [r[0] for r in records[1:]] if len(records) > 1 else []
     values = {
         "Team Name": team_data.get("Team Name", ""),
         "Allocation (AED)": team_data.get("Allocation (AED)", 0),
         "Allocation (USD)": team_data.get("Allocation (USD)", ""),
+        "Budget Manager Emails": team_data.get("Budget Manager Emails", ""),
+        "Budget Manager Names": team_data.get("Budget Manager Names", ""),
         "Lead Emails": team_data.get("Lead Emails", ""),
+        "Lead Names": team_data.get("Lead Names", ""),
         "Member Emails": team_data.get("Member Emails", ""),
+        "Member Names": team_data.get("Member Names", ""),
         "Description": team_data.get("Description", ""),
         "Active": team_data.get("Active", "Y"),
     }
     row = [values.get(header, "") for header in headers]
     if team_data["Team Name"] in team_names:
         row_idx = team_names.index(team_data["Team Name"]) + 2
-        end_col = chr(ord("A") + len(headers) - 1)
         ws.update(f"A{row_idx}:{end_col}{row_idx}", [row])
     else:
         ws.append_row(row)

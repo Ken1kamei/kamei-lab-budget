@@ -8,13 +8,13 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.auth import current_team, is_pi, require_role
+from utils.auth import can_manage_all_budgets, current_team, current_teams, require_role
 from utils.budget import get_category_summary, get_lab_totals, get_team_summary, monthly_spending
 from utils.categories import CATEGORY_COLOR_SEQUENCE
 from utils.sheets import get_exchange_rate, get_summary, get_teams, get_transactions
 from utils.theme import apply_theme, chart_theme, metric_card, section_card
 
-require_role("pi", "lead", "member")
+require_role("pi", "budget_manager", "lead", "member")
 theme_mode = apply_theme()
 chart_colors = chart_theme()
 
@@ -27,12 +27,15 @@ cat_summary = get_category_summary(txns, summary, rate)
 totals = get_lab_totals(txns, summary, rate)
 team_summary = get_team_summary(txns, teams_df)
 
-display_txns = txns if is_pi() else txns[txns["Team"] == current_team()] if "Team" in txns.columns else txns
+user_teams = current_teams()
+display_txns = txns
+if not can_manage_all_budgets() and "Team" in txns.columns:
+    display_txns = txns[txns["Team"].isin(user_teams)]
 monthly_df = monthly_spending(display_txns)
 
 user_email = st.session_state.get("email", "")
 display_name = str(user_email).split("@")[0] if user_email else "Kamei Lab"
-scope = "Lab-wide overview" if is_pi() else f"{current_team()} overview"
+scope = "Lab-wide overview" if can_manage_all_budgets() else f"{', '.join(user_teams) or current_team()} overview"
 
 st.markdown(
     f"""
@@ -140,7 +143,7 @@ with st.container(border=True):
 
 team_col, breakdown_col = st.columns(2, gap="large")
 with team_col:
-    if is_pi() and team_summary:
+    if can_manage_all_budgets() and team_summary:
         names = list(team_summary.keys())
         fig = go.Figure(
             data=[
