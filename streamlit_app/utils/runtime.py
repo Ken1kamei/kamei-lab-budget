@@ -3,7 +3,7 @@ import sys
 
 import streamlit as st
 
-RUNTIME_SCHEMA_VERSION = "2026-06-04-night-theme-v2"
+RUNTIME_SCHEMA_VERSION = "2026-06-04-dashboard-design-v1"
 
 
 def refresh_runtime_modules():

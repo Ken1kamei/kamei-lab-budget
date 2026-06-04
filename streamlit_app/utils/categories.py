@@ -19,11 +19,11 @@ SUBCATEGORIES = {
 }
 
 CATEGORY_COLOR_SEQUENCE = [
-    "#57068C",
-    "#2E7D32",
-    "#7B1FA2",
-    "#1976D2",
-    "#C2185B",
-    "#F57C00",
-    "#616161",
+    "#2ee6cf",
+    "#2f8cff",
+    "#ff2fcf",
+    "#ffd335",
+    "#7cff6b",
+    "#a86cff",
+    "#8b95b8",
 ]

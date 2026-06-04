@@ -13,20 +13,20 @@ def apply_theme() -> str:
 
     dark = True
     colors = {
-        "bg": "#0d1114",
-        "surface": "#171c21",
-        "surface_alt": "#20262e",
-        "text": "#f7f3ec",
-        "muted": "#d6d0c7",
-        "subtle": "#b5ada3",
-        "line": "#343d48",
-        "grid": "#3d4652",
-        "cyan": "#35c4d5",
-        "green": "#76d04a",
-        "amber": "#ffb51c",
-        "violet": "#c56be8",
-        "danger": "#ff6861",
-        "shadow": "0 24px 55px rgba(0, 0, 0, .38)",
+        "bg": "#151b32",
+        "surface": "#242a46",
+        "surface_alt": "#1d233b",
+        "text": "#f7f8ff",
+        "muted": "#c1c8e4",
+        "subtle": "#8892bb",
+        "line": "#37405f",
+        "grid": "#303858",
+        "cyan": "#2ee6cf",
+        "green": "#7cff6b",
+        "amber": "#ffd335",
+        "violet": "#a86cff",
+        "danger": "#ff4f80",
+        "shadow": "0 18px 44px rgba(5, 8, 20, .38)",
     }
     st.session_state["_theme_colors"] = colors
 
@@ -51,7 +51,8 @@ def apply_theme() -> str:
         }}
         .stApp {{
           background:
-            radial-gradient(circle at 16% 0%, rgba(41, 184, 200, .08), transparent 28rem),
+            radial-gradient(circle at 12% 0%, rgba(46, 230, 207, .12), transparent 24rem),
+            radial-gradient(circle at 82% 8%, rgba(168, 108, 255, .12), transparent 22rem),
             linear-gradient(180deg, var(--lab-bg), var(--lab-bg));
           color: var(--lab-text);
         }}
@@ -78,8 +79,8 @@ def apply_theme() -> str:
           box-shadow: inset 0 0 0 1px var(--lab-line);
         }}
         .main .block-container {{
-          padding-top: 2.1rem;
-          max-width: 1280px;
+          padding-top: 1rem;
+          max-width: 1480px;
         }}
         h1, h2, h3, p, label {{
           color: var(--lab-text);
@@ -114,7 +115,7 @@ def apply_theme() -> str:
           align-items: flex-start;
           justify-content: space-between;
           gap: 24px;
-          margin-bottom: 24px;
+          margin-bottom: 12px;
         }}
         .lab-eyebrow {{
           color: var(--lab-subtle, var(--lab-muted));
@@ -150,26 +151,28 @@ def apply_theme() -> str:
         .lab-card {{
           background: var(--lab-surface);
           border: 1px solid var(--lab-line);
-          border-radius: 8px;
-          padding: 22px;
-          min-height: 190px;
+          border-radius: 4px;
+          padding: 16px;
+          min-height: 145px;
           height: 100%;
           box-shadow: var(--lab-shadow);
           overflow: hidden;
         }}
         .lab-card-wide {{
-          min-height: 170px;
+          min-height: 150px;
         }}
         .lab-card-chart {{
-          min-height: 390px;
+          min-height: 330px;
         }}
         .lab-card-title {{
           display: flex;
           gap: 12px;
           align-items: center;
           color: var(--lab-text);
-          font-size: 1rem;
-          margin-bottom: 20px;
+          font-size: .86rem;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+          margin-bottom: 14px;
         }}
         .lab-handle {{
           color: var(--lab-muted);
@@ -178,7 +181,7 @@ def apply_theme() -> str:
         }}
         .lab-kpi {{
           color: var(--lab-text);
-          font-size: clamp(1.55rem, 2.15vw, 2.35rem);
+          font-size: clamp(1.55rem, 2.2vw, 2.65rem);
           line-height: 1.05;
           font-weight: 500;
           letter-spacing: 0;
@@ -188,7 +191,7 @@ def apply_theme() -> str:
           text-overflow: clip;
         }}
         .lab-kpi-wide {{
-          font-size: clamp(1.75rem, 2.5vw, 2.8rem);
+          font-size: clamp(1.9rem, 3vw, 3.6rem);
         }}
         .lab-dollar {{
           color: color-mix(in srgb, var(--lab-muted) 65%, transparent);
@@ -223,15 +226,15 @@ def apply_theme() -> str:
         .lab-mini-grid {{
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 10px;
-          margin-top: 18px;
+          gap: 8px;
+          margin-top: 16px;
         }}
         .lab-mini-grid-wide {{
           grid-template-columns: repeat(3, minmax(150px, 1fr));
         }}
         .lab-mini {{
           background: var(--lab-surface-alt);
-          border-radius: 8px;
+          border-radius: 4px;
           padding: 10px;
           border: 1px solid var(--lab-line);
         }}
@@ -242,7 +245,7 @@ def apply_theme() -> str:
         }}
         .lab-mini-value {{
           color: var(--lab-text);
-          font-size: .95rem;
+          font-size: 1rem;
           font-weight: 600;
           white-space: nowrap;
         }}
@@ -275,9 +278,34 @@ def apply_theme() -> str:
         div[data-testid="stVerticalBlockBorderWrapper"] {{
           background: var(--lab-surface);
           border-color: var(--lab-line);
-          border-radius: 8px;
+          border-radius: 4px;
           box-shadow: var(--lab-shadow);
-          min-height: 390px;
+          min-height: 320px;
+        }}
+        .lab-panel-label {{
+          color: var(--lab-subtle);
+          font-size: .72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .08em;
+        }}
+        .lab-status-chip {{
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          color: var(--lab-green);
+          font-size: .72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .06em;
+        }}
+        .lab-status-chip::before {{
+          content: "";
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: var(--lab-green);
+          box-shadow: 0 0 14px var(--lab-green);
         }}
         </style>
         """,
