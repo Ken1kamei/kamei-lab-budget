@@ -70,6 +70,36 @@ def apply_theme() -> str:
         section[data-testid="stSidebar"] * {{
           color: var(--lab-text);
         }}
+        .lab-sidebar-brand {{
+          padding: 12px 8px 22px;
+        }}
+        .lab-sidebar-title {{
+          color: var(--lab-text);
+          font-size: 1.55rem;
+          font-weight: 900;
+          margin-bottom: 22px;
+        }}
+        .lab-sidebar-muted {{
+          color: var(--lab-subtle);
+          font-size: .96rem;
+          font-weight: 700;
+          margin-bottom: 22px;
+        }}
+        .lab-sidebar-card {{
+          background: linear-gradient(135deg, rgba(47,140,255,.24), rgba(46,230,207,.08));
+          border: 1px solid rgba(47,140,255,.24);
+          border-radius: 10px;
+          padding: 18px 18px;
+          color: var(--lab-text);
+          font-size: 1.08rem;
+          font-weight: 800;
+          margin-bottom: 28px;
+        }}
+        .lab-sidebar-rule {{
+          height: 1px;
+          background: var(--lab-line);
+          margin: 8px 0 24px;
+        }}
         div[data-testid="stSidebarNav"] li a {{
           border-radius: 8px;
           margin: 4px 8px;
@@ -115,7 +145,7 @@ def apply_theme() -> str:
           align-items: flex-start;
           justify-content: space-between;
           gap: 24px;
-          margin-bottom: 12px;
+          margin: 20px 0 22px;
         }}
         .lab-eyebrow {{
           color: var(--lab-subtle, var(--lab-muted));
@@ -124,9 +154,9 @@ def apply_theme() -> str:
         }}
         .lab-title {{
           color: var(--lab-text);
-          font-size: clamp(1.9rem, 3.2vw, 3rem);
-          line-height: .98;
-          font-weight: 500;
+          font-size: clamp(2.4rem, 4vw, 4.1rem);
+          line-height: 1.05;
+          font-weight: 800;
           letter-spacing: 0;
           margin: 0;
         }}
@@ -157,6 +187,90 @@ def apply_theme() -> str:
           height: 100%;
           box-shadow: var(--lab-shadow);
           overflow: hidden;
+        }}
+        .lab-dashboard-top {{
+          display: grid;
+          grid-template-columns: minmax(320px, 1fr) minmax(480px, 1.1fr);
+          gap: 34px;
+          align-items: end;
+          padding-bottom: 26px;
+          border-bottom: 1px solid var(--lab-line);
+          margin-bottom: 28px;
+        }}
+        .lab-top-tabs {{
+          display: flex;
+          gap: 26px;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: flex-end;
+        }}
+        .lab-top-tab {{
+          color: var(--lab-subtle);
+          font-size: .82rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+          padding: 8px 0;
+        }}
+        .lab-top-tab-active {{
+          color: var(--lab-cyan);
+          border-bottom: 3px solid var(--lab-cyan);
+          text-shadow: 0 0 18px rgba(46, 230, 207, .38);
+        }}
+        .lab-stat-grid {{
+          display: grid;
+          grid-template-columns: repeat(5, minmax(150px, 1fr));
+          gap: 18px;
+          margin-bottom: 18px;
+        }}
+        .lab-stat-card {{
+          min-height: 250px;
+          padding: 28px 24px 22px;
+          border-radius: 8px;
+          border: 1px solid #425074;
+          background: linear-gradient(145deg, #303851, #202842);
+          box-shadow: 0 18px 46px rgba(4, 7, 18, .35);
+          border-top: 4px solid var(--lab-cyan);
+        }}
+        .lab-stat-card-magenta {{
+          border-top-color: #ff2fcf;
+        }}
+        .lab-stat-title {{
+          color: var(--lab-text);
+          font-size: .88rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+          margin-bottom: 28px;
+        }}
+        .lab-stat-value {{
+          color: var(--lab-text);
+          font-size: clamp(2.35rem, 4vw, 4.25rem);
+          line-height: .95;
+          font-weight: 900;
+          letter-spacing: 0;
+          margin-bottom: 22px;
+        }}
+        .lab-stat-value-cyan {{
+          color: var(--lab-cyan);
+        }}
+        .lab-stat-value-amber {{
+          color: var(--lab-amber);
+        }}
+        .lab-stat-caption {{
+          color: var(--lab-muted);
+          font-size: 1rem;
+          line-height: 1.28;
+        }}
+        .lab-stat-button {{
+          display: inline-flex;
+          color: var(--lab-text);
+          border: 1px solid #5c6b9a;
+          border-radius: 6px;
+          padding: 10px 18px;
+          font-size: .86rem;
+          font-weight: 800;
+          margin-top: 24px;
         }}
         .lab-card-wide {{
           min-height: 150px;
@@ -263,6 +377,15 @@ def apply_theme() -> str:
         @media (max-width: 900px) {{
           .lab-hero {{
             flex-direction: column;
+          }}
+          .lab-dashboard-top {{
+            grid-template-columns: 1fr;
+          }}
+          .lab-top-tabs {{
+            justify-content: flex-start;
+          }}
+          .lab-stat-grid {{
+            grid-template-columns: 1fr;
           }}
           .lab-kpi {{
             font-size: clamp(1.7rem, 8vw, 2.35rem);

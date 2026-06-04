@@ -47,13 +47,60 @@ avg_monthly = float(monthly_df["amount_equiv"].sum() / max(monthly_df["month"].n
 
 st.html(
     f"""
-    <div class="lab-hero">
+    <div class="lab-dashboard-top">
       <div>
-        <div class="lab-eyebrow">Kamei Reverse Bioengineering Lab</div>
-        <h1 class="lab-title">Budget Command Center</h1>
+        <h1 class="lab-title">Kamei Lab Budget<br>Manager</h1>
         <div class="lab-subtitle">{html.escape(scope)} · Hello, {html.escape(display_name)} · USD base</div>
       </div>
-      <div class="lab-pill"><span class="lab-status-chip">Live</span>{html.escape(theme_mode)} mode</div>
+      <div class="lab-top-tabs">
+        <span class="lab-top-tab lab-top-tab-active">Overview</span>
+        <span class="lab-top-tab">Requests</span>
+        <span class="lab-top-tab">Import</span>
+        <span class="lab-top-tab">Reports</span>
+        <span class="lab-top-tab">Teams</span>
+        <span class="lab-top-tab">Settings</span>
+      </div>
+    </div>
+    """
+)
+
+review_count = int((display_txns["Status"].astype(str) == "Pending Review").sum()) if "Status" in display_txns.columns else 0
+team_count = len(team_summary)
+active_months = monthly_df["month"].nunique() if not monthly_df.empty else 0
+
+st.html(
+    f"""
+    <div class="lab-stat-grid">
+      <div class="lab-stat-card">
+        <div class="lab-stat-title">Total Budget</div>
+        <div class="lab-stat-value">${total_budget:,.0f}</div>
+        <div class="lab-stat-caption">allocated lab budget<br>for current fiscal year</div>
+        <div class="lab-stat-button">Open ledger</div>
+      </div>
+      <div class="lab-stat-card lab-stat-card-magenta">
+        <div class="lab-stat-title">Committed</div>
+        <div class="lab-stat-value lab-stat-value-cyan">${total_committed:,.0f}</div>
+        <div class="lab-stat-caption">${open_commitments:,.0f}<br>not yet paid</div>
+        <div class="lab-stat-button">Review requests</div>
+      </div>
+      <div class="lab-stat-card">
+        <div class="lab-stat-title">Paid</div>
+        <div class="lab-stat-value lab-stat-value-amber">${total_paid:,.0f}</div>
+        <div class="lab-stat-caption">posted spending<br>against lab budget</div>
+        <div class="lab-stat-button">Open report</div>
+      </div>
+      <div class="lab-stat-card lab-stat-card-magenta">
+        <div class="lab-stat-title">Review Queue</div>
+        <div class="lab-stat-value">{review_count}</div>
+        <div class="lab-stat-caption">pending invoice<br>or import reviews</div>
+        <div class="lab-stat-button">Open queue</div>
+      </div>
+      <div class="lab-stat-card">
+        <div class="lab-stat-title">Teams</div>
+        <div class="lab-stat-value lab-stat-value-cyan">{team_count}</div>
+        <div class="lab-stat-caption">{active_months} active month(s)<br>${avg_monthly:,.0f} monthly average</div>
+        <div class="lab-stat-button">Open teams</div>
+      </div>
     </div>
     """
 )
@@ -145,40 +192,6 @@ with status_col:
             </div>
             """
         )
-
-metric_cols = st.columns(4, gap="small")
-with metric_cols[0]:
-    metric_card(
-        "Total budget",
-        f"{total_budget:,.0f}",
-        f'<span class="lab-positive">{overall_pct * 100:.1f}%</span> committed',
-        progress=overall_pct,
-        accent="cyan",
-    )
-with metric_cols[1]:
-    metric_card(
-        "Committed",
-        f"{total_committed:,.0f}",
-        f"${open_commitments:,.0f} not yet paid",
-        progress=(total_committed / total_budget if total_budget else 0),
-        accent="violet",
-    )
-with metric_cols[2]:
-    metric_card(
-        "Paid",
-        f"{total_paid:,.0f}",
-        f"${total_remaining:,.0f} remaining",
-        progress=(total_paid / total_budget if total_budget else 0),
-        accent="green",
-    )
-with metric_cols[3]:
-    metric_card(
-        "Monthly average",
-        f"{avg_monthly:,.0f}",
-        f"{monthly_df['month'].nunique() if not monthly_df.empty else 0} active month(s)",
-        progress=None,
-        accent="amber",
-    )
 
 category_rows = []
 for cat, data in cat_summary.items():

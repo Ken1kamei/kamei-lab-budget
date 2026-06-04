@@ -50,11 +50,19 @@ if role == "unknown":
 
 # ── Sidebar (shown after login) ───────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(f"**🔬 Kamei Lab Budget**")
+    st.html(
+        f"""
+        <div class="lab-sidebar-brand">
+          <div class="lab-sidebar-title">Kamei Lab</div>
+          <div class="lab-sidebar-muted">Budget Manager</div>
+          <div class="lab-sidebar-card">Private lab portal</div>
+          <div class="lab-sidebar-rule"></div>
+        </div>
+        """
+    )
     st.caption(f"Logged in as: `{st.session_state.email}`")
     st.caption(f"Role: **{st.session_state.role.upper()}**"
                + (f" · {st.session_state.team}" if st.session_state.team else ""))
-    st.divider()
     if st.button("Sign out", use_container_width=True):
         st.logout()
 
