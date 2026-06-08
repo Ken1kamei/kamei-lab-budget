@@ -21,9 +21,11 @@ def parse_pdf_bytes(pdf_bytes: bytes, filename: str = "") -> dict:
 
 def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    line_items = _extract_line_items(tables)
+    line_items = _dedupe_line_items(_extract_line_items(tables) + _extract_text_line_items(lines))
     vendor = _find_vendor(lines, text)
-    invoice_number = _find_invoice_number(text)
+    invoice_number = _find_invoice_number(text) or _find_invoice_number(filename)
+    if not invoice_number:
+        invoice_number = _find_inventory_invoice_number(text, filename)
     invoice_date = _find_invoice_date(text)
     due_date = _find_due_date(text)
     po_number = _find_po_number(text) or _find_po_number(filename)
@@ -55,14 +57,19 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
         "amount_source": total_candidate.get("source", ""),
         "po_number": po_number,
         "suggested_category": suggested_category,
+        "suggested_subcategory": "",
+        "suggested_team": "",
         "suggested_description": suggested_description,
         "line_items": line_items,
+        "history_hints": [],
         "confidence": confidence,
         "missing_fields": [field for field, score in confidence.items() if score == "low"],
     }
 
 
 def _find_vendor(lines, text=""):
+    if re.search(r"Chartfields\s+for\s+Order\s+Id|PeopleSoft\s+Inventory", str(text or ""), re.IGNORECASE):
+        return "PeopleSoft Inventory"
     supplier = _find_supplier_vendor(text)
     if supplier:
         return supplier
@@ -90,6 +97,11 @@ def _find_vendor(lines, text=""):
 def _find_supplier_vendor(text: str) -> str:
     lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
     for i, line in enumerate(lines):
+        supplier_line = re.match(r"^Supplier\s+(?!Name\b)(.+)$", line, flags=re.IGNORECASE)
+        if supplier_line:
+            cleaned = _clean_vendor_name(supplier_line.group(1))
+            if cleaned:
+                return cleaned[:120]
         if "supplier:" not in line.casefold():
             continue
         after_supplier = re.split(r"supplier:\s*", line, flags=re.IGNORECASE, maxsplit=1)[-1]
@@ -119,8 +131,22 @@ def _find_supplier_vendor(text: str) -> str:
                         continuation = f" {next_cleaned}"
                 if continuation and not re.search(r"\b(LLC|LTD|LIMITED|TRADING|CORPORATION|INC\.?)\b", cleaned, re.IGNORECASE):
                     cleaned = f"{cleaned}{continuation}"
-                return cleaned[:120]
+                return _clean_vendor_name(cleaned)[:120]
     return ""
+
+
+def _clean_vendor_name(value: str) -> str:
+    cleaned = str(value or "").strip(" :-")
+    cleaned = re.split(
+        r"\s+Ship\s+To\b|\s+Bill\s+To\b|\s+Workflow\b|\s+Accepted\b|\s+Sent\s+To\b|\s+Product\s+Description\b",
+        cleaned,
+        flags=re.IGNORECASE,
+    )[0].strip(" :-")
+    if not cleaned or cleaned.casefold() in {"name", "supplier name"}:
+        return ""
+    if re.fullmatch(r"[\d\s:/.-]+", cleaned):
+        return ""
+    return cleaned
 
 
 def _find_pattern(text, patterns):
@@ -133,7 +159,11 @@ def _find_pattern(text, patterns):
 
 def _looks_like_identifier(value: str) -> bool:
     value = str(value or "").strip()
-    return bool(value) and bool(re.search(r"\d|[-_/]", value))
+    if not value:
+        return False
+    if re.fullmatch(r"\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}", value):
+        return False
+    return bool(re.search(r"\d|[-_/]", value))
 
 
 def _find_invoice_number(text):
@@ -147,10 +177,21 @@ def _find_invoice_number(text):
     )
 
 
+def _find_inventory_invoice_number(text: str, filename: str) -> str:
+    filename_match = re.search(r"\b(INS\d+[_-]\d+)\b", str(filename or ""), re.IGNORECASE)
+    if filename_match:
+        return filename_match.group(1)
+    order_match = re.search(r"Chartfields\s+for\s+Order\s+Id\s*:\s*(\d{6,})", str(text or ""), re.IGNORECASE)
+    if order_match:
+        return order_match.group(1)
+    return ""
+
+
 def _find_po_number(text):
     return _find_pattern(
         text,
         [
+            r"\b(iB\d{6,})\b",
             r"\b(ADH\d{2}-\d{6,})\b",
             r"(?:P\.?O\.?\s*(?:#|No\.?|Number|Order)[:\s]+)([A-Z0-9][A-Z0-9\-/_.]+)",
             r"(?:Purchase\s+Order\s*(?:#|No\.?|Number)?[:\s]+)([A-Z0-9][A-Z0-9\-/_.]+)",
@@ -246,7 +287,7 @@ def _normalize_currency(value: str) -> str:
 
 
 def _money_mentions(line: str) -> list[dict]:
-    amount = r"[\d,]+(?:\.\d{1,2})?"
+    amount = r"\d[\d,\s]*(?:\.\d{1,2})?"
     currency = r"AED|USD|EUR|JPY|GBP|US\$|Dhs\.?|Dirham|[$€£¥￥]"
     mentions = []
     patterns = [
@@ -255,6 +296,8 @@ def _money_mentions(line: str) -> list[dict]:
     ]
     for pat in patterns:
         for match in re.finditer(pat, line, re.IGNORECASE):
+            if match.end() < len(line) and line[match.end()] == "-":
+                continue
             parsed_amount = _money_to_float(match.group("amount"))
             parsed_currency = _normalize_currency(match.group("currency"))
             if parsed_amount > 0 and parsed_currency:
@@ -274,7 +317,10 @@ def _bare_amount_mentions(line: str) -> list[dict]:
     protected = str(line or "")
     for money in _money_mentions(protected):
         protected = protected.replace(money["text"], " ")
-    amount = r"(?<![\d/-])[\d]{1,3}(?:,\d{3})+(?:\.\d{1,2})?|(?<![\d/-])\d+\.\d{2}(?![\d/-])"
+    amount = (
+        r"(?<![\d/-])\d[\d,\s]*,\s*\d{3}(?:\.\d{1,2})?"
+        r"|(?<![\d/-])\d+\.\d{2}(?![\d/-])"
+    )
     for match in re.finditer(amount, protected):
         parsed_amount = _money_to_float(match.group(0))
         if parsed_amount > 0:
@@ -366,7 +412,7 @@ def _guess_category(text):
     if re.search(r"membership|member dues|society dues|annual dues", t):
         return "Memberships"
     if re.search(
-        r"reagent|chemical|pipette|assay|antibod|annexin|biolegend|fluor|enzyme|kit|consumable|plasticware",
+        r"reagent|chemical|pipet|dpbs|serum|fetal bovine|cell gm|rinsing sol|propidium|methyl cellulose|oligo|transwell|superscript|master mix|acetaminophen|assay|antibod|annexin|biolegend|fluor|enzyme|kit|consumable|plasticware",
         t,
     ):
         return "Consumables"
@@ -420,6 +466,147 @@ def _confidence_scores(fields: dict) -> dict[str, str]:
         "suggested_category": "medium" if fields.get("suggested_category") != "Other" else "low",
         "suggested_description": "high" if fields.get("line_items") else "medium",
     }
+
+
+def _dedupe_line_items(items: list[dict]) -> list[dict]:
+    seen = set()
+    deduped = []
+    for item in items:
+        desc = _clean_description(item.get("description", ""))
+        if not desc:
+            continue
+        key = re.sub(r"\W+", "", desc.casefold())[:80]
+        if key in seen:
+            continue
+        seen.add(key)
+        row = dict(item)
+        row["description"] = desc
+        deduped.append(row)
+    return deduped
+
+
+def _clean_description(value: str) -> str:
+    desc = " ".join(str(value or "").replace("\uf0c6", " ").split())
+    desc = re.sub(r"^(\d+|\*\*)\s+BASEMENT_Level\s+\d+_TBC\s+", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\s+Sent\s+To\s+.*$", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\s+Accepted\s+.*$", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\s+Supplier\s+Invoiced\s+.*$", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\s+Account\s+Code\s+.*$", "", desc, flags=re.IGNORECASE)
+    desc = desc.strip(" :-")
+    if not desc or _is_bad_description_line(desc):
+        return ""
+    return desc[:220]
+
+
+def _is_bad_description_line(line: str) -> bool:
+    value = str(line or "").strip()
+    folded = value.casefold()
+    if not value:
+        return True
+    if re.search(r"www\.|https?://|nyu\.edu|terms|conditions|invalidated|signature", folded):
+        return True
+    if folded in {"packaging", "supplier name", "line item/description quantityuom po price extended amt due date"}:
+        return True
+    if re.fullmatch(r"[\d\s:/.,$€£¥-]+", value):
+        return True
+    return False
+
+
+def _extract_text_line_items(lines: list[str]) -> list[dict]:
+    items = []
+    items.extend(_extract_inventory_items(lines))
+    items.extend(_extract_ibuy_items(lines))
+    items.extend(_extract_nyuad_po_items(lines))
+    return items
+
+
+def _extract_inventory_items(lines: list[str]) -> list[dict]:
+    items = []
+    for line in lines:
+        if not re.match(r"^(?:\d+|\*\*)\s+BASEMENT_Level\s+\d+_TBC\s+", line, re.IGNORECASE):
+            continue
+        desc = _clean_description(line)
+        if desc:
+            items.append({"description": desc, "quantity": 1, "unit_price": 0, "total": 0})
+    return items
+
+
+def _extract_ibuy_items(lines: list[str]) -> list[dict]:
+    items = []
+    in_items = False
+    for line in lines:
+        if re.search(
+            r"Product\s+Description.*(?:Unit\s+Price|Ext\.\s+Price)|Unit\s+Price\s+Quantity\s+Ext\.\s+Price",
+            line,
+            re.IGNORECASE,
+        ):
+            in_items = True
+            continue
+        if not in_items:
+            continue
+        if re.search(r"Subtotal|Shipping|Handling|Total\uf0c6|Distribution|Supplier\s+Information", line, re.IGNORECASE):
+            if re.search(r"Subtotal|Total\uf0c6", line, re.IGNORECASE):
+                break
+            continue
+        if _is_bad_description_line(line):
+            continue
+        match = re.match(
+            r"^\d+\s+(?P<desc>.+?)\s+\d[\d,\s]*\.\d{2}\s+(?:USD|AED|EUR|JPY|GBP)\s+\d+(?:\.\d+)?\s+EA\b",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
+        desc = _clean_description(match.group("desc"))
+        if desc:
+            items.append({"description": desc, "quantity": 1, "unit_price": 0, "total": 0})
+    return items
+
+
+def _extract_nyuad_po_items(lines: list[str]) -> list[dict]:
+    items = []
+    in_items = False
+    current = []
+    for line in lines:
+        if re.search(r"Line\s+Item/Description\s+QuantityUOM\s+PO\s+Price", line, re.IGNORECASE):
+            in_items = True
+            continue
+        if not in_items:
+            continue
+        if re.search(r"Total\s+PO\s+Amount|QUOTE\s+NO|PAYMENT\s+TERMS|CHARTFIELD", line, re.IGNORECASE):
+            if current:
+                _append_po_item(items, current)
+                current = []
+            if re.search(r"Total\s+PO\s+Amount", line, re.IGNORECASE):
+                break
+            continue
+        if re.search(r"Item\s+Total", line, re.IGNORECASE):
+            if current:
+                _append_po_item(items, current)
+                current = []
+            continue
+        start_match = re.match(
+            r"^\d+\s+(?P<desc>.+?)\s+\d+(?:\.\d+)?\s*EA\b.*\d{1,2}/\d{1,2}/\d{4}",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if start_match:
+            if current:
+                _append_po_item(items, current)
+            current = [start_match.group("desc")]
+            continue
+        if current and not re.search(r"^<<|^Utech\s+#|^VAT|^Ship\s+To|^Bill\s+To", line, re.IGNORECASE):
+            current.append(line)
+    if current:
+        _append_po_item(items, current)
+    return items
+
+
+def _append_po_item(items: list[dict], parts: list[str]) -> None:
+    desc = _clean_description(" ".join(parts))
+    desc = re.sub(r"\s+UOM\s*:.*$", "", desc, flags=re.IGNORECASE).strip(" :-")
+    if desc:
+        items.append({"description": desc, "quantity": 1, "unit_price": 0, "total": 0})
 
 
 def _find_col(headers, keywords):
@@ -479,6 +666,86 @@ def _extract_line_items(tables):
             except (IndexError, TypeError):
                 pass
     return items
+
+
+def enrich_with_history(parsed: dict, transactions) -> dict:
+    """
+    Lightweight adaptive learning from previously corrected/imported rows.
+
+    This is intentionally not a trained ML model. It uses the Google Sheet ledger
+    as feedback: once a user corrects vendor/category/sub-category/team for a PO,
+    invoice, or vendor, future imports with the same signal get the same defaults.
+    """
+    if parsed.get("_error") or transactions is None:
+        return parsed
+    try:
+        if transactions.empty:
+            return parsed
+    except AttributeError:
+        return parsed
+
+    txns = transactions.copy()
+    if "Status" in txns.columns:
+        txns = txns[txns["Status"].astype(str).str.strip().ne("Cancelled")]
+    if txns.empty:
+        return parsed
+
+    match = _history_exact_match(parsed, txns)
+    if match is None:
+        match = _history_vendor_match(parsed, txns)
+    if match is None:
+        return parsed
+
+    updated = dict(parsed)
+    hints = list(updated.get("history_hints", []))
+    for source_col, target_key in (
+        ("Category", "suggested_category"),
+        ("Sub-category", "suggested_subcategory"),
+        ("Team", "suggested_team"),
+        ("Vendor / Payee", "vendor"),
+    ):
+        value = str(match.get(source_col, "") or "").strip()
+        if value:
+            updated[target_key] = value
+            hints.append(f"{target_key.replace('_', ' ')} from prior ledger row")
+    updated["history_hints"] = sorted(set(hints))
+    confidence = dict(updated.get("confidence", {}))
+    if updated.get("suggested_category"):
+        confidence["suggested_category"] = "high"
+    updated["confidence"] = confidence
+    updated["missing_fields"] = [
+        field for field, score in confidence.items() if score == "low"
+    ]
+    return updated
+
+
+def _history_exact_match(parsed: dict, txns):
+    for col, key in (("PO Number", "po_number"), ("Invoice Number", "invoice_number")):
+        value = _history_key(parsed.get(key))
+        if not value or col not in txns.columns:
+            continue
+        matches = txns[txns[col].map(_history_key) == value]
+        if not matches.empty:
+            return matches.iloc[-1]
+    return None
+
+
+def _history_vendor_match(parsed: dict, txns):
+    vendor = _history_key(parsed.get("vendor"))
+    if not vendor or "Vendor / Payee" not in txns.columns:
+        return None
+    vendor_rows = txns[txns["Vendor / Payee"].map(_history_key) == vendor]
+    if vendor_rows.empty:
+        vendor_rows = txns[
+            txns["Vendor / Payee"].map(lambda value: vendor in _history_key(value) or _history_key(value) in vendor)
+        ]
+    if vendor_rows.empty:
+        return None
+    return vendor_rows.iloc[-1]
+
+
+def _history_key(value) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
 
 
 def parse_erb_excel_bytes(excel_bytes: bytes) -> list[dict]:

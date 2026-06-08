@@ -4,8 +4,8 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.sheets import get_teams, get_currency_rates_to_usd, upsert_imported_transaction
-from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes
+from utils.sheets import get_teams, get_transactions, get_currency_rates_to_usd, upsert_imported_transaction
+from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes, enrich_with_history
 from utils.auth import require_role, can_manage_all_budgets, current_team, current_teams
 from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
@@ -29,6 +29,10 @@ def _category_index(value: str) -> int:
 
 def _subcategory_options(category: str) -> list[str]:
     return SUBCATEGORIES.get(category, ["Other"])
+
+def _subcategory_index(category: str, value: str) -> int:
+    options = _subcategory_options(category)
+    return options.index(value) if value in options else 0
 
 def _confidence_badge(score: str) -> str:
     return {"high": "🟢 high", "medium": "🟡 medium", "low": "🔴 needs review"}.get(score, "⚪ unknown")
@@ -58,6 +62,10 @@ def _render_pdf_import(pdf_file, parsed: dict, index: int):
         if line_items:
             st.caption("Detected line items")
             st.dataframe(pd.DataFrame(line_items), use_container_width=True, hide_index=True)
+        history_hints = parsed.get("history_hints", [])
+        if history_hints:
+            st.caption("Ledger learning hints")
+            st.write(", ".join(history_hints))
         if parsed.get("due_date"):
             st.caption(f"Detected due date: {parsed['due_date']}")
 
@@ -76,7 +84,7 @@ def _render_pdf_import(pdf_file, parsed: dict, index: int):
         subcategory = st.selectbox(
             "Sub-category",
             _subcategory_options(category),
-            index=0,
+            index=_subcategory_index(category, parsed.get("suggested_subcategory", "")),
             key=f"{prefix}_subcategory",
         )
         po_num = st.text_input("PO Number", value=parsed.get("po_number", ""), key=f"{prefix}_po")
@@ -117,16 +125,22 @@ def _render_pdf_import(pdf_file, parsed: dict, index: int):
         extracted_notes.append(f"Detected due date: {parsed['due_date']}")
     if parsed.get("line_items"):
         extracted_notes.append(f"Detected {len(parsed['line_items'])} line item(s)")
+    if parsed.get("history_hints"):
+        extracted_notes.append("Ledger learning: " + "; ".join(parsed["history_hints"]))
     notes = st.text_area("Notes", value="\n".join(extracted_notes), key=f"{prefix}_notes")
 
     if can_manage_all_budgets():
         team_names = ["(Lab-wide)"] + (
             teams_df["Team Name"].tolist() if not teams_df.empty else []
         )
-        team_sel = st.selectbox("Team", team_names, key=f"{prefix}_team")
+        suggested_team = parsed.get("suggested_team", "")
+        team_index = team_names.index(suggested_team) if suggested_team in team_names else 0
+        team_sel = st.selectbox("Team", team_names, index=team_index, key=f"{prefix}_team")
         team_value = "" if team_sel == "(Lab-wide)" else team_sel
     elif len(my_teams) > 1:
-        team_value = st.selectbox("Team", my_teams, key=f"{prefix}_team_member")
+        suggested_team = parsed.get("suggested_team", "")
+        team_index = my_teams.index(suggested_team) if suggested_team in my_teams else 0
+        team_value = st.selectbox("Team", my_teams, index=team_index, key=f"{prefix}_team_member")
     else:
         team_value = my_team
         st.info(f"Team: **{my_team}**")
@@ -178,8 +192,10 @@ with tab1:
         st.caption(f"{len(pdf_files)} PDF file(s) selected.")
         parsed_results = []
         with st.spinner("Parsing PDF files..."):
+            history_txns = get_transactions()
             for pdf_file in pdf_files:
-                parsed_results.append((pdf_file, parse_pdf_bytes(pdf_file.getvalue(), pdf_file.name)))
+                parsed = parse_pdf_bytes(pdf_file.getvalue(), pdf_file.name)
+                parsed_results.append((pdf_file, enrich_with_history(parsed, history_txns)))
 
         for i, (pdf_file, parsed) in enumerate(parsed_results):
             title = f"{i + 1}. {pdf_file.name}"

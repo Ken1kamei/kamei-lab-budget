@@ -1,4 +1,6 @@
-from utils.parse_invoice import _extract_invoice_fields
+import pandas as pd
+
+from utils.parse_invoice import _extract_invoice_fields, enrich_with_history
 
 
 def test_extract_invoice_fields_prefills_review_values():
@@ -120,3 +122,107 @@ def test_extract_invoice_fields_reads_aed_purchase_order():
     assert parsed["total_amount"] == 1128.0
     assert parsed["suggested_category"] == "Consumables"
     assert parsed["suggested_description"] == "Alexa Fluor 647 Annexin V, Biolegend, 100 tests"
+
+
+def test_extract_inventory_pdf_reads_spaced_total_and_item_description():
+    text = """
+    Chartfields for Order Id : 0000073888
+    DS SrcBU Order No. Line Sched Location Item ID Item Price (USD) Released Total Price (USD)
+    1 BASEMENT_Level 2_TBC PROPIDIUM IODIDE, 94.0% (HPLC) P4170-1G 1G
+    Net Total (USD) : 2 ,096.66
+    """
+
+    parsed = _extract_invoice_fields(text, [], "INS6000_9216771.PDF")
+
+    assert parsed["vendor"] == "PeopleSoft Inventory"
+    assert parsed["invoice_number"] == "INS6000_9216771"
+    assert parsed["currency"] == "USD"
+    assert parsed["total_amount"] == 2096.66
+    assert parsed["suggested_category"] == "Consumables"
+    assert "PROPIDIUM IODIDE" in parsed["suggested_description"]
+
+
+def test_extract_ibuy_summary_reads_supplier_po_total_and_product():
+    text = """
+    Summary - PO iB00990633
+    Supplier ABCAM LTD
+    PO/Reference No. iB00990633 Ship To Bill To
+    Purchase Order Date 1/26/2026
+    Total 1,650.00 USD 10012-1402 Code
+    Product Description Catalog No Unit Price Quantity Ext. Price
+    Packaging
+    1 Human Albumin ELISA Kit ab179887- 1x96Tests 855.00 USD 1 EA 855.00 USD
+    Account Code values have been overridden for this line
+    Subtotal 1,650.00
+    Total 1,650.00 USD
+    """
+
+    parsed = _extract_invoice_fields(text, [], "Summary - PO iB00990633.pdf")
+
+    assert parsed["vendor"] == "ABCAM LTD"
+    assert parsed["po_number"] == "iB00990633"
+    assert parsed["currency"] == "USD"
+    assert parsed["total_amount"] == 1650.0
+    assert parsed["suggested_category"] == "Consumables"
+    assert parsed["suggested_description"] == "Human Albumin ELISA Kit ab179887- 1x96Tests"
+
+
+def test_extract_ibuy_status_reads_supplier_po_and_multiple_products():
+    text = """
+    Status - PO iB00993845
+    Supplier ABCAM LTD
+    PO/Reference No. iB00993845 Workflow Completed
+    Purchase Order Date 2/4/2026
+    Total 3,980.00 USD
+    Product Description Catalog No Unit Price Quantity Ext. Price Supplier Receiving Invoicing Matching
+    Packaging
+    1 Human Albumin ELISA Kit ab179887- 1x384Tests 2,020.00 USD 1 EA 2,020.00 USD Sent To none Fully No
+    2 Human ALT ELISA Kit ab234578- 1x384Tests 1,960.00 USD 1 EA 1,960.00 USD Sent To none Fully No
+    Subtotal 3,980.00
+    Total 3,980.00 USD
+    """
+
+    parsed = _extract_invoice_fields(text, [], "Status - PO iB00993845.pdf")
+
+    assert parsed["vendor"] == "ABCAM LTD"
+    assert parsed["po_number"] == "iB00993845"
+    assert parsed["currency"] == "USD"
+    assert parsed["total_amount"] == 3980.0
+    assert parsed["suggested_description"] == (
+        "Human Albumin ELISA Kit ab179887- 1x384Tests; "
+        "Human ALT ELISA Kit ab234578- 1x384Tests"
+    )
+
+
+def test_enrich_with_history_reuses_corrected_category_team_and_vendor():
+    parsed = {
+        "vendor": "ABCAM LTD",
+        "po_number": "iB00993845",
+        "invoice_number": "",
+        "suggested_category": "Other",
+        "suggested_subcategory": "",
+        "suggested_team": "",
+        "confidence": {"suggested_category": "low"},
+        "history_hints": [],
+    }
+    txns = pd.DataFrame(
+        [
+            {
+                "PO Number": "iB00993845",
+                "Invoice Number": "",
+                "Vendor / Payee": "Abcam Ltd",
+                "Category": "Consumables",
+                "Sub-category": "Assay kits",
+                "Team": "Diabetes",
+                "Status": "Allocated",
+            }
+        ]
+    )
+
+    enriched = enrich_with_history(parsed, txns)
+
+    assert enriched["vendor"] == "Abcam Ltd"
+    assert enriched["suggested_category"] == "Consumables"
+    assert enriched["suggested_subcategory"] == "Assay kits"
+    assert enriched["suggested_team"] == "Diabetes"
+    assert enriched["confidence"]["suggested_category"] == "high"
