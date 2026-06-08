@@ -44,6 +44,8 @@ SUMMARY_COLS = [
 
 _SUMMARY_CATEGORIES = set(CATEGORIES) | {"TOTAL"}
 CACHE_TTL_SECONDS = 300
+BASE_SPREADSHEET_SECRET = "SPREADSHEET_ID"
+FY_SPREADSHEET_CONFIG_PREFIX = "Spreadsheet ID "
 TEAM_COLUMNS = [
     "Team Name",
     "Allocation (AED)",
@@ -69,9 +71,131 @@ def _get_client():
 def _open_spreadsheet(spreadsheet_id: str):
     return _get_client().open_by_key(spreadsheet_id)
 
-def get_spreadsheet():
+def _base_spreadsheet_id() -> str:
+    return st.secrets[BASE_SPREADSHEET_SECRET]
+
+def _base_spreadsheet():
+    return _open_spreadsheet(_base_spreadsheet_id())
+
+def _base_ws(name: str):
+    return _base_spreadsheet().worksheet(name)
+
+def _read_config_from_base(key: str):
     try:
-        return _open_spreadsheet(st.secrets["SPREADSHEET_ID"])
+        for row in _base_ws("Config").get_all_values():
+            if row and row[0] == key:
+                return row[1] if len(row) > 1 else ""
+    except Exception:
+        return None
+    return None
+
+def _set_config_in_base(key: str, value) -> None:
+    ws = _base_ws("Config")
+    records = ws.get_all_values()
+    for i, row in enumerate(records, start=1):
+        if row and row[0] == key:
+            ws.update_cell(i, 2, value)
+            st.cache_data.clear()
+            return
+    ws.append_row([key, value], value_input_option="USER_ENTERED")
+    st.cache_data.clear()
+
+def _default_fiscal_year() -> str:
+    return fiscal_year_for_date(datetime.now(DUBAI_TZ))
+
+def get_active_fiscal_year() -> str:
+    return st.session_state.get("selected_fiscal_year") or _default_fiscal_year()
+
+def fiscal_year_options() -> list[str]:
+    options = {_default_fiscal_year(), get_active_fiscal_year()}
+    try:
+        for row in _base_ws("Config").get_all_values():
+            if not row:
+                continue
+            key = str(row[0] or "")
+            if key.startswith(FY_SPREADSHEET_CONFIG_PREFIX):
+                options.add(key.removeprefix(FY_SPREADSHEET_CONFIG_PREFIX))
+            elif key in {"Current Fiscal Year", "Fiscal Year"} and len(row) > 1 and str(row[1]).startswith("FY"):
+                options.add(str(row[1]))
+    except Exception:
+        pass
+    current = _default_fiscal_year()
+    try:
+        start_year = int(current[2:6])
+        options.add(f"FY{start_year - 1}-{str(start_year)[2:]}")
+        options.add(f"FY{start_year + 1}-{str(start_year + 2)[2:]}")
+    except (ValueError, IndexError):
+        pass
+    return sorted(options, reverse=True)
+
+def _spreadsheet_id_for_fiscal_year(fiscal_year: str) -> str | None:
+    return _read_config_from_base(f"{FY_SPREADSHEET_CONFIG_PREFIX}{fiscal_year}")
+
+def _register_fiscal_year_spreadsheet(fiscal_year: str, spreadsheet_id: str) -> None:
+    _set_config_in_base(f"{FY_SPREADSHEET_CONFIG_PREFIX}{fiscal_year}", spreadsheet_id)
+
+def _clear_new_fiscal_year_transactions(ss, fiscal_year: str) -> None:
+    try:
+        ws = ss.worksheet("Transactions")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet("Transactions", rows=1000, cols=len(TXN_COLUMNS))
+    _ensure_sheet_columns(ws, len(TXN_COLUMNS))
+    end_col = _column_label(len(TXN_COLUMNS))
+    ws.update(f"A1:{end_col}1", [TXN_COLUMNS])
+    if getattr(ws, "row_count", 0) and ws.row_count > 1:
+        ws.batch_clear([f"A2:{end_col}{ws.row_count}"])
+    try:
+        summary_ws = ss.worksheet("Summary")
+        values = summary_ws.get_all_values()
+        updates = []
+        for i, row in enumerate(values, start=1):
+            if row and row[0] in _SUMMARY_CATEGORIES:
+                budget_equiv = row[3] if len(row) > 3 else ""
+                updates.append(
+                    {
+                        "range": f"E{i}:I{i}",
+                        "values": [[0, 0, 0, budget_equiv, 0]],
+                    }
+                )
+        if updates:
+            summary_ws.batch_update(updates, value_input_option="USER_ENTERED")
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    try:
+        config_ws = ss.worksheet("Config")
+        records = config_ws.get_all_values()
+        found = False
+        for i, row in enumerate(records, start=1):
+            if row and row[0] in {"Current Fiscal Year", "Fiscal Year"}:
+                config_ws.update_cell(i, 2, fiscal_year)
+                found = True
+        if not found:
+            config_ws.append_row(["Current Fiscal Year", fiscal_year], value_input_option="USER_ENTERED")
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+
+def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
+    fy = fiscal_year or get_active_fiscal_year()
+    registered_id = _spreadsheet_id_for_fiscal_year(fy)
+    if registered_id:
+        return _open_spreadsheet(registered_id)
+    base_id = _base_spreadsheet_id()
+    base_fy = _read_config_from_base("Current Fiscal Year") or _read_config_from_base("Fiscal Year")
+    if not base_fy or fy == base_fy:
+        _register_fiscal_year_spreadsheet(fy, base_id)
+        return _open_spreadsheet(base_id)
+    copied = _get_client().copy(
+        base_id,
+        title=f"KameiLab Budget {fy}",
+        copy_permissions=True,
+    )
+    _clear_new_fiscal_year_transactions(copied, fy)
+    _register_fiscal_year_spreadsheet(fy, copied.id)
+    return copied
+
+def get_spreadsheet(fiscal_year: str | None = None):
+    try:
+        return ensure_fiscal_year_spreadsheet(fiscal_year)
     except gspread.exceptions.APIError as e:
         st.error(
             f"Cannot open spreadsheet. Check that SPREADSHEET_ID is correct and "
@@ -79,8 +203,8 @@ def get_spreadsheet():
         )
         st.stop()
 
-def _ws(name: str):
-    return get_spreadsheet().worksheet(name)
+def _ws(name: str, fiscal_year: str | None = None):
+    return get_spreadsheet(fiscal_year).worksheet(name)
 
 def _normalize_key(value) -> str:
     return " ".join(str(value or "").strip().casefold().split())
@@ -106,9 +230,9 @@ def _stop_on_sheet_api_error(action: str, error: gspread.exceptions.APIError):
     st.caption(f"Google Sheets API error: {error}")
     st.stop()
 
-def ensure_transaction_columns():
+def ensure_transaction_columns(fiscal_year: str | None = None):
     """Add lifecycle columns to Transactions header if the sheet is still on v1."""
-    ws = _ws("Transactions")
+    ws = _ws("Transactions", fiscal_year)
     headers = ws.row_values(1)
     for col in TXN_COLUMNS:
         if col not in headers:
@@ -120,10 +244,13 @@ def ensure_transaction_columns():
 
 # ── Read ──────────────────────────────────────────────────────────────────────
 
+def get_transactions(fiscal_year: str | None = None) -> pd.DataFrame:
+    return _get_transactions_for_fiscal_year(fiscal_year or get_active_fiscal_year())
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def get_transactions() -> pd.DataFrame:
+def _get_transactions_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
     try:
-        records = _ws("Transactions").get_all_records()
+        records = _ws("Transactions", fiscal_year).get_all_records()
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Transactions", e)
     df = pd.DataFrame(records) if records else pd.DataFrame(columns=TXN_COLUMNS)
@@ -139,10 +266,13 @@ def get_transactions() -> pd.DataFrame:
         df["Status"] = df["Status"].map(canonical_budget_status)
     return df
 
+def get_teams(fiscal_year: str | None = None) -> pd.DataFrame:
+    return _get_teams_for_fiscal_year(fiscal_year or get_active_fiscal_year())
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def get_teams() -> pd.DataFrame:
+def _get_teams_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
     try:
-        records = _ws("Teams").get_all_records()
+        records = _ws("Teams", fiscal_year).get_all_records()
         df = pd.DataFrame(records) if records else pd.DataFrame(columns=TEAM_COLUMNS)
         for col in TEAM_COLUMNS:
             if col not in df.columns:
@@ -153,10 +283,13 @@ def get_teams() -> pd.DataFrame:
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Teams", e)
 
+def get_summary(fiscal_year: str | None = None) -> pd.DataFrame:
+    return _get_summary_for_fiscal_year(fiscal_year or get_active_fiscal_year())
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def get_summary() -> pd.DataFrame:
+def _get_summary_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
     try:
-        values = _ws("Summary").get_all_values()
+        values = _ws("Summary", fiscal_year).get_all_values()
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Summary", e)
     # Match rows by category name in col A — works regardless of title/header layout
@@ -167,15 +300,18 @@ def get_summary() -> pd.DataFrame:
     padded = [r[:n] + [""] * (n - len(r)) for r in data_rows]
     return pd.DataFrame(padded, columns=SUMMARY_COLS)
 
+def get_config_values(fiscal_year: str | None = None) -> list[list[str]]:
+    return _get_config_values_for_fiscal_year(fiscal_year or get_active_fiscal_year())
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def get_config_values() -> list[list[str]]:
+def _get_config_values_for_fiscal_year(fiscal_year: str) -> list[list[str]]:
     try:
-        return _ws("Config").get_all_values()
+        return _ws("Config", fiscal_year).get_all_values()
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Config", e)
 
-def get_config(key: str):
-    for row in get_config_values():
+def get_config(key: str, fiscal_year: str | None = None):
+    for row in get_config_values(fiscal_year):
         if row and row[0] == key:
             return row[1] if len(row) > 1 else None
     return None
@@ -201,8 +337,8 @@ def get_currency_rates_to_usd() -> dict[str, float]:
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 
-def _next_txn_id() -> str:
-    df = get_transactions()
+def _next_txn_id(fiscal_year: str) -> str:
+    df = get_transactions(fiscal_year)
     date_str = datetime.now(DUBAI_TZ).strftime("%Y%m%d")
     seq = str(len(df) + 1).zfill(4)
     return f"TXN-{date_str}-{seq}"
@@ -212,9 +348,11 @@ def _current_fy() -> str:
 
 def append_transaction(data: dict) -> str:
     """Write one transaction row. Returns the Transaction ID."""
-    ws = _ws("Transactions")
-    headers = ensure_transaction_columns()
-    txn_id = data.get("Transaction ID") or _next_txn_id()
+    row_date = data.get("Date") or datetime.now(DUBAI_TZ).strftime("%Y-%m-%d")
+    target_fy = fiscal_year_for_date(row_date)
+    ws = _ws("Transactions", target_fy)
+    headers = ensure_transaction_columns(target_fy)
+    txn_id = data.get("Transaction ID") or _next_txn_id(target_fy)
     now_str = datetime.now(DUBAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     # Build row in TXN_COLUMNS order
@@ -236,8 +374,8 @@ def append_transaction(data: dict) -> str:
     row = {col: "" for col in TXN_COLUMNS}
     row.update({
         "Transaction ID": txn_id,
-        "Date": data.get("Date") or datetime.now(DUBAI_TZ).strftime("%Y-%m-%d"),
-        "Fiscal Year": _current_fy(),
+        "Date": row_date,
+        "Fiscal Year": target_fy,
         "Category": data.get("Category", ""),
         "Sub-category": data.get("Sub-category", ""),
         "Vendor / Payee": data.get("Vendor / Payee", ""),
@@ -263,7 +401,7 @@ def append_transaction(data: dict) -> str:
     })
     if row["Status"] not in LIFECYCLE_STATUSES:
         row["Status"] = "Allocated"
-    ws.append_row([row.get(col, "") for col in headers])
+    ws.append_row([row.get(col, "") for col in headers], value_input_option="USER_ENTERED")
     # Invalidate cache
     st.cache_data.clear()
     return txn_id
@@ -437,13 +575,29 @@ def upsert_team(team_data: dict):
         ws.append_row(row)
     st.cache_data.clear()
 
+GLOBAL_CONFIG_KEYS = {
+    "Current Fiscal Year",
+    "Fiscal Year",
+    "AED/USD Exchange Rate",
+    "EUR/USD Exchange Rate",
+    "JPY/USD Exchange Rate",
+    "GBP/USD Exchange Rate",
+    "Notification Threshold %",
+    "Gmail Label",
+}
+
 def set_config(key: str, value):
+    if key in GLOBAL_CONFIG_KEYS:
+        _set_config_in_base(key, value)
     ws = _ws("Config")
+    if getattr(get_spreadsheet(), "id", "") == _base_spreadsheet_id() and key in GLOBAL_CONFIG_KEYS:
+        st.cache_data.clear()
+        return
     records = ws.get_all_values()
     for i, row in enumerate(records, start=1):
         if row and row[0] == key:
             ws.update_cell(i, 2, value)
             st.cache_data.clear()
             return
-    ws.append_row([key, value])
+    ws.append_row([key, value], value_input_option="USER_ENTERED")
     st.cache_data.clear()

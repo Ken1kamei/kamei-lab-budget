@@ -7,7 +7,7 @@ refresh_runtime_modules()
 from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_usd, get_summary,
                            set_budget_allocation, upsert_team, set_config,
                            get_config, get_transactions, append_transaction,
-                           update_transaction)
+                           update_transaction, ensure_fiscal_year_spreadsheet)
 from utils.auth import require_role, is_pi
 from utils.categories import CATEGORIES
 from utils.theme import apply_theme
@@ -320,11 +320,12 @@ if is_pi() and tab4 is not None:
                 if not fy.strip().startswith("FY"):
                     st.error("Fiscal year must look like FY2026-27.")
                 else:
+                    ss = ensure_fiscal_year_spreadsheet(fy.strip())
                     set_config("Current Fiscal Year", fy.strip())
                     set_config("Fiscal Year", fy.strip())
                     set_config("Notification Threshold %", notify)
                     set_config("Gmail Label", label.strip() or "Budget/Invoices")
-                    st.success("Fiscal year settings saved.")
+                    st.success(f"Fiscal year settings saved. Ledger ready: {ss.title}")
 
 if is_pi() and tab5 is not None:
     with tab5:

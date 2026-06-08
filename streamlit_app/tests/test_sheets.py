@@ -145,8 +145,30 @@ def test_append_transaction_writes_selected_currency_amount_and_usd_equiv(mock_s
     assert appended[TXN_COLUMNS.index("Currency")] == "EUR"
     assert appended[TXN_COLUMNS.index("Amount")] == 100.0
     assert appended[TXN_COLUMNS.index("Amount (USD equiv)")] == 108.0
+
+@patch("utils.sheets.get_currency_rates_to_usd", return_value={"USD": 1.0, "AED": 1 / 3.6725, "EUR": 1.08, "JPY": 0.0064, "GBP": 1.27})
+@patch("utils.sheets.get_spreadsheet")
+def test_append_transaction_routes_to_fiscal_year_from_date(mock_ss, _rates):
+    from utils.sheets import TXN_COLUMNS, append_transaction
+    mock_ws = MagicMock()
+    mock_ws.get_all_records.return_value = []
+    mock_ws.get_all_values.return_value = [TXN_COLUMNS]
+    mock_ws.row_values.return_value = TXN_COLUMNS
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    append_transaction({
+        "Transaction ID": "TXN-004",
+        "Date": "2026-09-01",
+        "Category": "Consumables",
+        "Currency": "USD",
+        "Amount": 100,
+    })
+
+    assert any(call.args == ("FY2026-27",) for call in mock_ss.call_args_list)
+    appended = mock_ws.append_row.call_args.args[0]
+    assert appended[TXN_COLUMNS.index("Fiscal Year")] == "FY2026-27"
     assert appended[TXN_COLUMNS.index("Amount (AED)")] == 0.0
-    assert appended[TXN_COLUMNS.index("Amount (USD)")] == 0.0
+    assert appended[TXN_COLUMNS.index("Amount (USD)")] == 100.0
 
 @patch("utils.sheets.get_exchange_rate", return_value=3.6725)
 @patch("utils.sheets.get_spreadsheet")

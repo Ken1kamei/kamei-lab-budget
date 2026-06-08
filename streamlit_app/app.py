@@ -1,5 +1,6 @@
 import streamlit as st
 from utils.auth import get_authenticated_email, oidc_configured, sync_session_from_oidc_user
+from utils.sheets import ensure_fiscal_year_spreadsheet, fiscal_year_options, get_active_fiscal_year
 from utils.theme import apply_theme
 
 st.set_page_config(
@@ -63,6 +64,19 @@ with st.sidebar:
     st.caption(f"Logged in as: `{st.session_state.email}`")
     st.caption(f"Role: **{st.session_state.role.upper()}**"
                + (f" · {st.session_state.team}" if st.session_state.team else ""))
+    year_options = fiscal_year_options()
+    current_fy = get_active_fiscal_year()
+    selected_fy = st.selectbox(
+        "Academic year",
+        year_options,
+        index=year_options.index(current_fy) if current_fy in year_options else 0,
+        key="selected_fiscal_year",
+    )
+    try:
+        active_ss = ensure_fiscal_year_spreadsheet(selected_fy)
+        st.caption(f"Ledger: `{active_ss.title}`")
+    except Exception as e:
+        st.error(f"Cannot prepare ledger for {selected_fy}: {e}")
     if st.button("Sign out", use_container_width=True):
         st.logout()
 

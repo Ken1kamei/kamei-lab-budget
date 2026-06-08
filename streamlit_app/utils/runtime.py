@@ -3,7 +3,7 @@ import sys
 
 import streamlit as st
 
-RUNTIME_SCHEMA_VERSION = "2026-06-08-allocated-cancelled-status-v1"
+RUNTIME_SCHEMA_VERSION = "2026-06-08-fiscal-year-ledgers-v1"
 
 
 def refresh_runtime_modules():
