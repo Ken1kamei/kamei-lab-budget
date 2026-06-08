@@ -14,7 +14,10 @@ from utils.theme import apply_theme
 require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 
+IMPORT_PAGE_VERSION = "2026-06-08-multi-pdf-v2"
+
 st.title("📥 Import Invoice / Receipt")
+st.caption(f"Import module version: {IMPORT_PAGE_VERSION}")
 
 teams_df = get_teams()
 rates = get_currency_rates_to_usd()
@@ -159,15 +162,16 @@ def _render_pdf_import(pdf_file, parsed: dict, index: int):
 tab1, tab2 = st.tabs(["📄 PDF Invoice", "📊 NYUAD ERB Excel"])
 
 with tab1:
-    st.markdown(
-        "Upload one or more PDF invoices, receipts, or NYUAD purchase orders. "
-        "Fields are extracted automatically using Python (no AI)."
+    st.success(
+        "Multi-PDF import is enabled. Select several PDF files in the upload dialog, "
+        "then review each extracted invoice separately."
     )
     pdf_files = st.file_uploader(
-        "Drop PDF files here",
+        "Drop one or more PDF files here",
         type=["pdf"],
         key="pdf_upload",
         accept_multiple_files=True,
+        help="You can select multiple PDF files at once. Each PDF will appear as its own review panel.",
     )
 
     if pdf_files:
