@@ -278,6 +278,11 @@ def update_transaction(txn_id: str, updates: dict):
                 header: row[idx] if idx < len(row) else ""
                 for idx, header in enumerate(headers)
             }
+            if "Date" in updates and "Fiscal Year" in headers:
+                updates = {
+                    **updates,
+                    "Fiscal Year": fiscal_year_for_date(str(updates.get("Date") or "")),
+                }
             if (
                 {"Currency", "Amount"} & updates.keys()
                 and "Amount (USD equiv)" in headers
