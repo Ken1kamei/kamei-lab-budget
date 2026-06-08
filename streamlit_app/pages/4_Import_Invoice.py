@@ -175,7 +175,7 @@ with tab1:
         parsed_results = []
         with st.spinner("Parsing PDF files..."):
             for pdf_file in pdf_files:
-                parsed_results.append((pdf_file, parse_pdf_bytes(pdf_file.read(), pdf_file.name)))
+                parsed_results.append((pdf_file, parse_pdf_bytes(pdf_file.getvalue(), pdf_file.name)))
 
         for i, (pdf_file, parsed) in enumerate(parsed_results):
             title = f"{i + 1}. {pdf_file.name}"
