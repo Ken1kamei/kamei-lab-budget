@@ -3,7 +3,7 @@ import sys
 
 import streamlit as st
 
-RUNTIME_SCHEMA_VERSION = "2026-06-08-multi-pdf-import-v1"
+RUNTIME_SCHEMA_VERSION = "2026-06-08-allocated-cancelled-status-v1"
 
 
 def refresh_runtime_modules():

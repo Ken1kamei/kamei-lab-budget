@@ -6,7 +6,7 @@ refresh_runtime_modules()
 
 from utils.sheets import get_teams, get_currency_rates_to_usd, append_transaction
 from utils.auth import require_role, can_edit, can_manage_all_budgets, current_team, current_teams
-from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
+from utils.budget import BUDGET_STATUSES, SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
@@ -28,10 +28,10 @@ with st.form("add_expense_form", clear_on_submit=True):
     with col2:
         subcat   = st.selectbox("Sub-category", SUBCATEGORIES.get(category, ["Other"]))
         if can_edit():
-            status = st.selectbox("Status", ["Requested", "Approved", "Ordered", "Pending Review", "Delivered", "Paid"])
+            status = st.selectbox("Status", BUDGET_STATUSES)
         else:
-            status = "Requested"
-            st.info("Status: Requested")
+            status = "Allocated"
+            st.info("Status: Allocated")
 
     vendor      = st.text_input("Vendor / Payee *")
     description = st.text_input("Description *")
@@ -68,7 +68,7 @@ if submitted:
         st.error("Vendor and Description are required.")
     else:
         approved_fields = {}
-        if status in ("Approved", "Ordered", "Pending Review", "Delivered", "Paid"):
+        if status == "Allocated":
             from datetime import datetime
             approved_fields = {
                 "Approved By": st.session_state.email,

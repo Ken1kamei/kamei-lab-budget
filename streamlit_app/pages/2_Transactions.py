@@ -8,7 +8,7 @@ from utils.sheets import (
     approve_transaction,
 )
 from utils.auth import require_role, can_edit, can_manage_all_budgets, current_teams
-from utils.budget import LIFECYCLE_STATUSES, SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
+from utils.budget import BUDGET_STATUSES, SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
@@ -129,9 +129,9 @@ if can_edit():
                 new_invoice = st.text_input("Invoice Number", value=str(row.get("Invoice Number", "")))
                 new_status = st.selectbox(
                     "Status",
-                    LIFECYCLE_STATUSES,
-                    index=LIFECYCLE_STATUSES.index(str(row.get("Status", "Requested")))
-                    if str(row.get("Status", "Requested")) in LIFECYCLE_STATUSES
+                    BUDGET_STATUSES,
+                    index=BUDGET_STATUSES.index(str(row.get("Status", "Allocated")))
+                    if str(row.get("Status", "Allocated")) in BUDGET_STATUSES
                     else 0,
                 )
 
@@ -179,8 +179,8 @@ if can_edit():
                 "Notes":    new_notes,
                 "PDF Link": new_pdf,
             }
-            old_status = str(row.get("Status", "Requested"))
-            if old_status == "Requested" and new_status in ("Approved", "Ordered", "Pending Review", "Delivered", "Paid"):
+            old_status = str(row.get("Status", "Allocated"))
+            if old_status != "Allocated" and new_status == "Allocated":
                 approve_transaction(selected_id, st.session_state.email, new_status)
                 updates.pop("Status")
             if updates:

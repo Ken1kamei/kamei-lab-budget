@@ -3,16 +3,14 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from utils.categories import CATEGORIES
 
-LIFECYCLE_STATUSES = [
-    "Requested",
-    "Approved",
-    "Ordered",
-    "Pending Review",
-    "Delivered",
-    "Paid",
+BUDGET_STATUSES = [
+    "Allocated",
     "Cancelled",
 ]
-COMMITTED_STATUSES = {
+LIFECYCLE_STATUSES = BUDGET_STATUSES
+LEGACY_ALLOCATED_STATUSES = {
+    "",
+    "Allocated",
     "Requested",
     "Approved",
     "Ordered",
@@ -20,7 +18,8 @@ COMMITTED_STATUSES = {
     "Delivered",
     "Paid",
 }
-PAID_STATUSES = {"Paid"}
+COMMITTED_STATUSES = LEGACY_ALLOCATED_STATUSES
+PAID_STATUSES = set()
 DEFAULT_AED_USD_EXCHANGE_RATE = 3.6725
 SUPPORTED_CURRENCIES = ["USD", "AED", "EUR", "JPY", "GBP"]
 DEFAULT_RATES_TO_USD = {
@@ -30,6 +29,16 @@ DEFAULT_RATES_TO_USD = {
     "JPY": 0.0064,
     "GBP": 1.27,
 }
+
+
+def canonical_budget_status(value: str) -> str:
+    """Map old order-tracking statuses into the current budget status model."""
+    status = str(value or "").strip()
+    if status == "Cancelled":
+        return "Cancelled"
+    if status in LEGACY_ALLOCATED_STATUSES:
+        return "Allocated"
+    return "Allocated"
 
 
 def to_aed_equivalent(aed: float, usd: float, exchange_rate: float) -> float:

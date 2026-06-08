@@ -131,7 +131,7 @@ def _render_pdf_import(pdf_file, parsed: dict, index: int):
         team_value = my_team
         st.info(f"Team: **{my_team}**")
 
-    status = st.selectbox("Status", ["Pending Review"], disabled=True, key=f"{prefix}_status")
+    status = st.selectbox("Status", ["Allocated"], disabled=True, key=f"{prefix}_status")
     submitted = st.button("Import Transaction", type="primary", key=f"{prefix}_submit")
 
     if submitted:
@@ -254,7 +254,7 @@ with tab2:
                     row["Sub-category"] = excel_subcategory
                     row["Team"] = team_value
                     row["Entered By"] = st.session_state.email
-                    row["Status"] = "Pending Review"
+                    row["Status"] = "Allocated"
                     row["Currency"] = "AED"
                     row["Amount"] = row.get("Amount (AED)", 0)
                     row["Amount (USD equiv)"] = round_currency(

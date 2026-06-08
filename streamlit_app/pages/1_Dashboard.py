@@ -39,10 +39,8 @@ scope = "Lab-wide overview" if can_manage_all_budgets() else f"{', '.join(user_t
 
 total_budget = totals["total_budget"]
 total_committed = totals["total_committed"]
-total_paid = totals["total_paid"]
 total_remaining = totals["remaining"]
 overall_pct = totals["pct_used"]
-open_commitments = max(total_committed - total_paid, 0)
 avg_monthly = float(monthly_df["amount_equiv"].sum() / max(monthly_df["month"].nunique(), 1)) if not monthly_df.empty else 0.0
 
 st.html(
@@ -64,7 +62,7 @@ st.html(
     """
 )
 
-review_count = int((display_txns["Status"].astype(str) == "Pending Review").sum()) if "Status" in display_txns.columns else 0
+cancelled_count = int((display_txns["Status"].astype(str) == "Cancelled").sum()) if "Status" in display_txns.columns else 0
 team_count = len(team_summary)
 active_months = monthly_df["month"].nunique() if not monthly_df.empty else 0
 
@@ -78,22 +76,22 @@ st.html(
         <a class="lab-stat-button" href="/Transactions">Open ledger</a>
       </div>
       <div class="lab-stat-card lab-stat-card-magenta">
-        <div class="lab-stat-title">Committed</div>
+        <div class="lab-stat-title">Allocated</div>
         <div class="lab-stat-value lab-stat-value-cyan">${total_committed:,.0f}</div>
-        <div class="lab-stat-caption">${open_commitments:,.0f}<br>not yet paid</div>
-        <a class="lab-stat-button" href="/Transactions">Review requests</a>
+        <div class="lab-stat-caption">reserved from<br>lab budget</div>
+        <a class="lab-stat-button" href="/Transactions">Open ledger</a>
       </div>
       <div class="lab-stat-card">
-        <div class="lab-stat-title">Paid</div>
-        <div class="lab-stat-value lab-stat-value-amber">${total_paid:,.0f}</div>
-        <div class="lab-stat-caption">posted spending<br>against lab budget</div>
+        <div class="lab-stat-title">Available</div>
+        <div class="lab-stat-value lab-stat-value-amber">${total_remaining:,.0f}</div>
+        <div class="lab-stat-caption">unreserved budget<br>still available</div>
         <a class="lab-stat-button" href="/Reports">Open report</a>
       </div>
       <div class="lab-stat-card lab-stat-card-magenta">
-        <div class="lab-stat-title">Review Queue</div>
-        <div class="lab-stat-value">{review_count}</div>
-        <div class="lab-stat-caption">pending invoice<br>or import reviews</div>
-        <a class="lab-stat-button" href="/Import_Invoice">Open queue</a>
+        <div class="lab-stat-title">Cancelled</div>
+        <div class="lab-stat-value">{cancelled_count}</div>
+        <div class="lab-stat-caption">excluded from<br>budget usage</div>
+        <a class="lab-stat-button" href="/Transactions">Review</a>
       </div>
       <div class="lab-stat-card">
         <div class="lab-stat-title">Teams</div>
@@ -240,9 +238,9 @@ with team_col:
         names = list(team_summary.keys())
         fig = go.Figure(
             data=[
-                go.Bar(name="Committed", x=names, y=[v["committed"] for v in team_summary.values()], marker_color="#2ee6cf"),
-                go.Bar(name="Paid", x=names, y=[v["paid"] for v in team_summary.values()], marker_color="#7cff6b"),
-                go.Bar(name="Allocated", x=names, y=[v["allocated"] for v in team_summary.values()], marker_color="#2f8cff"),
+                go.Bar(name="Allocated", x=names, y=[v["committed"] for v in team_summary.values()], marker_color="#2ee6cf"),
+                go.Bar(name="Available", x=names, y=[v["remaining"] for v in team_summary.values()], marker_color="#7cff6b"),
+                go.Bar(name="Budget", x=names, y=[v["allocated"] for v in team_summary.values()], marker_color="#2f8cff"),
             ]
         )
         fig.update_layout(
@@ -284,7 +282,7 @@ with team_col:
         metric_card(
             f"{team_name} budget",
             f"{data.get('allocated', 0):,.2f}",
-            f"${data.get('remaining', 0):,.0f} remaining · ${data.get('paid', 0):,.0f} paid",
+            f"${data.get('remaining', 0):,.0f} available · ${data.get('committed', 0):,.0f} allocated",
             progress=data.get("pct_used", 0),
             accent="cyan",
             class_name="lab-card-chart",

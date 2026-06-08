@@ -64,17 +64,15 @@ for cat, data in cat_summary.items():
     summary_rows.append({
         "Category":           cat,
         "Budget (USD)":       f"${data['budget_equiv']:,.0f}",
-        "Committed":          f"${data['committed_equiv']:,.0f}",
-        "Paid":               f"${data['paid_equiv']:,.0f}",
-        "Remaining":          f"${data['remaining']:,.0f}",
+        "Allocated":          f"${data['committed_equiv']:,.0f}",
+        "Available":          f"${data['remaining']:,.0f}",
         "% Used":             f"{data['pct_used']*100:.1f}%",
     })
 summary_rows.append({
     "Category":           "TOTAL",
     "Budget (USD)":       f"${totals['total_budget']:,.0f}",
-    "Committed":          f"${totals['total_committed']:,.0f}",
-    "Paid":               f"${totals['total_paid']:,.0f}",
-    "Remaining":          f"${totals['remaining']:,.0f}",
+    "Allocated":          f"${totals['total_committed']:,.0f}",
+    "Available":          f"${totals['remaining']:,.0f}",
     "% Used":             f"{totals['pct_used']*100:.1f}%",
 })
 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
@@ -100,12 +98,12 @@ with col2:
         if team_summary:
             names  = list(team_summary.keys())
             committed = [v["committed"] for v in team_summary.values()]
-            paid = [v["paid"] for v in team_summary.values()]
+            remaining = [v["remaining"] for v in team_summary.values()]
             alloc  = [v["allocated"] for v in team_summary.values()]
             fig2 = go.Figure(data=[
-                go.Bar(name="Committed", x=names, y=committed, marker_color="#35c4d5"),
-                go.Bar(name="Paid",      x=names, y=paid, marker_color="#76d04a"),
-                go.Bar(name="Allocated", x=names, y=alloc, marker_color="#ffb51c"),
+                go.Bar(name="Allocated", x=names, y=committed, marker_color="#35c4d5"),
+                go.Bar(name="Available", x=names, y=remaining, marker_color="#76d04a"),
+                go.Bar(name="Budget", x=names, y=alloc, marker_color="#ffb51c"),
             ])
             _night_chart(fig2, 300)
             fig2.update_layout(barmode="group")

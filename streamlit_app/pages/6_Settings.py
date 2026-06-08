@@ -337,15 +337,15 @@ if is_pi() and tab5 is not None:
                 samples = [
                     {"Date": (date.today() - timedelta(days=80)).isoformat(), "Category":"Equipment",
                      "Vendor / Payee":"Fisher Scientific","Description":"Pipette tips 1000uL",
-                     "Currency":"AED","Amount":3450,"Status":"Delivered","Team":"",
+                     "Currency":"AED","Amount":3450,"Status":"Allocated","Team":"",
                      "Entry Method":"Manual","Notes":"[TEST] Auto-generated"},
                     {"Date": (date.today() - timedelta(days=60)).isoformat(), "Category":"Travel",
                      "Vendor / Payee":"Emirates Airlines","Description":"AUH-BOS-AUH conference",
-                     "Currency":"USD","Amount":1850,"Status":"Paid","Team":"",
+                     "Currency":"USD","Amount":1850,"Status":"Allocated","Team":"",
                      "Entry Method":"Manual","Notes":"[TEST] Auto-generated"},
                     {"Date": (date.today() - timedelta(days=30)).isoformat(), "Category":"Personnel",
                      "Vendor / Payee":"Postdoc — October","Description":"Monthly stipend",
-                     "Currency":"AED","Amount":18000,"Status":"Paid","Team":"",
+                     "Currency":"AED","Amount":18000,"Status":"Allocated","Team":"",
                      "Entry Method":"Manual","Notes":"[TEST] Auto-generated"},
                 ]
                 set_budget_allocation("Equipment", 0, 135000)

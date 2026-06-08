@@ -2,7 +2,9 @@ import pandas as pd
 import pytest
 from utils.budget import (
     CATEGORIES,
+    BUDGET_STATUSES,
     DEFAULT_RATES_TO_USD,
+    canonical_budget_status,
     get_category_summary,
     get_team_summary,
     get_lab_totals,
@@ -24,7 +26,7 @@ def make_txns(**kwargs):
         "Amount (USD)":   [0.0, 0.0, 0.0],
         "Amount (AED equiv)": [1000.0, 500.0, 200.0],
         "Amount (USD equiv)": [1000.0, 500.0, 200.0],
-        "Status":         ["Paid", "Paid", "Cancelled"],
+        "Status":         ["Allocated", "Allocated", "Cancelled"],
         "Team":           ["Synbio", "Imaging", "Synbio"],
         "Fiscal Year":    ["FY2025-26", "FY2025-26", "FY2025-26"],
     }
@@ -52,11 +54,17 @@ def test_categories_include_requested_lab_categories():
         "Other",
     ]
 
+def test_budget_statuses_are_allocated_or_cancelled():
+    assert BUDGET_STATUSES == ["Allocated", "Cancelled"]
+    assert canonical_budget_status("Paid") == "Allocated"
+    assert canonical_budget_status("Pending Review") == "Allocated"
+    assert canonical_budget_status("Cancelled") == "Cancelled"
+
 def test_category_summary_excludes_cancelled():
     txns = make_txns()
     summary_df = make_summary_df()
     result = get_category_summary(txns, summary_df, 3.6725)
-    # Equipment: TXN-001 paid (1000), TXN-003 cancelled (excluded)
+    # Equipment: TXN-001 allocated (1000), TXN-003 cancelled (excluded)
     assert result["Equipment"]["spent_equiv"] == 1000.0
     assert result["Equipment"]["budget_equiv"] == 500000.0
 
@@ -76,14 +84,14 @@ def test_category_summary_tracks_new_categories():
             "Amount (USD)": [0.0, 1000.0, 0.0],
             "Amount (AED equiv)": [1250.0, 3672.5, 400.0],
             "Amount (USD equiv)": [1250.0, 3672.5, 400.0],
-            "Status": ["Requested", "Paid", "Paid"],
+            "Status": ["Allocated", "Allocated", "Allocated"],
             "Team": ["Synbio", "Synbio", "Synbio"],
             "Fiscal Year": ["FY2026-27", "FY2026-27", "FY2026-27"],
         }
     )
     result = get_category_summary(txns, make_summary_df(), 3.6725)
     assert result["Consumables"]["committed_equiv"] == 1250.0
-    assert result["Publications"]["paid_equiv"] == 3672.5
+    assert result["Publications"]["paid_equiv"] == 0.0
     assert result["Memberships"]["remaining"] == 13272.5
 
 def test_get_team_summary():
@@ -111,7 +119,25 @@ def test_fiscal_year_starts_on_september_first():
     assert fiscal_year_for_date("2026-08-31") == "FY2025-26"
     assert fiscal_year_for_date("2026-09-01") == "FY2026-27"
 
-def test_split_commitments_counts_requested_as_committed_and_paid_separately():
+def test_split_commitments_counts_allocated_and_excludes_cancelled():
+    txns = make_txns(
+        **{
+            "Transaction ID": ["TXN-001", "TXN-002", "TXN-003", "TXN-004"],
+            "Category": ["Equipment", "Travel", "Other", "Personnel"],
+            "Amount (AED)": [100.0, 200.0, 300.0, 400.0],
+            "Amount (USD)": [0.0, 0.0, 0.0, 0.0],
+            "Status": ["Allocated", "Allocated", "Allocated", "Cancelled"],
+            "Amount (AED equiv)": [100.0, 200.0, 300.0, 400.0],
+            "Amount (USD equiv)": [100.0, 200.0, 300.0, 400.0],
+            "Team": ["Synbio", "Synbio", "Synbio", "Synbio"],
+            "Fiscal Year": ["FY2026-27", "FY2026-27", "FY2026-27", "FY2026-27"],
+        }
+    )
+    result = split_commitments(txns)
+    assert result["committed"] == 600.0
+    assert result["paid"] == 0.0
+
+def test_split_commitments_treats_legacy_statuses_as_allocated():
     txns = make_txns(
         **{
             "Transaction ID": ["TXN-001", "TXN-002", "TXN-003", "TXN-004"],
@@ -127,7 +153,7 @@ def test_split_commitments_counts_requested_as_committed_and_paid_separately():
     )
     result = split_commitments(txns)
     assert result["committed"] == 600.0
-    assert result["paid"] == 300.0
+    assert result["paid"] == 0.0
 
 def test_to_aed_equivalent_converts_usd_with_configured_rate():
     assert to_aed_equivalent(0.0, 2506.0, 3.6725) == pytest.approx(9203.285)
@@ -180,12 +206,12 @@ def test_normalize_aed_equivalent_repairs_usd_only_rows_with_zero_equiv():
     assert result.loc[0, "Amount (AED equiv)"] == pytest.approx(9203.29)
     assert result.loc[1, "Amount (AED equiv)"] == pytest.approx(558.04)
 
-def test_team_summary_exposes_committed_paid_and_remaining():
+def test_team_summary_exposes_allocated_and_remaining():
     txns = make_txns(
         **{
             "Transaction ID": ["TXN-001", "TXN-002", "TXN-003"],
             "Team": ["Synbio", "Synbio", "Synbio"],
-            "Status": ["Requested", "Paid", "Cancelled"],
+            "Status": ["Allocated", "Allocated", "Cancelled"],
             "Amount (AED equiv)": [100.0, 300.0, 999.0],
         }
     )
@@ -196,6 +222,6 @@ def test_team_summary_exposes_committed_paid_and_remaining():
     })
     result = get_team_summary(txns, teams_df)
     assert result["Synbio"]["committed"] == 400.0
-    assert result["Synbio"]["paid"] == 300.0
+    assert result["Synbio"]["paid"] == 0.0
     assert result["Synbio"]["remaining"] == 600.0
     assert result["Synbio"]["pct_used"] == 0.4

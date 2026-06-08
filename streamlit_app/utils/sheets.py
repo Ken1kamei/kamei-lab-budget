@@ -9,6 +9,7 @@ from utils.budget import (
     DEFAULT_AED_USD_EXCHANGE_RATE,
     DEFAULT_RATES_TO_USD,
     LIFECYCLE_STATUSES,
+    canonical_budget_status,
     normalize_aed_equivalent,
     normalize_usd_equivalent,
     round_currency,
@@ -133,7 +134,10 @@ def get_transactions() -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
     df = normalize_aed_equivalent(df, DEFAULT_AED_USD_EXCHANGE_RATE)
-    return normalize_usd_equivalent(df, DEFAULT_RATES_TO_USD)
+    df = normalize_usd_equivalent(df, DEFAULT_RATES_TO_USD)
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].map(canonical_budget_status)
+    return df
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_teams() -> pd.DataFrame:
@@ -246,7 +250,7 @@ def append_transaction(data: dict) -> str:
         "Amount (AED)": aed,
         "Amount (USD)": usd,
         "Amount (AED equiv)": round_currency(equiv),
-        "Status": data.get("Status", "Requested"),
+        "Status": canonical_budget_status(data.get("Status", "Allocated")),
         "Receipt Confirmed": False,
         "PDF Link": data.get("PDF Link", ""),
         "Entered By": data.get("Entered By", ""),
@@ -258,7 +262,7 @@ def append_transaction(data: dict) -> str:
         "Approved At": data.get("Approved At", ""),
     })
     if row["Status"] not in LIFECYCLE_STATUSES:
-        row["Status"] = "Requested"
+        row["Status"] = "Allocated"
     ws.append_row([row.get(col, "") for col in headers])
     # Invalidate cache
     st.cache_data.clear()
@@ -327,8 +331,7 @@ def update_transaction(txn_id: str, updates: dict):
 
 def approve_transaction(txn_id: str, approver_email: str, status: str = "Approved"):
     """Mark a request approved by a lead or PI."""
-    if status not in {"Approved", "Ordered", "Pending Review", "Delivered", "Paid", "Cancelled"}:
-        status = "Approved"
+    status = canonical_budget_status(status)
     update_transaction(txn_id, {
         "Status": status,
         "Approved By": approver_email,
@@ -361,9 +364,9 @@ def find_matching_transaction_id(txns: pd.DataFrame, candidate: dict) -> str | N
     return None
 
 def upsert_imported_transaction(data: dict) -> dict:
-    """Update a matching request from an import, or append a new Pending Review row."""
+    """Update a matching request from an import, or append a new allocated budget row."""
     row = dict(data)
-    row["Status"] = "Pending Review"
+    row["Status"] = canonical_budget_status(row.get("Status", "Allocated"))
     txns = get_transactions()
     match_id = find_matching_transaction_id(txns, row)
     if match_id:

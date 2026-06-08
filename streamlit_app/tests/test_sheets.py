@@ -30,6 +30,7 @@ def test_get_transactions_returns_dataframe(mock_ss):
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 1
     assert df.iloc[0]["Transaction ID"] == "TXN-001"
+    assert df.iloc[0]["Status"] == "Allocated"
 
 @patch("utils.sheets.get_spreadsheet")
 def test_get_transactions_reuses_cached_sheet_read(mock_ss):
@@ -298,4 +299,5 @@ def test_upsert_imported_transaction_updates_existing_match(mock_get, mock_appen
     })
     assert result == {"transaction_id": "TXN-001", "matched": True}
     mock_update.assert_called_once()
+    assert mock_update.call_args.args[1]["Status"] == "Allocated"
     mock_append.assert_not_called()

@@ -531,7 +531,7 @@ def parse_erb_excel_bytes(excel_bytes: bytes) -> list[dict]:
                 "Description": descr,
                 "Amount (AED)": aed,
                 "Amount (USD)": 0,
-                "Status": "Paid",
+                "Status": "Allocated",
                 "Invoice Number": order,
                 "PO Number": order,
                 "Entry Method": "Excel Import",
