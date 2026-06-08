@@ -70,3 +70,53 @@ def test_extract_invoice_fields_reads_japanese_total_with_dollar_symbol():
     assert parsed["total_amount"] == 131.87
     assert parsed["currency"] == "USD"
     assert parsed["amount_source"] == "合計 $131.87"
+
+
+def test_extract_invoice_fields_reads_nyuad_purchase_order_total_and_currency():
+    text = """
+    Purchase Order
+    New York University in Abu Dhabi Corporation - Abu Dhabi ADH01-0000070658 05/05/2026 1
+    Buyer Phone/Email Currency
+    Procurement Dept USD
+    Supplier: 0000018935 Ship To: NEW YORK UNIVERSITY IN ABU DHABI
+    CLEVERGENE BIOCORP PRIVATE LIMITED Saadiyat Island, Abu Dhabi
+    Line Item/Description QuantityUOM PO Price Extended Amt Due Date
+    1 RNA QC and Quantitation RNA QC by 37.00EA 5.00 185.00 05/08/2026
+    Item Total 185.00
+    2 Eukaryotic mRNA library 37.00EA 85.00 3,145.00 05/08/2026
+    Item Total 3,145.00
+    Total PO Amount 3,430.00
+    """
+
+    parsed = _extract_invoice_fields(text, [], "PO 70658 Clevergene - Maab 74295.PDF")
+
+    assert parsed["vendor"] == "CLEVERGENE BIOCORP PRIVATE LIMITED"
+    assert parsed["po_number"] == "ADH01-0000070658"
+    assert parsed["currency"] == "USD"
+    assert parsed["total_amount"] == 3430.0
+    assert parsed["amount_source"] == "Total PO Amount 3,430.00"
+
+
+def test_extract_invoice_fields_reads_aed_purchase_order():
+    text = """
+    Purchase Order
+    New York University in Abu Dhabi Corporation - Abu Dhabi ADH01-0000070995 06/01/2026 1
+    Buyer Phone/Email Currency
+    Procurement Dept AED
+    Supplier: 0000007731 Ship To: NEW YORK UNIVERSITY IN ABU DHABI
+    Milab Scientific And Laboratory Saadiyat Island, Abu Dhabi
+    Equipment Trading LLC Email: nyuad.deliveries@nyu.edu
+    1 640912 1.00EA 1,128.00 1,128.00 07/17/2026
+    Alexa Fluor 647 Annexin V, Biolegend, 100 tests
+    Item Total 1,128.00
+    Total PO Amount 1,128.00
+    """
+
+    parsed = _extract_invoice_fields(text, [], "0000070995_ADH01.PDF")
+
+    assert parsed["vendor"] == "Milab Scientific And Laboratory"
+    assert parsed["po_number"] == "ADH01-0000070995"
+    assert parsed["currency"] == "AED"
+    assert parsed["total_amount"] == 1128.0
+    assert parsed["suggested_category"] == "Consumables"
+    assert parsed["suggested_description"] == "Alexa Fluor 647 Annexin V, Biolegend, 100 tests"

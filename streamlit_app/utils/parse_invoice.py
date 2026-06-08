@@ -22,10 +22,11 @@ def parse_pdf_bytes(pdf_bytes: bytes, filename: str = "") -> dict:
 def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     line_items = _extract_line_items(tables)
+    vendor = _find_vendor(lines, text)
     invoice_number = _find_invoice_number(text)
     invoice_date = _find_invoice_date(text)
     due_date = _find_due_date(text)
-    po_number = _find_po_number(text)
+    po_number = _find_po_number(text) or _find_po_number(filename)
     total_candidate = _find_total_candidate(text, tables)
     total_amount = total_candidate["amount"]
     currency = total_candidate.get("currency") or _detect_currency(text)
@@ -33,7 +34,7 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
     suggested_description = _guess_description(line_items, lines, filename)
     confidence = _confidence_scores(
         {
-            "vendor": _find_vendor(lines),
+            "vendor": vendor,
             "invoice_number": invoice_number,
             "invoice_date": invoice_date,
             "total_amount": total_amount,
@@ -45,7 +46,7 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
         }
     )
     return {
-        "vendor": _find_vendor(lines),
+        "vendor": vendor,
         "invoice_number": invoice_number,
         "invoice_date": invoice_date,
         "due_date": due_date,
@@ -61,7 +62,10 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
     }
 
 
-def _find_vendor(lines):
+def _find_vendor(lines, text=""):
+    supplier = _find_supplier_vendor(text)
+    if supplier:
+        return supplier
     skip = {
         "invoice",
         "receipt",
@@ -75,10 +79,47 @@ def _find_vendor(lines):
         "ship",
         "bill to",
         "sold to",
+        "purchase order",
     }
     for line in lines[:10]:
         if line.lower() not in skip and len(line) > 3 and not line[0].isdigit():
             return line
+    return ""
+
+
+def _find_supplier_vendor(text: str) -> str:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    for i, line in enumerate(lines):
+        if "supplier:" not in line.casefold():
+            continue
+        after_supplier = re.split(r"supplier:\s*", line, flags=re.IGNORECASE, maxsplit=1)[-1]
+        before_ship_to = re.split(r"\s+ship\s+to:", after_supplier, flags=re.IGNORECASE, maxsplit=1)[0]
+        code_match = re.search(r"\b\d{5,}\b", before_ship_to)
+        if code_match:
+            remainder = before_ship_to[code_match.end() :].strip(" :-")
+            if remainder and not re.fullmatch(r"\d+", remainder):
+                return remainder[:120]
+        for candidate in lines[i + 1 : i + 5]:
+            cleaned = re.split(r"\s+Saadiyat\s+Island\b|\s+Email:|\s+T:", candidate, flags=re.IGNORECASE)[0].strip()
+            if (
+                cleaned
+                and len(cleaned) > 3
+                and not cleaned.casefold().startswith(("auto dispatch", "ship to", "bill to"))
+                and not re.fullmatch(r"[\d\s:/.-]+", cleaned)
+            ):
+                continuation = ""
+                next_index = lines.index(candidate) + 1 if candidate in lines else -1
+                if next_index > 0 and next_index + 1 < len(lines):
+                    next_cleaned = re.split(
+                        r"\s+Email:|\s+T:",
+                        lines[next_index + 1],
+                        flags=re.IGNORECASE,
+                    )[0].strip()
+                    if re.search(r"\b(LLC|LTD|LIMITED|TRADING|CORPORATION|INC\.?)\b", next_cleaned, re.IGNORECASE):
+                        continuation = f" {next_cleaned}"
+                if continuation and not re.search(r"\b(LLC|LTD|LIMITED|TRADING|CORPORATION|INC\.?)\b", cleaned, re.IGNORECASE):
+                    cleaned = f"{cleaned}{continuation}"
+                return cleaned[:120]
     return ""
 
 
@@ -110,6 +151,7 @@ def _find_po_number(text):
     return _find_pattern(
         text,
         [
+            r"\b(ADH\d{2}-\d{6,})\b",
             r"(?:P\.?O\.?\s*(?:#|No\.?|Number|Order)[:\s]+)([A-Z0-9][A-Z0-9\-/_.]+)",
             r"(?:Purchase\s+Order\s*(?:#|No\.?|Number)?[:\s]+)([A-Z0-9][A-Z0-9\-/_.]+)",
             r"(?:Customer\s+PO[:\s]+)([A-Z0-9][A-Z0-9\-/_.]+)",
@@ -227,8 +269,30 @@ def _money_mentions(line: str) -> list[dict]:
     return sorted(mentions, key=lambda item: item["start"])
 
 
+def _bare_amount_mentions(line: str) -> list[dict]:
+    mentions = []
+    protected = str(line or "")
+    for money in _money_mentions(protected):
+        protected = protected.replace(money["text"], " ")
+    amount = r"(?<![\d/-])[\d]{1,3}(?:,\d{3})+(?:\.\d{1,2})?|(?<![\d/-])\d+\.\d{2}(?![\d/-])"
+    for match in re.finditer(amount, protected):
+        parsed_amount = _money_to_float(match.group(0))
+        if parsed_amount > 0:
+            mentions.append(
+                {
+                    "amount": parsed_amount,
+                    "currency": "",
+                    "text": match.group(0),
+                    "start": match.start(),
+                }
+            )
+    return sorted(mentions, key=lambda item: item["start"])
+
+
 def _amount_label_score(line: str) -> int:
     label = line.casefold()
+    if re.search(r"total\s+po\s+amount|po\s+total|purchase\s+order\s+total", label):
+        return 98
     if re.search(r"amount\s+paid|paid\s+amount|payment\s+amount|支払|支払い", label):
         return 100
     if re.search(r"grand\s+total|invoice\s+total|total\s+due|amount\s+due|amount\s+payable|balance\s+due", label):
@@ -244,13 +308,16 @@ def _find_total_candidate(text, tables):
     candidates = []
     for line in text.splitlines():
         mentions = _money_mentions(line)
-        if not mentions:
-            continue
         score = _amount_label_score(line)
-        if score:
+        if score and mentions:
             # The rightmost/last amount on a labelled line is usually the row total.
             mention = mentions[-1]
             candidates.append({**mention, "score": score, "source": line.strip()[:180]})
+        elif score >= 80:
+            bare_mentions = _bare_amount_mentions(line)
+            if bare_mentions:
+                mention = bare_mentions[-1]
+                candidates.append({**mention, "score": score - 2, "source": line.strip()[:180]})
 
     if candidates:
         candidates.sort(key=lambda item: (item["score"], item["amount"]), reverse=True)
@@ -299,7 +366,7 @@ def _guess_category(text):
     if re.search(r"membership|member dues|society dues|annual dues", t):
         return "Memberships"
     if re.search(
-        r"reagent|chemical|pipette|assay|antibod|enzyme|kit|consumable|plasticware",
+        r"reagent|chemical|pipette|assay|antibod|annexin|biolegend|fluor|enzyme|kit|consumable|plasticware",
         t,
     ):
         return "Consumables"
@@ -327,7 +394,17 @@ def _guess_description(line_items: list[dict], lines: list[str], filename: str) 
         suffix = "" if len(item_names) <= 3 else f"; +{len(item_names) - 3} more"
         return f"{joined}{suffix}"[:180]
     for line in lines:
-        if re.search(r"reagent|kit|assay|service|membership|publication|software|license", line, re.IGNORECASE):
+        if re.search(
+            r"agreement|terms|conditions|invalidated|signature|purchase order form|prior to",
+            line,
+            re.IGNORECASE,
+        ):
+            continue
+        if re.search(
+            r"reagent|kit|assay|annexin|biolegend|fluor|sequencing|library|service|membership|publication|software|license",
+            line,
+            re.IGNORECASE,
+        ):
             return line[:180]
     return filename
 
