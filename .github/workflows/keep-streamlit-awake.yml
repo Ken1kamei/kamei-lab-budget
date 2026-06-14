@@ -1,0 +1,62 @@
+name: Keep Streamlit Awake
+
+on:
+  schedule:
+    # Streamlit Community Cloud can sleep after inactivity. A 10-minute ping
+    # keeps the lab budget app warm during normal use.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: "Optional Streamlit app URL to ping for this manual run"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: Ping Streamlit app
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      DEFAULT_APP_URL: https://kamei-lab-budget.streamlit.app/
+      CONFIGURED_APP_URL: ${{ vars.STREAMLIT_APP_URL }}
+      MANUAL_APP_URL: ${{ inputs.app_url }}
+
+    steps:
+      - name: Resolve app URL
+        id: target
+        shell: bash
+        run: |
+          url="${MANUAL_APP_URL:-${CONFIGURED_APP_URL:-$DEFAULT_APP_URL}}"
+          if [[ -z "$url" ]]; then
+            echo "No Streamlit URL configured." >&2
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Pinging $url"
+
+      - name: Wake Streamlit app
+        shell: bash
+        run: |
+          status_code="$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/streamlit-keep-awake.html \
+            --write-out "%{http_code}" \
+            --retry 4 \
+            --retry-all-errors \
+            --retry-delay 20 \
+            --max-time 120 \
+            --user-agent "kamei-lab-budget-keep-awake/1.0" \
+            "${{ steps.target.outputs.url }}")"
+
+          if [[ "$status_code" -lt 200 || "$status_code" -ge 400 ]]; then
+            echo "Streamlit ping failed with HTTP $status_code" >&2
+            exit 1
+          fi
+
+          echo "Streamlit ping returned HTTP $status_code"
