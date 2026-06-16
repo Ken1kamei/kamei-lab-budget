@@ -118,9 +118,11 @@ PYEOF
     echo "     $STREAMLIT_DIR/.streamlit/secrets.toml"
     echo "9. Set Python version to: 3.12"
     echo "10. Click Deploy"
-    echo "11. After deploy: Settings → Sharing → Enable password protection"
+    echo "11. Keep Streamlit Cloud password protection OFF"
+    echo "    The app already uses NYU Google/OIDC login, and Cloud password protection"
+    echo "    prevents the keep-awake workflow from reaching the app."
     echo ""
-    echo "Then share the URL + password with lab members."
+    echo "Then share the URL with lab members; they will sign in with NYU Google."
     ;;
 
   help|*)

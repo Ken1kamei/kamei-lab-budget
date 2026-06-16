@@ -2,9 +2,10 @@ name: Keep Streamlit Awake
 
 on:
   schedule:
-    # Streamlit Community Cloud can sleep after inactivity. A 10-minute ping
+    # Streamlit Community Cloud can sleep after inactivity. A 5-minute ping
     # keeps the lab Streamlit apps warm during normal use.
-    - cron: "*/10 * * * *"
+    # Offset from minute 0 because GitHub schedule jobs can be delayed at busy boundaries.
+    - cron: "2-59/5 * * * *"
   workflow_dispatch:
     inputs:
       app_urls:
@@ -23,7 +24,7 @@ jobs:
 
     env:
       DEFAULT_APP_URLS: |
-        https://kamei-lab-budget.streamlit.app/
+        https://kamei-lab-budget-qff7jmewjwgpft4qyhc7hb.streamlit.app/
         https://kamei-lab-tools.streamlit.app/
         https://kamei-lab-roadmap.streamlit.app/
         https://kamei-lab-notebooks-protocols.streamlit.app/
@@ -63,7 +64,8 @@ jobs:
             status_code="$(curl \
               --silent \
               --show-error \
-              --output /tmp/streamlit-keep-awake.html \
+              --dump-header /tmp/streamlit-keep-awake.headers \
+              --output /tmp/streamlit-keep-awake.body \
               --write-out "%{http_code}" \
               --retry 4 \
               --retry-all-errors \
@@ -71,6 +73,14 @@ jobs:
               --max-time 120 \
               --user-agent "kamei-lab-streamlit-keep-awake/1.0" \
               "${url}")"
+
+            if grep -qi '^location: .*share\.streamlit\.io/-/auth/app' /tmp/streamlit-keep-awake.headers; then
+              location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {print $0}' /tmp/streamlit-keep-awake.headers | tail -1)"
+              echo "Streamlit ping reached Cloud auth instead of the app for ${url}" >&2
+              echo "Location: ${location}" >&2
+              echo "Disable Streamlit Cloud app-level authentication/password protection, or this unauthenticated keep-awake job cannot wake the app." >&2
+              exit 1
+            fi
 
             if [[ "$status_code" -lt 200 || "$status_code" -ge 400 ]]; then
               echo "Streamlit ping failed with HTTP $status_code for ${url}" >&2

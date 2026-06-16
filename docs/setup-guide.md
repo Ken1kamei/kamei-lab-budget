@@ -110,6 +110,7 @@ To import an invoice email manually: open Gmail → find the email → apply the
    .venv/bin/python scripts/setup_teams_sheet.py
    ```
 6. Add teams, leads, members, and allocations in **Settings → Teams**.
+7. Keep Streamlit Cloud password protection off. The app already uses NYU Google/OIDC login through `st.login()`, and Cloud password protection prevents automated keep-awake requests from reaching the app.
 
 The app uses `st.login()` / `st.user`; users cannot choose their email manually.
 
