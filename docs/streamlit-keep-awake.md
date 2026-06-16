@@ -1,6 +1,6 @@
 # Streamlit Keep-Awake
 
-Streamlit Community Cloud may put lab apps to sleep after inactivity. This repository includes a GitHub Actions workflow that pings the deployed apps every 5 minutes:
+Streamlit Community Cloud may put lab apps to sleep after inactivity. This repository includes a GitHub Actions workflow that pings the deployed apps every 6 hours:
 
 - Workflow: `.github/workflows/keep-streamlit-awake.yml`
 - Default URLs:

@@ -2,10 +2,9 @@ name: Keep Streamlit Awake
 
 on:
   schedule:
-    # Streamlit Community Cloud can sleep after inactivity. A 5-minute ping
-    # keeps the lab Streamlit apps warm during normal use.
-    # Offset from minute 0 because GitHub schedule jobs can be delayed at busy boundaries.
-    - cron: "2-59/5 * * * *"
+    # Ping every 6 hours. Offset from minute 0 because GitHub schedule jobs can
+    # be delayed at busy boundaries.
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       app_urls:
