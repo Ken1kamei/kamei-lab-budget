@@ -76,10 +76,9 @@ jobs:
 
             if grep -qi '^location: .*share\.streamlit\.io/-/auth/app' /tmp/streamlit-keep-awake.headers; then
               location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {print $0}' /tmp/streamlit-keep-awake.headers | tail -1)"
-              echo "Streamlit ping reached Cloud auth instead of the app for ${url}" >&2
-              echo "Location: ${location}" >&2
-              echo "Disable Streamlit Cloud app-level authentication/password protection, or this unauthenticated keep-awake job cannot wake the app." >&2
-              exit 1
+              echo "::warning title=Streamlit Cloud auth blocks keep-awake::${url} redirects to Cloud auth instead of the app. Disable Streamlit Cloud app-level authentication/password protection, or this unauthenticated keep-awake job cannot wake the app."
+              echo "Location: ${location}"
+              continue
             fi
 
             if [[ "$status_code" -lt 200 || "$status_code" -ge 400 ]]; then

@@ -18,6 +18,6 @@ If the deployed Streamlit URLs change, set a repository variable named `STREAMLI
 
 This reduces unwanted sleep, but it cannot prevent restarts caused by Streamlit maintenance, dependency errors, quota limits, or app crashes.
 
-The workflow treats HTTP 2xx and non-auth 3xx responses as success. If Streamlit Cloud redirects to `share.streamlit.io/-/auth/app`, the job fails because the request did not reach the app and cannot reliably wake it.
+The workflow treats HTTP 2xx and non-auth 3xx responses as success. If Streamlit Cloud redirects to `share.streamlit.io/-/auth/app`, the job emits a warning because the request did not reach the app and cannot reliably wake it.
 
 For this keep-awake workflow to work, the Streamlit Cloud app should not rely on Streamlit Cloud's app-level authentication/password gate. Keep the app public at the Streamlit Cloud layer and enforce lab access inside the app itself.
