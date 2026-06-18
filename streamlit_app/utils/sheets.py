@@ -277,11 +277,121 @@ def _get_teams_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
         for col in TEAM_COLUMNS:
             if col not in df.columns:
                 df[col] = ""
-        return df
+        registry_df = _get_budget_teams_from_portal_registry(fiscal_year, df)
+        return registry_df if registry_df is not None else df
     except gspread.exceptions.WorksheetNotFound:
-        return pd.DataFrame(columns=TEAM_COLUMNS)
+        registry_df = _get_budget_teams_from_portal_registry(fiscal_year, pd.DataFrame(columns=TEAM_COLUMNS))
+        return registry_df if registry_df is not None else pd.DataFrame(columns=TEAM_COLUMNS)
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Teams", e)
+
+
+def _registry_spreadsheet_id() -> str:
+    try:
+        return str(st.secrets.get("REGISTRY_SPREADSHEET_ID", "") or "").strip()
+    except Exception:
+        return ""
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows: pd.DataFrame) -> pd.DataFrame | None:
+    del fiscal_year
+    registry_id = _registry_spreadsheet_id()
+    if not registry_id:
+        return None
+    try:
+        registry = _open_spreadsheet(registry_id)
+        members = pd.DataFrame(registry.worksheet("Members").get_all_records())
+        teams = pd.DataFrame(registry.worksheet("Teams").get_all_records())
+        member_teams = pd.DataFrame(registry.worksheet("Member_Teams").get_all_records())
+        app_roles = pd.DataFrame(registry.worksheet("App_Roles").get_all_records())
+    except Exception:
+        return None
+    for frame, columns in (
+        (members, ["member_id", "email", "display_name", "name", "active"]),
+        (teams, ["team_id", "team_name", "description", "active"]),
+        (member_teams, ["member_id", "team_id", "active"]),
+        (app_roles, ["member_id", "app_id", "app_role", "active"]),
+    ):
+        for column in columns:
+            if column not in frame.columns:
+                frame[column] = ""
+    active_members = members[members["active"].map(_sheet_truthy)].copy()
+    active_teams = teams[teams["active"].map(_sheet_truthy)].copy()
+    active_member_teams = member_teams[member_teams["active"].map(_sheet_truthy)].copy()
+    active_budget_roles = app_roles[
+        (app_roles["active"].map(_sheet_truthy)) & (app_roles["app_id"].astype(str) == "budget")
+    ].copy()
+    if active_members.empty or active_teams.empty or active_budget_roles.empty:
+        return pd.DataFrame(columns=TEAM_COLUMNS)
+    active_member_ids = set(active_members["member_id"].astype(str))
+    role_by_member = active_budget_roles[active_budget_roles["member_id"].astype(str).isin(active_member_ids)].copy()
+    if role_by_member.empty:
+        return pd.DataFrame(columns=TEAM_COLUMNS)
+    member_lookup = active_members.set_index("member_id").to_dict("index")
+    allocations = _budget_team_allocation_lookup(existing_team_rows)
+    rows = []
+    for _, team in active_teams.iterrows():
+        team_id = str(team["team_id"])
+        team_name = str(team["team_name"]).strip()
+        if not team_name:
+            continue
+        team_member_ids = set(
+            active_member_teams.loc[active_member_teams["team_id"].astype(str) == team_id, "member_id"].astype(str)
+        )
+        scoped_roles = role_by_member[role_by_member["member_id"].astype(str).isin(team_member_ids)]
+        managers = _role_people(scoped_roles, member_lookup, {"owner", "manager"})
+        leads = _role_people(scoped_roles, member_lookup, {"lead"})
+        members_for_team = _role_people(scoped_roles, member_lookup, {"editor", "viewer"})
+        if not (managers[0] or leads[0] or members_for_team[0]):
+            continue
+        existing = allocations.get(team_name, {})
+        rows.append(
+            {
+                "Team Name": team_name,
+                "Allocation (AED)": existing.get("Allocation (AED)", ""),
+                "Allocation (USD)": existing.get("Allocation (USD)", ""),
+                "Budget Manager Emails": managers[0],
+                "Budget Manager Names": managers[1],
+                "Lead Emails": leads[0],
+                "Lead Names": leads[1],
+                "Member Emails": members_for_team[0],
+                "Member Names": members_for_team[1],
+                "Description": str(team.get("description", "")),
+                "Active": "Y",
+            }
+        )
+    return pd.DataFrame(rows, columns=TEAM_COLUMNS)
+
+
+def _sheet_truthy(value) -> bool:
+    return str(value).strip().upper() in {"TRUE", "YES", "Y", "1"}
+
+
+def _budget_team_allocation_lookup(frame: pd.DataFrame) -> dict[str, dict[str, str]]:
+    if frame.empty or "Team Name" not in frame.columns:
+        return {}
+    return {
+        str(row.get("Team Name", "")).strip(): {column: str(row.get(column, "")) for column in TEAM_COLUMNS}
+        for _, row in frame.iterrows()
+        if str(row.get("Team Name", "")).strip()
+    }
+
+
+def _role_people(role_rows: pd.DataFrame, member_lookup: dict, allowed_roles: set[str]) -> tuple[str, str]:
+    emails = []
+    names = []
+    for _, role_row in role_rows.iterrows():
+        app_role = str(role_row.get("app_role", "")).strip()
+        if app_role not in allowed_roles:
+            continue
+        member = member_lookup.get(str(role_row.get("member_id", "")), {})
+        email = str(member.get("email", "")).strip().lower()
+        name = str(member.get("display_name", "") or member.get("name", "")).strip()
+        if email and email not in emails:
+            emails.append(email)
+            names.append(name or email)
+    return ", ".join(emails), ", ".join(names)
 
 def get_summary(fiscal_year: str | None = None) -> pd.DataFrame:
     return _get_summary_for_fiscal_year(fiscal_year or get_active_fiscal_year())
