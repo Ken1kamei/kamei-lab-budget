@@ -7,7 +7,8 @@ refresh_runtime_modules()
 from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_usd, get_summary,
                            set_budget_allocation, upsert_team, set_config,
                            get_config, get_transactions, append_transaction,
-                           update_transaction, ensure_fiscal_year_spreadsheet)
+                           update_transaction, ensure_fiscal_year_spreadsheet,
+                           registry_connected, save_budget_member_access_to_registry)
 from utils.auth import require_role, is_pi
 from utils.categories import CATEGORIES
 from utils.theme import apply_theme
@@ -184,6 +185,11 @@ with tab1:
 with tab2:
     st.markdown("Manage lab teams. Team leads can add/edit transactions for their team.")
     teams_df = get_teams()
+    central_registry_enabled = registry_connected()
+    if central_registry_enabled:
+        st.caption("Members and app access are saved to the shared Kamei Lab registry.")
+    else:
+        st.warning("Shared registry is not connected. Member changes will only update this Budget app.")
 
     if not teams_df.empty:
         st.dataframe(teams_df, use_container_width=True, hide_index=True)
@@ -214,6 +220,8 @@ with tab2:
     with st.form("member_access_form"):
         member_name = st.text_input("Name", value=selected_row.get("Name", ""), placeholder="Member name")
         member_email = st.text_input("NYU email *", value=selected_email, placeholder="member@nyu.edu")
+        initial_password = st.text_input("Initial / reset password", type="password")
+        confirm_password = st.text_input("Confirm password", type="password")
         current_team_value = selected_row.get("Team", team_options[0] if team_options else "")
         default_team_idx = team_options.index(current_team_value) if current_team_value in team_options else 0
         team_select_options = team_options or [""]
@@ -235,15 +243,31 @@ with tab2:
                 st.error("Email must end with @nyu.edu.")
             elif not team_options:
                 st.error("Create at least one active team first.")
+            elif initial_password != confirm_password:
+                st.error("Password and confirmation do not match.")
             else:
                 final_access = "No access" if access.startswith("No access") else access
-                _set_member_access(
-                    teams_df,
-                    email,
-                    member_name,
-                    target_team,
-                    final_access,
-                )
+                try:
+                    if central_registry_enabled:
+                        save_budget_member_access_to_registry(
+                            actor_email=st.session_state.get("email") or "",
+                            email=email,
+                            name=member_name,
+                            team_name=target_team,
+                            access=final_access,
+                            password=initial_password,
+                        )
+                    else:
+                        _set_member_access(
+                            teams_df,
+                            email,
+                            member_name,
+                            target_team,
+                            final_access,
+                        )
+                except ValueError as error:
+                    st.error(str(error))
+                    st.stop()
                 if final_access == "No access":
                     st.success(f"Removed {email} from {target_team}.")
                 else:

@@ -1,5 +1,9 @@
 import streamlit as st
+import base64
 import gspread
+import hashlib
+import json
+import secrets
 from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
@@ -294,6 +298,254 @@ def _registry_spreadsheet_id() -> str:
         return DEFAULT_REGISTRY_SPREADSHEET_ID
 
 
+def registry_connected() -> bool:
+    try:
+        return bool(_registry_spreadsheet_id() and st.secrets.get("gcp_service_account", {}))
+    except Exception:
+        return False
+
+
+def _next_registry_id(frame: pd.DataFrame, column: str, prefix: str) -> str:
+    values = frame[column].astype(str).tolist() if column in frame else []
+    numbers = []
+    for value in values:
+        if value.startswith(prefix) and value.removeprefix(prefix).isdigit():
+            numbers.append(int(value.removeprefix(prefix)))
+    return f"{prefix}{max(numbers, default=0) + 1:03d}"
+
+
+def _registry_password_hash(password: str) -> str:
+    if len(str(password)) < 8:
+        raise ValueError("Password must be at least 8 characters.")
+    iterations = 200_000
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256${}${}${}".format(
+        iterations,
+        base64.urlsafe_b64encode(salt).decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(digest).decode("ascii").rstrip("="),
+    )
+
+
+def _registry_frame(registry, table_name: str, columns: list[str]) -> pd.DataFrame:
+    try:
+        records = registry.worksheet(table_name).get_all_records()
+    except gspread.exceptions.WorksheetNotFound:
+        registry.add_worksheet(table_name, rows=1000, cols=max(len(columns), 1))
+        records = []
+    frame = pd.DataFrame(records)
+    return frame.reindex(columns=columns, fill_value="").fillna("").astype(str)
+
+
+def _write_registry_frame(registry, table_name: str, frame: pd.DataFrame, columns: list[str]) -> None:
+    try:
+        worksheet = registry.worksheet(table_name)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = registry.add_worksheet(table_name, rows=1000, cols=max(len(columns), 1))
+    output = frame.reindex(columns=columns, fill_value="").fillna("").astype(str)
+    worksheet.clear()
+    worksheet.update([columns] + output.values.tolist())
+
+
+def _append_registry_audit(audit: pd.DataFrame, *, actor_email: str, action: str, target_type: str, target_id: str, before, after) -> pd.DataFrame:
+    def redacted(record):
+        data = dict(record or {})
+        if "password_hash" in data:
+            data["password_hash"] = "<redacted>"
+        return data
+
+    row = {
+        "audit_id": _next_registry_id(audit, "audit_id", "AU"),
+        "timestamp": datetime.now(DUBAI_TZ).replace(microsecond=0).isoformat(),
+        "actor_email": actor_email,
+        "action": action,
+        "target_type": target_type,
+        "target_id": target_id,
+        "before": json.dumps(redacted(before), sort_keys=True),
+        "after": json.dumps(redacted(after), sort_keys=True),
+    }
+    return pd.concat([audit, pd.DataFrame([row])], ignore_index=True)
+
+
+def save_budget_member_access_to_registry(
+    *,
+    actor_email: str,
+    email: str,
+    name: str,
+    team_name: str,
+    access: str,
+    password: str = "",
+) -> None:
+    registry = _open_spreadsheet(_registry_spreadsheet_id())
+    member_columns = [
+        "member_id",
+        "email",
+        "name",
+        "display_name",
+        "global_role",
+        "active",
+        "start_date",
+        "end_date",
+        "password_hash",
+        "password_set_at",
+        "password_must_change",
+        "notes",
+    ]
+    team_columns = ["team_id", "team_name", "description", "active"]
+    member_team_columns = ["member_team_id", "member_id", "team_id", "team_role", "active", "start_date", "end_date"]
+    app_role_columns = ["app_role_id", "member_id", "app_id", "app_role", "scope_team_id", "active", "start_date", "end_date"]
+    audit_columns = ["audit_id", "timestamp", "actor_email", "action", "target_type", "target_id", "before", "after"]
+
+    members = _registry_frame(registry, "Members", member_columns)
+    teams = _registry_frame(registry, "Teams", team_columns)
+    member_teams = _registry_frame(registry, "Member_Teams", member_team_columns)
+    app_roles = _registry_frame(registry, "App_Roles", app_role_columns)
+    audit = _registry_frame(registry, "Audit_Log", audit_columns)
+
+    normalized_email = email.strip().lower()
+    display_name = name.strip() or normalized_email
+    if not normalized_email:
+        raise ValueError("NYU email is required.")
+    if not normalized_email.endswith("@nyu.edu"):
+        raise ValueError("Email must end with @nyu.edu.")
+    if not team_name.strip():
+        raise ValueError("Team is required.")
+
+    today = datetime.now(DUBAI_TZ).date().isoformat()
+    member_matches = members[members["email"].astype(str).str.strip().str.lower() == normalized_email]
+    if member_matches.empty:
+        password_hash = _registry_password_hash(password)
+        member_row = {
+            "member_id": _next_registry_id(members, "member_id", "M"),
+            "email": normalized_email,
+            "name": display_name,
+            "display_name": display_name,
+            "global_role": "member",
+            "active": "TRUE",
+            "start_date": today,
+            "end_date": "",
+            "password_hash": password_hash,
+            "password_set_at": datetime.now(DUBAI_TZ).replace(microsecond=0).isoformat(),
+            "password_must_change": "TRUE",
+            "notes": "Added from Budget app",
+        }
+        members = pd.concat([members, pd.DataFrame([member_row])], ignore_index=True)
+        audit = _append_registry_audit(
+            audit,
+            actor_email=actor_email,
+            action="member.add",
+            target_type="Members",
+            target_id=member_row["member_id"],
+            before=None,
+            after=member_row,
+        )
+    else:
+        member_index = member_matches.index[0]
+        before = members.loc[member_index].to_dict()
+        members.loc[member_index, "email"] = normalized_email
+        members.loc[member_index, "name"] = display_name
+        members.loc[member_index, "display_name"] = display_name
+        members.loc[member_index, "active"] = "TRUE"
+        if password:
+            members.loc[member_index, "password_hash"] = _registry_password_hash(password)
+            members.loc[member_index, "password_set_at"] = datetime.now(DUBAI_TZ).replace(microsecond=0).isoformat()
+            members.loc[member_index, "password_must_change"] = "TRUE"
+        after = members.loc[member_index].to_dict()
+        audit = _append_registry_audit(
+            audit,
+            actor_email=actor_email,
+            action="member.update",
+            target_type="Members",
+            target_id=str(after["member_id"]),
+            before=before,
+            after=after,
+        )
+        member_row = after
+
+    team_matches = teams[teams["team_name"].astype(str).str.strip().str.lower() == team_name.strip().lower()]
+    if team_matches.empty:
+        team_row = {
+            "team_id": _next_registry_id(teams, "team_id", "T"),
+            "team_name": team_name.strip(),
+            "description": "Added from Budget app",
+            "active": "TRUE",
+        }
+        teams = pd.concat([teams, pd.DataFrame([team_row])], ignore_index=True)
+        audit = _append_registry_audit(
+            audit,
+            actor_email=actor_email,
+            action="team.add",
+            target_type="Teams",
+            target_id=team_row["team_id"],
+            before=None,
+            after=team_row,
+        )
+    else:
+        team_row = team_matches.iloc[0].to_dict()
+
+    member_id = str(member_row["member_id"])
+    team_id = str(team_row["team_id"])
+    final_access = "No access" if access.startswith("No access") else access
+    role_lookup = {"Budget Manager": "manager", "Team Lead": "lead", "Member": "viewer"}
+    member_team_mask = (member_teams["member_id"] == member_id) & (member_teams["team_id"] == team_id)
+    if final_access == "No access":
+        member_teams.loc[member_team_mask, "active"] = "FALSE"
+    elif member_team_mask.any():
+        member_teams.loc[member_team_mask, "active"] = "TRUE"
+        member_teams.loc[member_team_mask, "team_role"] = "lead" if final_access in {"Budget Manager", "Team Lead"} else "member"
+    else:
+        member_teams = pd.concat(
+            [
+                member_teams,
+                pd.DataFrame(
+                    [
+                        {
+                            "member_team_id": _next_registry_id(member_teams, "member_team_id", "MT"),
+                            "member_id": member_id,
+                            "team_id": team_id,
+                            "team_role": "lead" if final_access in {"Budget Manager", "Team Lead"} else "member",
+                            "active": "TRUE",
+                            "start_date": today,
+                            "end_date": "",
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    active_budget_role_mask = (app_roles["member_id"] == member_id) & (app_roles["app_id"] == "budget") & app_roles["active"].map(_sheet_truthy)
+    app_roles.loc[active_budget_role_mask, "active"] = "FALSE"
+    if final_access != "No access":
+        app_roles = pd.concat(
+            [
+                app_roles,
+                pd.DataFrame(
+                    [
+                        {
+                            "app_role_id": _next_registry_id(app_roles, "app_role_id", "AR"),
+                            "member_id": member_id,
+                            "app_id": "budget",
+                            "app_role": role_lookup[final_access],
+                            "scope_team_id": team_id,
+                            "active": "TRUE",
+                            "start_date": today,
+                            "end_date": "",
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    _write_registry_frame(registry, "Members", members, member_columns)
+    _write_registry_frame(registry, "Teams", teams, team_columns)
+    _write_registry_frame(registry, "Member_Teams", member_teams, member_team_columns)
+    _write_registry_frame(registry, "App_Roles", app_roles, app_role_columns)
+    _write_registry_frame(registry, "Audit_Log", audit, audit_columns)
+    st.cache_data.clear()
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows: pd.DataFrame) -> pd.DataFrame | None:
     del fiscal_year
@@ -312,7 +564,7 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
         (members, ["member_id", "email", "display_name", "name", "active"]),
         (teams, ["team_id", "team_name", "description", "active"]),
         (member_teams, ["member_id", "team_id", "active"]),
-        (app_roles, ["member_id", "app_id", "app_role", "active"]),
+        (app_roles, ["member_id", "app_id", "app_role", "scope_team_id", "active"]),
     ):
         for column in columns:
             if column not in frame.columns:
@@ -340,7 +592,10 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
         team_member_ids = set(
             active_member_teams.loc[active_member_teams["team_id"].astype(str) == team_id, "member_id"].astype(str)
         )
-        scoped_roles = role_by_member[role_by_member["member_id"].astype(str).isin(team_member_ids)]
+        scoped_roles = role_by_member[
+            role_by_member["member_id"].astype(str).isin(team_member_ids)
+            & role_by_member["scope_team_id"].astype(str).isin({"", team_id})
+        ]
         managers = _role_people(scoped_roles, member_lookup, {"owner", "manager"})
         leads = _role_people(scoped_roles, member_lookup, {"lead"})
         members_for_team = _role_people(scoped_roles, member_lookup, {"editor", "viewer"})
