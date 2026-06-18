@@ -297,9 +297,47 @@ def _get_teams_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
 
 def _registry_spreadsheet_id() -> str:
     try:
-        return str(st.secrets.get("REGISTRY_SPREADSHEET_ID", DEFAULT_REGISTRY_SPREADSHEET_ID) or "").strip()
+        configured_id = str(st.secrets.get("REGISTRY_SPREADSHEET_ID", "") or "").strip()
     except Exception:
-        return DEFAULT_REGISTRY_SPREADSHEET_ID
+        configured_id = ""
+    if configured_id:
+        return configured_id
+    if running_on_streamlit_cloud():
+        return ""
+    return DEFAULT_REGISTRY_SPREADSHEET_ID
+
+
+def _render_registry_load_error(error: Exception) -> None:
+    st.error("The shared Kamei Lab registry could not be loaded.")
+    if isinstance(error, PermissionError) or type(error).__name__ in {"PermissionError", "APIError"}:
+        st.info(
+            "Check this app's Streamlit Cloud secrets and Google Sheet sharing. "
+            "The central registry Sheet must be shared with the service account configured in "
+            "`gcp_service_account`, and `REGISTRY_SPREADSHEET_ID` must point to that same central registry Sheet."
+        )
+    else:
+        st.info("Refresh the app after updating Streamlit Cloud secrets or Google Sheet sharing.")
+    with st.expander("Technical detail"):
+        st.code(f"{type(error).__name__}: {error}")
+    st.stop()
+
+
+def _registry_client_email() -> str:
+    try:
+        return str(dict(st.secrets.get("gcp_service_account", {})).get("client_email", "")).strip()
+    except Exception:
+        return ""
+
+
+def registry_setup_hint() -> str:
+    email_hint = "the service account configured in `gcp_service_account`"
+    client_email = _registry_client_email()
+    if client_email:
+        email_hint = f"`{client_email}`"
+    return (
+        "Set `REGISTRY_SPREADSHEET_ID` in this app's Streamlit Cloud secrets and share the central "
+        f"Registry Google Sheet with {email_hint} as an editor."
+    )
 
 
 def registry_connected() -> bool:
@@ -318,9 +356,8 @@ def require_shared_registry_on_cloud() -> None:
         return
     st.error(
         "The shared Kamei Lab registry is required on Streamlit Cloud. "
-        "Set REGISTRY_SPREADSHEET_ID and [gcp_service_account] in this app's Streamlit Cloud secrets, "
-        "and share the central Google Sheet with the service account as an editor."
     )
+    st.info(registry_setup_hint())
     st.stop()
 
 
@@ -580,8 +617,7 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
         app_roles = pd.DataFrame(registry.worksheet("App_Roles").get_all_records())
     except Exception as error:
         if running_on_streamlit_cloud():
-            st.error(f"The shared Kamei Lab registry could not be loaded: {type(error).__name__}")
-            st.stop()
+            _render_registry_load_error(error)
         return None
     for frame, columns in (
         (members, ["member_id", "email", "display_name", "name", "active"]),
