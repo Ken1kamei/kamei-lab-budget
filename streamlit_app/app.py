@@ -43,8 +43,9 @@ if not email:
     st.stop()
 
 if role == "unknown":
-    st.error("Email not registered. Ask the PI to add you to the lab roster in Settings → Teams.")
+    st.error("This NYU Google account is not linked to Budget access in the shared lab registry.")
     st.caption(f"Signed in as: {email}")
+    st.info("Ask a Portal admin to register this exact email in Members and grant Budget access.")
     if st.button("Sign out", type="primary"):
         st.logout()
     st.stop()

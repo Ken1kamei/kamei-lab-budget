@@ -1,5 +1,5 @@
 import streamlit as st
-from utils.sheets import get_teams
+from utils.sheets import get_teams, registry_connected
 
 
 def _secret(key: str, default=None):
@@ -65,7 +65,7 @@ def get_user_role(email: str) -> tuple[str, str | None]:
     and team_name is None for pi/unknown.
     """
     pi_email = _secret("PI_EMAIL", "ken1kamei@nyu.edu")
-    if email.strip().lower() == pi_email.strip().lower():
+    if not registry_connected() and email.strip().lower() == pi_email.strip().lower():
         return "pi", None
 
     teams_df = get_teams()
@@ -84,7 +84,7 @@ def get_user_access(email: str, teams_df=None) -> tuple[str, list[str]]:
     """Return highest role and all active teams for an email."""
     normalized = email.strip().lower()
     pi_email = _secret("PI_EMAIL", "ken1kamei@nyu.edu").strip().lower()
-    if normalized == pi_email:
+    if not registry_connected() and normalized == pi_email:
         return "pi", []
 
     if teams_df is None:
