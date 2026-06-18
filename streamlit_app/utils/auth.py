@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import time
+from urllib.parse import urlencode
 
 import streamlit as st
 from utils.sheets import get_teams, registry_connected
@@ -93,6 +94,15 @@ def make_handoff_token(email: str, ttl_seconds: int = HANDOFF_TTL_SECONDS) -> st
     payload = f"{normalized_email}|{expires}"
     signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return _b64encode(f"{payload}|{signature}".encode("utf-8"))
+
+
+def app_url_with_handoff(url: str, email: str) -> str:
+    url = str(url or "").strip()
+    email = str(email or "").strip().lower()
+    if not url or not email or not handoff_configured():
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{urlencode({HANDOFF_QUERY_PARAM: make_handoff_token(email)})}"
 
 
 def verify_handoff_token(token: str) -> str | None:

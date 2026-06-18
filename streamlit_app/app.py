@@ -1,5 +1,11 @@
 import streamlit as st
-from utils.auth import SESSION_EMAIL_KEY, get_authenticated_email, oidc_configured, sync_session_from_oidc_user
+from utils.auth import (
+    SESSION_EMAIL_KEY,
+    app_url_with_handoff,
+    get_authenticated_email,
+    oidc_configured,
+    sync_session_from_oidc_user,
+)
 from utils.sheets import ensure_fiscal_year_spreadsheet, fiscal_year_options, get_active_fiscal_year
 from utils.theme import apply_theme
 
@@ -17,6 +23,7 @@ if "email" not in st.session_state:
     st.session_state.team  = None
 
 apply_theme()
+DEFAULT_PORTAL_URL = "https://kamei-lab-tools.streamlit.app/"
 
 # ── OIDC / local-dev login screen ─────────────────────────────────────────────
 if not get_authenticated_email():
@@ -66,6 +73,11 @@ with st.sidebar:
     st.caption(f"Logged in as: `{st.session_state.email}`")
     st.caption(f"Role: **{st.session_state.role.upper()}**"
                + (f" · {st.session_state.team}" if st.session_state.team else ""))
+    try:
+        portal_url = str(st.secrets.get("PORTAL_APP_URL", DEFAULT_PORTAL_URL) or DEFAULT_PORTAL_URL).strip()
+    except Exception:
+        portal_url = DEFAULT_PORTAL_URL
+    st.link_button("Back to Kamei Lab Portal", app_url_with_handoff(portal_url, email), use_container_width=True)
     year_options = fiscal_year_options()
     current_fy = get_active_fiscal_year()
     selected_fy = st.selectbox(
