@@ -618,7 +618,7 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
             _render_registry_load_error(error)
         return None
     for frame, columns in (
-        (members, ["member_id", "email", "display_name", "name", "active"]),
+        (members, ["member_id", "email", "display_name", "name", "global_role", "active"]),
         (teams, ["team_id", "team_name", "description", "active"]),
         (member_teams, ["member_id", "team_id", "active"]),
         (app_roles, ["member_id", "app_id", "app_role", "scope_team_id", "active"]),
@@ -632,6 +632,23 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
     active_budget_roles = app_roles[
         (app_roles["active"].map(_sheet_truthy)) & (app_roles["app_id"].astype(str) == "budget")
     ].copy()
+    global_budget_roles = active_members[
+        active_members["global_role"].astype(str).str.strip().str.lower().isin({"pi", "admin"})
+    ].copy()
+    if not global_budget_roles.empty:
+        global_budget_roles = pd.DataFrame(
+            [
+                {
+                    "member_id": str(row["member_id"]),
+                    "app_id": "budget",
+                    "app_role": "owner",
+                    "scope_team_id": "",
+                    "active": "TRUE",
+                }
+                for _, row in global_budget_roles.iterrows()
+            ]
+        )
+        active_budget_roles = pd.concat([active_budget_roles, global_budget_roles], ignore_index=True)
     if active_members.empty or active_teams.empty or active_budget_roles.empty:
         return pd.DataFrame(columns=TEAM_COLUMNS)
     active_member_ids = set(active_members["member_id"].astype(str))
@@ -639,6 +656,12 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
     if role_by_member.empty:
         return pd.DataFrame(columns=TEAM_COLUMNS)
     member_lookup = active_members.set_index("member_id").to_dict("index")
+    global_budget_manager_ids = set(
+        active_members.loc[
+            active_members["global_role"].astype(str).str.strip().str.lower().isin({"pi", "admin"}),
+            "member_id",
+        ].astype(str)
+    )
     allocations = _budget_team_allocation_lookup(existing_team_rows)
     rows = []
     for _, team in active_teams.iterrows():
@@ -650,7 +673,10 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
             active_member_teams.loc[active_member_teams["team_id"].astype(str) == team_id, "member_id"].astype(str)
         )
         scoped_roles = role_by_member[
-            role_by_member["member_id"].astype(str).isin(team_member_ids)
+            (
+                role_by_member["member_id"].astype(str).isin(team_member_ids)
+                | role_by_member["member_id"].astype(str).isin(global_budget_manager_ids)
+            )
             & role_by_member["scope_team_id"].astype(str).isin({"", team_id})
         ]
         managers = _role_people(scoped_roles, member_lookup, {"owner", "manager"})
