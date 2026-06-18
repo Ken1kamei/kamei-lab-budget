@@ -8,7 +8,8 @@ from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_us
                            set_budget_allocation, upsert_team, set_config,
                            get_config, get_transactions, append_transaction,
                            update_transaction, ensure_fiscal_year_spreadsheet,
-                           registry_connected, save_budget_member_access_to_registry)
+                           registry_connected, require_shared_registry_on_cloud,
+                           save_budget_member_access_to_registry)
 from utils.auth import require_role, is_pi
 from utils.categories import CATEGORIES
 from utils.theme import apply_theme
@@ -184,6 +185,7 @@ with tab1:
 
 with tab2:
     st.markdown("Manage lab teams. Team leads can add/edit transactions for their team.")
+    require_shared_registry_on_cloud()
     teams_df = get_teams()
     central_registry_enabled = registry_connected()
     if central_registry_enabled:

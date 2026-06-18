@@ -3,7 +3,9 @@ import base64
 import gspread
 import hashlib
 import json
+import os
 import secrets
+from pathlib import Path
 from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
@@ -50,6 +52,8 @@ _SUMMARY_CATEGORIES = set(CATEGORIES) | {"TOTAL"}
 CACHE_TTL_SECONDS = 300
 BASE_SPREADSHEET_SECRET = "SPREADSHEET_ID"
 DEFAULT_REGISTRY_SPREADSHEET_ID = "1gZU_0tG10O2JuliAq6Hdy3GONVCSBAAuiQAKXNug2Lk"
+STREAMLIT_CLOUD_HOME = "/home/adminuser"
+STREAMLIT_CLOUD_SOURCE_ROOT = "/mount/src"
 FY_SPREADSHEET_CONFIG_PREFIX = "Spreadsheet ID "
 TEAM_COLUMNS = [
     "Team Name",
@@ -305,6 +309,21 @@ def registry_connected() -> bool:
         return False
 
 
+def running_on_streamlit_cloud() -> bool:
+    return os.environ.get("HOME") == STREAMLIT_CLOUD_HOME or str(Path.cwd()).startswith(STREAMLIT_CLOUD_SOURCE_ROOT)
+
+
+def require_shared_registry_on_cloud() -> None:
+    if not running_on_streamlit_cloud() or registry_connected():
+        return
+    st.error(
+        "The shared Kamei Lab registry is required on Streamlit Cloud. "
+        "Set REGISTRY_SPREADSHEET_ID and [gcp_service_account] in this app's Streamlit Cloud secrets, "
+        "and share the central Google Sheet with the service account as an editor."
+    )
+    st.stop()
+
+
 def _next_registry_id(frame: pd.DataFrame, column: str, prefix: str) -> str:
     values = frame[column].astype(str).tolist() if column in frame else []
     numbers = []
@@ -549,6 +568,7 @@ def save_budget_member_access_to_registry(
 @st.cache_data(ttl=60, show_spinner=False)
 def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows: pd.DataFrame) -> pd.DataFrame | None:
     del fiscal_year
+    require_shared_registry_on_cloud()
     registry_id = _registry_spreadsheet_id()
     if not registry_id:
         return None
@@ -558,7 +578,10 @@ def _get_budget_teams_from_portal_registry(fiscal_year: str, existing_team_rows:
         teams = pd.DataFrame(registry.worksheet("Teams").get_all_records())
         member_teams = pd.DataFrame(registry.worksheet("Member_Teams").get_all_records())
         app_roles = pd.DataFrame(registry.worksheet("App_Roles").get_all_records())
-    except Exception:
+    except Exception as error:
+        if running_on_streamlit_cloud():
+            st.error(f"The shared Kamei Lab registry could not be loaded: {type(error).__name__}")
+            st.stop()
         return None
     for frame, columns in (
         (members, ["member_id", "email", "display_name", "name", "active"]),
