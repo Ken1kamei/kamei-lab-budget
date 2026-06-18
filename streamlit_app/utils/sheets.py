@@ -45,6 +45,7 @@ SUMMARY_COLS = [
 _SUMMARY_CATEGORIES = set(CATEGORIES) | {"TOTAL"}
 CACHE_TTL_SECONDS = 300
 BASE_SPREADSHEET_SECRET = "SPREADSHEET_ID"
+DEFAULT_REGISTRY_SPREADSHEET_ID = "1gZU_0tG10O2JuliAq6Hdy3GONVCSBAAuiQAKXNug2Lk"
 FY_SPREADSHEET_CONFIG_PREFIX = "Spreadsheet ID "
 TEAM_COLUMNS = [
     "Team Name",
@@ -288,9 +289,9 @@ def _get_teams_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
 
 def _registry_spreadsheet_id() -> str:
     try:
-        return str(st.secrets.get("REGISTRY_SPREADSHEET_ID", "") or "").strip()
+        return str(st.secrets.get("REGISTRY_SPREADSHEET_ID", DEFAULT_REGISTRY_SPREADSHEET_ID) or "").strip()
     except Exception:
-        return ""
+        return DEFAULT_REGISTRY_SPREADSHEET_ID
 
 
 @st.cache_data(ttl=60, show_spinner=False)
