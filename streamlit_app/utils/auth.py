@@ -1,5 +1,14 @@
+import base64
+import hashlib
+import hmac
+import time
+
 import streamlit as st
 from utils.sheets import get_teams, registry_connected
+
+SESSION_EMAIL_KEY = "portal_authenticated_email"
+HANDOFF_QUERY_PARAM = "portal_token"
+HANDOFF_TTL_SECONDS = 600
 
 
 def _secret(key: str, default=None):
@@ -54,8 +63,86 @@ def get_local_dev_email() -> str | None:
     return None
 
 
+def _handoff_secret() -> str:
+    explicit = str(_secret("PORTAL_SESSION_SECRET", "") or "").strip()
+    if explicit:
+        return explicit
+    auth = _secret("auth", {}) or {}
+    return str(auth.get("cookie_secret", "") or "").strip()
+
+
+def _b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def handoff_configured() -> bool:
+    return bool(_handoff_secret())
+
+
+def make_handoff_token(email: str, ttl_seconds: int = HANDOFF_TTL_SECONDS) -> str:
+    secret = _handoff_secret()
+    normalized_email = str(email or "").strip().lower()
+    if not secret or not normalized_email:
+        return ""
+    expires = int(time.time()) + ttl_seconds
+    payload = f"{normalized_email}|{expires}"
+    signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return _b64encode(f"{payload}|{signature}".encode("utf-8"))
+
+
+def verify_handoff_token(token: str) -> str | None:
+    secret = _handoff_secret()
+    if not secret or not token:
+        return None
+    try:
+        email, expires_raw, signature = _b64decode(token).decode("utf-8").split("|", 2)
+        expires = int(expires_raw)
+    except Exception:
+        return None
+    if expires < int(time.time()):
+        return None
+    payload = f"{email}|{expires}"
+    expected = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return None
+    normalized = email.strip().lower()
+    if not normalized.endswith("@nyu.edu"):
+        return None
+    return normalized
+
+
+def consume_handoff_token_from_query() -> str | None:
+    try:
+        token = st.query_params.get(HANDOFF_QUERY_PARAM)
+    except Exception:
+        return None
+    if isinstance(token, list):
+        token = token[0] if token else ""
+    email = verify_handoff_token(str(token or ""))
+    if not email:
+        return None
+    st.session_state[SESSION_EMAIL_KEY] = email
+    try:
+        del st.query_params[HANDOFF_QUERY_PARAM]
+    except Exception:
+        pass
+    return email
+
+
+def get_session_email() -> str | None:
+    email = str(st.session_state.get(SESSION_EMAIL_KEY, "") or "").strip().lower()
+    if email.endswith("@nyu.edu"):
+        return email
+    return None
+
+
 def get_authenticated_email() -> str | None:
-    return get_oidc_email() or get_local_dev_email()
+    return get_oidc_email() or consume_handoff_token_from_query() or get_session_email() or get_local_dev_email()
 
 
 def get_user_role(email: str) -> tuple[str, str | None]:

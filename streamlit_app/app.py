@@ -1,5 +1,5 @@
 import streamlit as st
-from utils.auth import get_authenticated_email, oidc_configured, sync_session_from_oidc_user
+from utils.auth import SESSION_EMAIL_KEY, get_authenticated_email, oidc_configured, sync_session_from_oidc_user
 from utils.sheets import ensure_fiscal_year_spreadsheet, fiscal_year_options, get_active_fiscal_year
 from utils.theme import apply_theme
 
@@ -47,6 +47,7 @@ if role == "unknown":
     st.caption(f"Signed in as: {email}")
     st.info("Ask a Portal admin to register this exact email in Members and grant Budget access.")
     if st.button("Sign out", type="primary"):
+        st.session_state.pop(SESSION_EMAIL_KEY, None)
         st.logout()
     st.stop()
 
@@ -79,6 +80,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"Cannot prepare ledger for {selected_fy}: {e}")
     if st.button("Sign out", use_container_width=True):
+        st.session_state.pop(SESSION_EMAIL_KEY, None)
         st.logout()
 
 # ── Default landing page ───────────────────────────────────────────────────────

@@ -157,3 +157,29 @@ def test_require_role_syncs_oidc_user_when_session_state_is_empty(mock_st, mock_
 
     assert mock_st.session_state["email"] == "pi@nyu.edu"
     assert mock_st.session_state["role"] == "pi"
+
+@patch("utils.auth.st")
+def test_authenticated_email_consumes_portal_handoff_token(mock_st):
+    mock_st.secrets = {"PORTAL_SESSION_SECRET": "shared-test-secret"}
+    mock_st.user = {"is_logged_in": False}
+    mock_st.session_state = {}
+    mock_st.query_params = {}
+
+    from utils.auth import HANDOFF_QUERY_PARAM, SESSION_EMAIL_KEY, get_authenticated_email, make_handoff_token
+
+    mock_st.query_params[HANDOFF_QUERY_PARAM] = make_handoff_token("RA1@nyu.edu")
+
+    assert get_authenticated_email() == "ra1@nyu.edu"
+    assert mock_st.session_state[SESSION_EMAIL_KEY] == "ra1@nyu.edu"
+    assert HANDOFF_QUERY_PARAM not in mock_st.query_params
+
+@patch("utils.auth.st")
+def test_authenticated_email_uses_portal_session_after_handoff(mock_st):
+    mock_st.secrets = {}
+    mock_st.user = {"is_logged_in": False}
+    mock_st.session_state = {"portal_authenticated_email": "RA1@nyu.edu"}
+    mock_st.query_params = {}
+
+    from utils.auth import get_authenticated_email
+
+    assert get_authenticated_email() == "ra1@nyu.edu"
