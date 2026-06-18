@@ -302,8 +302,6 @@ def _registry_spreadsheet_id() -> str:
         configured_id = ""
     if configured_id:
         return configured_id
-    if running_on_streamlit_cloud():
-        return ""
     return DEFAULT_REGISTRY_SPREADSHEET_ID
 
 
