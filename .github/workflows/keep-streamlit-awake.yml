@@ -2,9 +2,9 @@ name: Keep Streamlit Awake
 
 on:
   schedule:
-    # Ping every 6 hours. Offset from minute 0 because GitHub schedule jobs can
-    # be delayed at busy boundaries.
-    - cron: "17 */6 * * *"
+    # Ping every 10 minutes. Offset from minute 0 because GitHub schedule jobs
+    # can be delayed at busy boundaries.
+    - cron: "7-59/10 * * * *"
   workflow_dispatch:
     inputs:
       app_urls:
