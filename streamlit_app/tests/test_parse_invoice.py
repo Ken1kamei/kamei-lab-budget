@@ -142,6 +142,64 @@ def test_extract_inventory_pdf_reads_spaced_total_and_item_description():
     assert "PROPIDIUM IODIDE" in parsed["suggested_description"]
 
 
+def test_extract_aderb_shipping_document_reads_order_run_date_and_clean_items():
+    text = """
+    Report ID: ADH_INX6503 PeopleSoft Inventory Page No: 1
+    Destination: SHIPPING DOCUMENT Run Date: 10-JUN-2026-10.01
+    NYU Abu Dhabi Corporation
+    Business Unit: ADERB
+    Shipping ID: 0000012490
+    Order: 0000011710
+    Total (USD) 202.86
+    Total (USD): 202.86
+    """
+    tables = [
+        [
+            ["Line #", "Item ID (Description) / Comments", "Requestor / Attention\nTo", "Chartfields", "Budget\nOwner", "Quantity", "Unit Price (USD)", "Total (USD)"],
+            ["1", "2000.372.0005\n(LABCO LLC BIOLOGICAL C9791-10MG)", "SI2381 (Satoshi\nImamura)", "76-71260-ADHPG\nAD366-00004", "KK4801\nKenichiro Kamei", "2 EA", "57.18", "114.36"],
+            ["2", "2000.005.0007\n(LABCO LLC CHEMICALS 20821.330)", "SI2381 (Satoshi\nImamura)", "76-71260-ADHPG\nAD366-00004", "KK4801\nKenichiro Kamei", "5 EA", "17.70", "88.50"],
+        ]
+    ]
+
+    parsed = _extract_invoice_fields(text, tables, "ADERB_0000011710.pdf")
+
+    assert parsed["vendor"] == "NYUAD ERB (Stores)"
+    assert parsed["invoice_number"] == "ADERB_0000011710"
+    assert parsed["po_number"] == "0000011710"
+    assert parsed["invoice_date"] == "2026-06-10"
+    assert parsed["currency"] == "USD"
+    assert parsed["total_amount"] == 202.86
+    assert parsed["suggested_category"] == "Consumables"
+    assert parsed["suggested_description"] == "LABCO LLC BIOLOGICAL C9791-10MG; LABCO LLC CHEMICALS 20821.330"
+    assert len(parsed["line_items"]) == 2
+    assert parsed["line_items"][0]["quantity"] == 2.0
+    assert parsed["line_items"][1]["total"] == 88.5
+
+
+def test_extract_aderb_shipping_document_removes_requestor_name_from_description_cell():
+    text = """
+    Report ID: ADH_INX6503 PeopleSoft Inventory Page No: 1
+    Destination: SHIPPING DOCUMENT Run Date: 28-OCT-2025-15.01
+    Business Unit: ADERB
+    Order: 0000010012
+    Total (USD) 106.20
+    """
+    tables = [
+        [
+            ["Line #", "Item ID (Description) / Comments", "Requestor / Attention\nTo", "Chartfields", "Budget\nOwner", "Quantity", "Unit Price (USD)", "Total (USD)"],
+            ["1", "2000.005.0007\n(LABCO LLC CHEMICALS 20821.330)\nSatoshi", "SI2381 (Satoshi\nImamura)\nSatoshi Imamura", "76-71260-ADHPG\nAD366-00004", "KK4801\nKenichiro Kamei", "6 EA", "17.70", "106.20"],
+        ]
+    ]
+
+    parsed = _extract_invoice_fields(text, tables, "ADERB_0000010012.pdf")
+
+    assert parsed["invoice_number"] == "ADERB_0000010012"
+    assert parsed["po_number"] == "0000010012"
+    assert parsed["invoice_date"] == "2025-10-28"
+    assert parsed["suggested_description"] == "LABCO LLC CHEMICALS 20821.330"
+    assert "Satoshi" not in parsed["suggested_description"]
+
+
 def test_extract_ibuy_summary_reads_supplier_po_total_and_product():
     text = """
     Summary - PO iB00990633

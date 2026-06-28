@@ -21,7 +21,7 @@ def parse_pdf_bytes(pdf_bytes: bytes, filename: str = "") -> dict:
 
 def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    line_items = _dedupe_line_items(_extract_line_items(tables) + _extract_text_line_items(lines))
+    line_items = _dedupe_line_items(_extract_aderb_line_items(tables) + _extract_line_items(tables) + _extract_text_line_items(lines))
     vendor = _find_vendor(lines, text)
     invoice_number = _find_invoice_number(text) or _find_invoice_number(filename)
     if not invoice_number:
@@ -33,6 +33,8 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
     total_amount = total_candidate["amount"]
     currency = total_candidate.get("currency") or _detect_currency(text)
     suggested_category = _guess_category(text)
+    if suggested_category == "Other" and line_items:
+        suggested_category = _guess_category(" ".join(str(item.get("description", "")) for item in line_items))
     suggested_description = _guess_description(line_items, lines, filename)
     confidence = _confidence_scores(
         {
@@ -68,6 +70,8 @@ def _extract_invoice_fields(text: str, tables: list, filename: str) -> dict:
 
 
 def _find_vendor(lines, text=""):
+    if re.search(r"Business\s+Unit:\s*ADERB|Report\s+ID:\s*ADH_INX6503", str(text or ""), re.IGNORECASE):
+        return "NYUAD ERB (Stores)"
     if re.search(r"Chartfields\s+for\s+Order\s+Id|PeopleSoft\s+Inventory", str(text or ""), re.IGNORECASE):
         return "PeopleSoft Inventory"
     supplier = _find_supplier_vendor(text)
@@ -178,6 +182,13 @@ def _find_invoice_number(text):
 
 
 def _find_inventory_invoice_number(text: str, filename: str) -> str:
+    aderb_file_match = re.search(r"\b(ADERB[_-]\d{6,})\b", str(filename or ""), re.IGNORECASE)
+    if aderb_file_match:
+        return aderb_file_match.group(1).upper().replace("-", "_")
+    if re.search(r"Business\s+Unit:\s*ADERB|Report\s+ID:\s*ADH_INX6503", str(text or ""), re.IGNORECASE):
+        order_match = re.search(r"\bOrder:\s*(\d{6,})\b", str(text or ""), re.IGNORECASE)
+        if order_match:
+            return f"ADERB_{order_match.group(1)}"
     filename_match = re.search(r"\b(INS\d+[_-]\d+)\b", str(filename or ""), re.IGNORECASE)
     if filename_match:
         return filename_match.group(1)
@@ -188,6 +199,10 @@ def _find_inventory_invoice_number(text: str, filename: str) -> str:
 
 
 def _find_po_number(text):
+    if re.search(r"Business\s+Unit:\s*ADERB|Report\s+ID:\s*ADH_INX6503", str(text or ""), re.IGNORECASE):
+        order_match = re.search(r"\bOrder:\s*(\d{6,})\b", str(text or ""), re.IGNORECASE)
+        if order_match:
+            return order_match.group(1)
     return _find_pattern(
         text,
         [
@@ -201,6 +216,9 @@ def _find_po_number(text):
 
 
 def _find_invoice_date(text):
+    run_date = _find_run_date(text)
+    if run_date:
+        return run_date
     return _find_date(
         text,
         [
@@ -211,6 +229,17 @@ def _find_invoice_date(text):
         default="",
         include_generic=True,
     )
+
+
+def _find_run_date(text: str) -> str:
+    match = re.search(
+        r"Run\s+Date:\s*(\d{1,2}-[A-Z]{3}-\d{4})(?:-\d{1,2}\.\d{1,2})?",
+        str(text or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return _normalise_date(match.group(1))
 
 
 def _find_due_date(text):
@@ -246,6 +275,8 @@ def _find_date(text, patterns, default: str | None = None, include_generic: bool
 def _normalise_date(s):
     for fmt in (
         "%Y-%m-%d",
+        "%d-%b-%Y",
+        "%d-%B-%Y",
         "%d/%m/%Y",
         "%m/%d/%Y",
         "%d-%m-%Y",
@@ -488,6 +519,9 @@ def _dedupe_line_items(items: list[dict]) -> list[dict]:
 def _clean_description(value: str) -> str:
     desc = " ".join(str(value or "").replace("\uf0c6", " ").split())
     desc = re.sub(r"^(\d+|\*\*)\s+BASEMENT_Level\s+\d+_TBC\s+", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"^\d{4}\.\d{3}\.\d{4}\s+", "", desc)
+    desc = re.sub(r"^\(([^)]+)\)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?$", r"\1", desc)
+    desc = re.sub(r"^\(([^)]+)\)$", r"\1", desc)
     desc = re.sub(r"\s+Sent\s+To\s+.*$", "", desc, flags=re.IGNORECASE)
     desc = re.sub(r"\s+Accepted\s+.*$", "", desc, flags=re.IGNORECASE)
     desc = re.sub(r"\s+Supplier\s+Invoiced\s+.*$", "", desc, flags=re.IGNORECASE)
@@ -510,6 +544,57 @@ def _is_bad_description_line(line: str) -> bool:
     if re.fullmatch(r"[\d\s:/.,$€£¥-]+", value):
         return True
     return False
+
+
+def _extract_aderb_line_items(tables: list) -> list[dict]:
+    items = []
+    for table in tables:
+        if not table or len(table) < 2:
+            continue
+        header = [str(c or "").strip().lower() for c in table[0]]
+        desc_col = _find_col(header, ["item id (description)", "description"])
+        qty_col = _find_col(header, ["quantity"])
+        price_col = _find_col(header, ["unit price"])
+        total_col = _find_col(header, ["total"])
+        if desc_col is None or not any("requestor" in h for h in header):
+            continue
+        for row in table[1:]:
+            if desc_col >= len(row):
+                continue
+            desc = _clean_aderb_description(str(row[desc_col] or ""))
+            if not desc:
+                continue
+            qty = _to_float(row[qty_col]) if qty_col is not None and qty_col < len(row) else 1
+            price = _to_float(row[price_col]) if price_col is not None and price_col < len(row) else 0
+            total = _to_float(row[total_col]) if total_col is not None and total_col < len(row) else 0
+            items.append(
+                {
+                    "description": desc,
+                    "quantity": qty,
+                    "unit_price": price,
+                    "total": total,
+                }
+            )
+    return items
+
+
+def _clean_aderb_description(value: str) -> str:
+    parts = []
+    for part in str(value or "").splitlines():
+        cleaned = part.strip()
+        if not cleaned:
+            continue
+        if re.fullmatch(r"\d{4}\.\d{3}\.\d{4}", cleaned):
+            continue
+        if re.fullmatch(r"[A-Z]{1,3}\d{3,}", cleaned):
+            continue
+        # ADERB sometimes appends a requestor first name inside the description cell.
+        if re.fullmatch(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?", cleaned) and parts:
+            continue
+        cleaned = cleaned.strip("() ")
+        if cleaned:
+            parts.append(cleaned)
+    return _clean_description(" ".join(parts))
 
 
 def _extract_text_line_items(lines: list[str]) -> list[dict]:
