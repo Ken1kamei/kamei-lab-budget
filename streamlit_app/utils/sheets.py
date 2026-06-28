@@ -870,9 +870,15 @@ def update_transaction(txn_id: str, updates: dict):
                 for idx, header in enumerate(headers)
             }
             if "Date" in updates and "Fiscal Year" in headers:
+                row_date = str(
+                    updates.get("Date")
+                    or current.get("Date")
+                    or datetime.now(DUBAI_TZ).strftime("%Y-%m-%d")
+                )
                 updates = {
                     **updates,
-                    "Fiscal Year": fiscal_year_for_date(str(updates.get("Date") or "")),
+                    "Date": row_date,
+                    "Fiscal Year": fiscal_year_for_date(row_date),
                 }
             if (
                 {"Currency", "Amount"} & updates.keys()

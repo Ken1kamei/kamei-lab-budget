@@ -225,6 +225,24 @@ def test_update_transaction_recalculates_fiscal_year_when_date_changes(mock_ss):
     calls = [call.args[:3] for call in mock_ws.update_cell.call_args_list]
     assert (2, TXN_COLUMNS.index("Fiscal Year") + 1, "FY2026-27") in calls
 
+@patch("utils.sheets.get_spreadsheet")
+def test_update_transaction_preserves_existing_date_when_import_date_is_blank(mock_ss):
+    from utils.sheets import TXN_COLUMNS, update_transaction
+    mock_ws = MagicMock()
+    row = [""] * len(TXN_COLUMNS)
+    row[TXN_COLUMNS.index("Transaction ID")] = "TXN-001"
+    row[TXN_COLUMNS.index("Date")] = "2026-08-31"
+    row[TXN_COLUMNS.index("Fiscal Year")] = "FY2025-26"
+    mock_ws.get_all_values.return_value = [TXN_COLUMNS, row]
+    mock_ws.row_values.return_value = TXN_COLUMNS
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    update_transaction("TXN-001", {"Date": "", "Notes": "Imported PDF without date"})
+
+    calls = [call.args[:3] for call in mock_ws.update_cell.call_args_list]
+    assert (2, TXN_COLUMNS.index("Date") + 1, "2026-08-31") in calls
+    assert (2, TXN_COLUMNS.index("Fiscal Year") + 1, "FY2025-26") in calls
+
 @patch("utils.sheets.get_exchange_rate", return_value=3.6725)
 @patch("utils.sheets.get_spreadsheet")
 def test_set_budget_allocation_inserts_missing_category_before_total(mock_ss, _rate):
