@@ -4,6 +4,7 @@ import gspread
 import hashlib
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 from google.oauth2.service_account import Credentials
@@ -789,7 +790,13 @@ def get_currency_rates_to_usd() -> dict[str, float]:
 def _next_txn_id(fiscal_year: str) -> str:
     df = get_transactions(fiscal_year)
     date_str = datetime.now(DUBAI_TZ).strftime("%Y%m%d")
-    seq = str(len(df) + 1).zfill(4)
+    max_seq = 0
+    if not df.empty and "Transaction ID" in df.columns:
+        for raw_txn_id in df["Transaction ID"].dropna():
+            match = re.search(r"-(\d{4,})$", str(raw_txn_id).strip())
+            if match:
+                max_seq = max(max_seq, int(match.group(1)))
+    seq = str(max_seq + 1).zfill(4)
     return f"TXN-{date_str}-{seq}"
 
 def _current_fy() -> str:
@@ -932,7 +939,11 @@ def approve_transaction(txn_id: str, approver_email: str, status: str = "Approve
     })
 
 def find_matching_transaction_id(txns: pd.DataFrame, candidate: dict) -> str | None:
-    """Find an existing request/import row by team plus PO, invoice, or vendor."""
+    """Find an existing request/import row by team plus a durable document ID.
+
+    Vendor-only matching is intentionally avoided because recurring vendors such
+    as PeopleSoft Inventory or NYUAD ERB would otherwise overwrite unrelated PDFs.
+    """
     if txns.empty or "Transaction ID" not in txns.columns:
         return None
     team = _normalize_key(candidate.get("Team", ""))
@@ -945,7 +956,6 @@ def find_matching_transaction_id(txns: pd.DataFrame, candidate: dict) -> str | N
     checks = [
         ("PO Number", candidate.get("PO Number")),
         ("Invoice Number", candidate.get("Invoice Number")),
-        ("Vendor / Payee", candidate.get("Vendor / Payee")),
     ]
     for col, raw_value in checks:
         value = _normalize_key(raw_value)

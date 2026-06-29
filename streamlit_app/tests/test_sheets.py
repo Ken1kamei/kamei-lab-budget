@@ -309,7 +309,7 @@ def test_upsert_team_expands_columns_before_header_update(mock_ss):
     assert appended[expected_headers.index("Budget Manager Emails")] == "manager@nyu.edu"
     assert appended[expected_headers.index("Lead Names")] == "Team Lead"
 
-def test_find_matching_transaction_id_prefers_po_invoice_then_vendor_team():
+def test_find_matching_transaction_id_prefers_po_invoice_and_ignores_vendor_only():
     from utils.sheets import find_matching_transaction_id
     txns = pd.DataFrame([
         {"Transaction ID": "TXN-001", "PO Number": "PO-7", "Invoice Number": "",
@@ -321,8 +321,21 @@ def test_find_matching_transaction_id_prefers_po_invoice_then_vendor_team():
     ])
     assert find_matching_transaction_id(txns, {"PO Number": "PO-7", "Team": "Synbio"}) == "TXN-001"
     assert find_matching_transaction_id(txns, {"Invoice Number": "INV-9", "Team": "Imaging"}) == "TXN-002"
-    assert find_matching_transaction_id(txns, {"Vendor / Payee": " sigma aldrich ", "Team": "Synbio"}) == "TXN-003"
+    assert find_matching_transaction_id(txns, {"Vendor / Payee": " sigma aldrich ", "Team": "Synbio"}) is None
     assert find_matching_transaction_id(txns, {"PO Number": "PO-7", "Team": "Imaging"}) is None
+
+
+@patch("utils.sheets.get_transactions")
+def test_next_txn_id_uses_next_available_sequence(mock_get):
+    from utils.sheets import _next_txn_id
+    mock_get.return_value = pd.DataFrame([
+        {"Transaction ID": "TXN-20260628-0001"},
+        {"Transaction ID": "TXN-20260628-0007"},
+        {"Transaction ID": "legacy-id"},
+    ])
+    txn_id = _next_txn_id("FY2025-26")
+    assert txn_id.startswith("TXN-")
+    assert txn_id.endswith("-0008")
 
 @patch("utils.sheets.update_transaction")
 @patch("utils.sheets.append_transaction")
