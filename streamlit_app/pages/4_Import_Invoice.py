@@ -1,3 +1,5 @@
+import hashlib
+
 import streamlit as st
 import pandas as pd
 from utils.runtime import refresh_runtime_modules
@@ -14,7 +16,8 @@ from utils.theme import apply_theme
 require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 
-IMPORT_PAGE_VERSION = "2026-06-08-multi-pdf-v2"
+IMPORT_PAGE_VERSION = "2026-06-29-persistent-pdf-queue"
+PDF_QUEUE_KEY = "pdf_import_review_queue"
 
 st.title("📥 Import Invoice / Receipt")
 st.caption(f"Import module version: {IMPORT_PAGE_VERSION}")
@@ -37,8 +40,27 @@ def _subcategory_index(category: str, value: str) -> int:
 def _confidence_badge(score: str) -> str:
     return {"high": "🟢 high", "medium": "🟡 medium", "low": "🔴 needs review"}.get(score, "⚪ unknown")
 
-def _render_pdf_import(pdf_file, parsed: dict, index: int):
-    prefix = f"pdf_{index}_{pdf_file.name}"
+
+def _pdf_upload_id(filename: str, file_bytes: bytes) -> str:
+    digest = hashlib.sha1()
+    digest.update(filename.encode("utf-8", errors="ignore"))
+    digest.update(b"\0")
+    digest.update(file_bytes)
+    return digest.hexdigest()[:16]
+
+
+def _pdf_queue() -> list[dict]:
+    return st.session_state.setdefault(PDF_QUEUE_KEY, [])
+
+
+def _remove_pdf_from_queue(queue_id: str) -> None:
+    st.session_state[PDF_QUEUE_KEY] = [
+        item for item in _pdf_queue() if item.get("id") != queue_id
+    ]
+
+
+def _render_pdf_import(pdf_name: str, parsed: dict, index: int, queue_id: str):
+    prefix = f"pdf_{queue_id}"
     confidence = parsed.get("confidence", {})
     missing_fields = parsed.get("missing_fields", [])
     if missing_fields:
@@ -112,11 +134,11 @@ def _render_pdf_import(pdf_file, parsed: dict, index: int):
 
     description = st.text_input(
         "Description",
-        value=parsed.get("suggested_description") or pdf_file.name,
+        value=parsed.get("suggested_description") or pdf_name,
         key=f"{prefix}_description",
     )
     extracted_notes = [
-        f"Parsed by Python from {pdf_file.name}",
+        f"Parsed by Python from {pdf_name}",
         f"Extraction confidence: {confidence}",
     ]
     if parsed.get("amount_source"):
@@ -171,40 +193,73 @@ def _render_pdf_import(pdf_file, parsed: dict, index: int):
         })
         verb = "updated" if result["matched"] else "imported"
         st.success(f"Invoice {verb} as **{result['transaction_id']}**")
+        if st.button("Remove this PDF from queue", key=f"{prefix}_remove_after_import"):
+            _remove_pdf_from_queue(queue_id)
+            st.rerun()
 
 
 tab1, tab2 = st.tabs(["📄 PDF Invoice", "📊 NYUAD ERB Excel"])
 
 with tab1:
     st.success(
-        "Multi-PDF import is enabled. Select several PDF files in the upload dialog, "
-        "then review each extracted invoice separately."
+        "Upload one or more PDF invoices. New uploads are added to the review queue "
+        "without removing PDFs that are already waiting below."
     )
     pdf_files = st.file_uploader(
         "Drop one or more PDF files here",
         type=["pdf"],
         key="pdf_upload",
         accept_multiple_files=True,
-        help="You can select multiple PDF files at once. Each PDF will appear as its own review panel.",
+        help="You can select one PDF now and add more later. Each PDF stays in the review queue until you remove it.",
     )
 
     if pdf_files:
-        st.caption(f"{len(pdf_files)} PDF file(s) selected.")
-        parsed_results = []
-        with st.spinner("Parsing PDF files..."):
+        added = 0
+        queue = _pdf_queue()
+        seen_ids = {item.get("id") for item in queue}
+        with st.spinner("Parsing newly uploaded PDF files..."):
             history_txns = get_transactions()
             for pdf_file in pdf_files:
-                parsed = parse_pdf_bytes(pdf_file.getvalue(), pdf_file.name)
-                parsed_results.append((pdf_file, enrich_with_history(parsed, history_txns)))
+                file_bytes = pdf_file.getvalue()
+                queue_id = _pdf_upload_id(pdf_file.name, file_bytes)
+                if queue_id in seen_ids:
+                    continue
+                try:
+                    parsed = parse_pdf_bytes(file_bytes, pdf_file.name)
+                    parsed = enrich_with_history(parsed, history_txns)
+                except Exception as exc:
+                    parsed = {"_error": str(exc)}
+                queue.append({"id": queue_id, "name": pdf_file.name, "parsed": parsed})
+                seen_ids.add(queue_id)
+                added += 1
+        if added:
+            st.success(f"Added {added} PDF file(s) to the review queue.")
 
-        for i, (pdf_file, parsed) in enumerate(parsed_results):
-            title = f"{i + 1}. {pdf_file.name}"
+    queue = _pdf_queue()
+    if queue:
+        left, right = st.columns([3, 1])
+        left.caption(f"{len(queue)} PDF file(s) in the review queue.")
+        if right.button("Clear queue", key="clear_pdf_queue"):
+            st.session_state[PDF_QUEUE_KEY] = []
+            st.rerun()
+
+        for i, item in enumerate(list(queue)):
+            queue_id = item["id"]
+            pdf_name = item["name"]
+            parsed = item["parsed"]
+            title = f"{i + 1}. {pdf_name}"
             if "_error" in parsed:
                 with st.expander(title, expanded=True):
                     st.error(f"Parse error: {parsed['_error']}")
+                    if st.button("Remove from queue", key=f"remove_error_{queue_id}"):
+                        _remove_pdf_from_queue(queue_id)
+                        st.rerun()
                 continue
             with st.expander(title, expanded=i == 0):
-                _render_pdf_import(pdf_file, parsed, i)
+                if st.button("Remove from queue", key=f"remove_{queue_id}"):
+                    _remove_pdf_from_queue(queue_id)
+                    st.rerun()
+                _render_pdf_import(pdf_name, parsed, i, queue_id)
 
 with tab2:
     st.markdown(
