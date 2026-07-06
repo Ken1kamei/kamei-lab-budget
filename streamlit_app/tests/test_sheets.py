@@ -58,6 +58,44 @@ def test_get_transactions_for_unprepared_fiscal_year_does_not_create_sheet(_shee
     assert list(df.columns) == TXN_COLUMNS
     mock_ensure.assert_not_called()
 
+@patch("utils.sheets._read_config_from_base")
+@patch("utils.sheets._set_config_in_base")
+@patch("utils.sheets._get_client")
+def test_ensure_fiscal_year_spreadsheet_creates_lightweight_ledger(mock_client, mock_set_config, mock_read_config):
+    from utils.sheets import CATEGORIES, SUMMARY_COLS, TEAM_COLUMNS, TXN_COLUMNS, ensure_fiscal_year_spreadsheet
+    mock_read_config.side_effect = lambda key: {
+        "Spreadsheet ID FY2026-27": None,
+        "Current Fiscal Year": "FY2025-26",
+        "Fiscal Year": "FY2025-26",
+    }.get(key)
+    ss = MagicMock()
+    ss.id = "NEW_FY_ID"
+    ss.sheet1.title = "Sheet1"
+    worksheets = {
+        "Summary": MagicMock(),
+        "Teams": MagicMock(),
+        "Config": MagicMock(),
+    }
+    ss.worksheet.side_effect = lambda name: worksheets[name]
+    client = MagicMock()
+    client.create.return_value = ss
+    mock_client.return_value = client
+
+    result = ensure_fiscal_year_spreadsheet("FY2026-27")
+
+    assert result is ss
+    client.copy.assert_not_called()
+    client.create.assert_called_once_with("KameiLab Budget FY2026-27")
+    ss.sheet1.update_title.assert_called_once_with("Transactions")
+    ss.sheet1.update.assert_called_once()
+    worksheets["Summary"].update.assert_called_once()
+    summary_payload = worksheets["Summary"].update.call_args.args[0]
+    assert summary_payload[0] == SUMMARY_COLS
+    assert len(summary_payload) == len(CATEGORIES) + 2
+    worksheets["Teams"].update.assert_called_once()
+    assert worksheets["Teams"].update.call_args.args[0][0] == TEAM_COLUMNS
+    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "NEW_FY_ID")
+
 @patch("utils.sheets.get_spreadsheet")
 def test_get_teams_returns_dataframe(mock_ss):
     from utils.sheets import get_teams

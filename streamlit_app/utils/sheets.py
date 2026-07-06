@@ -198,6 +198,71 @@ def _clear_new_fiscal_year_transactions(ss, fiscal_year: str) -> None:
     except gspread.exceptions.WorksheetNotFound:
         pass
 
+def _replace_worksheet_values(ws, columns: list[str], rows: list[list] | None = None) -> None:
+    rows = rows or []
+    _ensure_sheet_columns(ws, len(columns))
+    ws.clear()
+    ws.update([columns] + rows, value_input_option="USER_ENTERED")
+
+def _worksheet_for_new_ledger(ss, name: str, rows: int, cols: int, *, use_default: bool = False):
+    if use_default:
+        ws = ss.sheet1
+        if ws.title != name:
+            ws.update_title(name)
+        return ws
+    try:
+        return ss.worksheet(name)
+    except gspread.exceptions.WorksheetNotFound:
+        return ss.add_worksheet(name, rows=rows, cols=cols)
+
+def _config_rows_for_fiscal_year(fiscal_year: str) -> list[list[str]]:
+    rows = []
+    try:
+        rows = _base_ws("Config").get_all_values()
+    except Exception:
+        rows = []
+    output = []
+    seen = set()
+    for row in rows:
+        if not row:
+            continue
+        key = str(row[0])
+        value = row[1] if len(row) > 1 else ""
+        if key in {"Current Fiscal Year", "Fiscal Year"}:
+            value = fiscal_year
+        output.append([key, value])
+        seen.add(key)
+    for key, value in (
+        ("Current Fiscal Year", fiscal_year),
+        ("Fiscal Year", fiscal_year),
+        ("AED/USD Exchange Rate", DEFAULT_AED_USD_EXCHANGE_RATE),
+        ("EUR/USD Exchange Rate", DEFAULT_RATES_TO_USD["EUR"]),
+        ("JPY/USD Exchange Rate", DEFAULT_RATES_TO_USD["JPY"]),
+        ("GBP/USD Exchange Rate", DEFAULT_RATES_TO_USD["GBP"]),
+        ("Notification Threshold %", 80),
+        ("Gmail Label", "Budget/Invoices"),
+    ):
+        if key not in seen:
+            output.append([key, value])
+    return output
+
+def _create_fiscal_year_spreadsheet(fiscal_year: str):
+    ss = _get_client().create(f"KameiLab Budget {fiscal_year}")
+    txn_ws = _worksheet_for_new_ledger(ss, "Transactions", 1000, len(TXN_COLUMNS), use_default=True)
+    _replace_worksheet_values(txn_ws, TXN_COLUMNS)
+
+    summary_rows = [[category, 0, 0, 0, 0, 0, 0, 0, 0, ""] for category in CATEGORIES]
+    summary_rows.append(["TOTAL", 0, 0, 0, 0, 0, 0, 0, 0, ""])
+    summary_ws = _worksheet_for_new_ledger(ss, "Summary", max(len(summary_rows) + 10, 100), len(SUMMARY_COLS))
+    _replace_worksheet_values(summary_ws, SUMMARY_COLS, summary_rows)
+
+    teams_ws = _worksheet_for_new_ledger(ss, "Teams", 1000, len(TEAM_COLUMNS))
+    _replace_worksheet_values(teams_ws, TEAM_COLUMNS)
+
+    config_ws = _worksheet_for_new_ledger(ss, "Config", 100, 2)
+    _replace_worksheet_values(config_ws, ["Key", "Value"], _config_rows_for_fiscal_year(fiscal_year))
+    return ss
+
 def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
     fy = fiscal_year or get_active_fiscal_year()
     registered_id = _spreadsheet_id_for_fiscal_year(fy)
@@ -208,14 +273,9 @@ def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
     if not base_fy or fy == base_fy:
         _register_fiscal_year_spreadsheet(fy, base_id)
         return _open_spreadsheet(base_id)
-    copied = _get_client().copy(
-        base_id,
-        title=f"KameiLab Budget {fy}",
-        copy_permissions=True,
-    )
-    _clear_new_fiscal_year_transactions(copied, fy)
-    _register_fiscal_year_spreadsheet(fy, copied.id)
-    return copied
+    created = _create_fiscal_year_spreadsheet(fy)
+    _register_fiscal_year_spreadsheet(fy, created.id)
+    return created
 
 def get_spreadsheet(fiscal_year: str | None = None, create_if_missing: bool = True):
     try:
