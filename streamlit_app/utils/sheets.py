@@ -158,6 +158,19 @@ def fiscal_year_spreadsheet_ready(fiscal_year: str | None = None) -> bool:
 def _register_fiscal_year_spreadsheet(fiscal_year: str, spreadsheet_id: str) -> None:
     _set_config_in_base(f"{FY_SPREADSHEET_CONFIG_PREFIX}{fiscal_year}", spreadsheet_id)
 
+def _base_fiscal_year() -> str | None:
+    return _read_config_from_base("Current Fiscal Year") or _read_config_from_base("Fiscal Year")
+
+def _uses_fiscal_year_tabs(fiscal_year: str | None = None) -> bool:
+    fy = fiscal_year or get_active_fiscal_year()
+    if not fy:
+        return False
+    registered_id = _spreadsheet_id_for_fiscal_year(fy)
+    return registered_id == _base_spreadsheet_id() and fy != _base_fiscal_year()
+
+def _worksheet_name(name: str, fiscal_year: str | None = None) -> str:
+    return f"{name} {fiscal_year}" if fiscal_year and _uses_fiscal_year_tabs(fiscal_year) else name
+
 def _clear_new_fiscal_year_transactions(ss, fiscal_year: str) -> None:
     try:
         ws = ss.worksheet("Transactions")
@@ -215,6 +228,15 @@ def _worksheet_for_new_ledger(ss, name: str, rows: int, cols: int, *, use_defaul
     except gspread.exceptions.WorksheetNotFound:
         return ss.add_worksheet(name, rows=rows, cols=cols)
 
+def _ensure_worksheet_values(ss, name: str, columns: list[str], rows: list[list] | None = None):
+    rows = rows or []
+    try:
+        return ss.worksheet(name)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet(name, rows=max(len(rows) + 10, 100), cols=max(len(columns), 1))
+        _replace_worksheet_values(ws, columns, rows)
+        return ws
+
 def _config_rows_for_fiscal_year(fiscal_year: str) -> list[list[str]]:
     rows = []
     try:
@@ -263,6 +285,15 @@ def _create_fiscal_year_spreadsheet(fiscal_year: str):
     _replace_worksheet_values(config_ws, ["Key", "Value"], _config_rows_for_fiscal_year(fiscal_year))
     return ss
 
+def _prepare_fiscal_year_tabs(ss, fiscal_year: str) -> None:
+    suffix = fiscal_year
+    summary_rows = [[category, 0, 0, 0, 0, 0, 0, 0, 0, ""] for category in CATEGORIES]
+    summary_rows.append(["TOTAL", 0, 0, 0, 0, 0, 0, 0, 0, ""])
+    _ensure_worksheet_values(ss, f"Transactions {suffix}", TXN_COLUMNS)
+    _ensure_worksheet_values(ss, f"Summary {suffix}", SUMMARY_COLS, summary_rows)
+    _ensure_worksheet_values(ss, f"Teams {suffix}", TEAM_COLUMNS)
+    _ensure_worksheet_values(ss, f"Config {suffix}", ["Key", "Value"], _config_rows_for_fiscal_year(fiscal_year))
+
 def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
     fy = fiscal_year or get_active_fiscal_year()
     registered_id = _spreadsheet_id_for_fiscal_year(fy)
@@ -273,9 +304,17 @@ def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
     if not base_fy or fy == base_fy:
         _register_fiscal_year_spreadsheet(fy, base_id)
         return _open_spreadsheet(base_id)
-    created = _create_fiscal_year_spreadsheet(fy)
-    _register_fiscal_year_spreadsheet(fy, created.id)
-    return created
+    try:
+        created = _create_fiscal_year_spreadsheet(fy)
+        _register_fiscal_year_spreadsheet(fy, created.id)
+        return created
+    except gspread.exceptions.APIError as error:
+        if "quota" not in str(error).lower():
+            raise
+        base = _open_spreadsheet(base_id)
+        _prepare_fiscal_year_tabs(base, fy)
+        _register_fiscal_year_spreadsheet(fy, base_id)
+        return base
 
 def get_spreadsheet(fiscal_year: str | None = None, create_if_missing: bool = True):
     try:
@@ -291,13 +330,13 @@ def get_spreadsheet(fiscal_year: str | None = None, create_if_missing: bool = Tr
         st.stop()
 
 def _ws(name: str, fiscal_year: str | None = None):
-    return get_spreadsheet(fiscal_year).worksheet(name)
+    return get_spreadsheet(fiscal_year).worksheet(_worksheet_name(name, fiscal_year))
 
 def _read_ws(name: str, fiscal_year: str | None = None):
     spreadsheet = get_spreadsheet(fiscal_year, create_if_missing=False)
     if spreadsheet is None:
         return None
-    return spreadsheet.worksheet(name)
+    return spreadsheet.worksheet(_worksheet_name(name, fiscal_year))
 
 def _normalize_key(value) -> str:
     return " ".join(str(value or "").strip().casefold().split())

@@ -96,6 +96,25 @@ def test_ensure_fiscal_year_spreadsheet_creates_lightweight_ledger(mock_client, 
     assert worksheets["Teams"].update.call_args.args[0][0] == TEAM_COLUMNS
     mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "NEW_FY_ID")
 
+@patch("utils.sheets._base_fiscal_year", return_value="FY2025-26")
+@patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value="TEST_ID")
+def test_worksheet_name_uses_fiscal_year_tabs_when_registered_to_base(_registered, _base_fy):
+    from utils.sheets import _worksheet_name
+
+    assert _worksheet_name("Summary", "FY2026-27") == "Summary FY2026-27"
+
+@patch("utils.sheets._base_fiscal_year", return_value="FY2025-26")
+@patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value="TEST_ID")
+@patch("utils.sheets.get_spreadsheet")
+def test_ws_reads_fiscal_year_tab_from_base_workbook(mock_ss, _registered, _base_fy):
+    from utils.sheets import _ws
+    workbook = MagicMock()
+    mock_ss.return_value = workbook
+
+    _ws("Summary", "FY2026-27")
+
+    workbook.worksheet.assert_called_once_with("Summary FY2026-27")
+
 @patch("utils.sheets.get_spreadsheet")
 def test_get_teams_returns_dataframe(mock_ss):
     from utils.sheets import get_teams
