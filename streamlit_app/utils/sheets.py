@@ -1061,6 +1061,37 @@ def set_budget_allocation(category: str, aed: float, usd: float, fiscal_year: st
         ws.append_row(new_row, value_input_option="USER_ENTERED")
     st.cache_data.clear()
 
+def set_budget_allocations_usd(allocations: dict[str, float], fiscal_year: str | None = None):
+    """Save category budget allocations for one fiscal-year ledger in a compact batch."""
+    ws = _ws("Summary", fiscal_year)
+    all_values = ws.get_all_values()
+    rate = get_exchange_rate()
+    row_by_category = {
+        str(row[0]).strip(): index
+        for index, row in enumerate(all_values, start=1)
+        if row and str(row[0]).strip()
+    }
+    updates = []
+    missing = []
+    for category, raw_usd in allocations.items():
+        usd = float(raw_usd or 0)
+        equiv = round_currency(to_aed_equivalent(0, usd, rate))
+        row_index = row_by_category.get(category)
+        if row_index:
+            updates.append(
+                {
+                    "range": f"B{row_index}:D{row_index}",
+                    "values": [[0, usd, equiv]],
+                }
+            )
+        else:
+            missing.append([category, 0, usd, equiv, 0, 0, 0, equiv, 0, ""])
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+    for row in missing:
+        ws.append_row(row, value_input_option="USER_ENTERED")
+    st.cache_data.clear()
+
 def upsert_team(team_data: dict):
     """Insert or update a team row."""
     ws = _ws("Teams")

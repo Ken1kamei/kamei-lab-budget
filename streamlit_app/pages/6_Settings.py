@@ -5,7 +5,8 @@ from utils.runtime import refresh_runtime_modules
 refresh_runtime_modules()
 
 from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_usd, get_summary,
-                           set_budget_allocation, upsert_team, set_config,
+                           set_budget_allocation, set_budget_allocations_usd,
+                           upsert_team, set_config,
                            get_config, get_transactions, append_transaction,
                            update_transaction, ensure_fiscal_year_spreadsheet,
                            fiscal_year_options, fiscal_year_spreadsheet_ready,
@@ -185,6 +186,9 @@ with tab1:
             f"{budget_fy} ledger has not been created yet. Saving allocations will prepare "
             "the Google Sheet for this academic year."
         )
+    saved_fy = st.session_state.pop("_budget_alloc_saved_fy", None)
+    if saved_fy:
+        st.success(f"✓ Budget allocations saved for {saved_fy}.")
     summary_df = get_summary(budget_fy)
 
     with st.form("budget_alloc_form"):
@@ -195,13 +199,21 @@ with tab1:
             curr_usd = float(row["Budgeted (USD)"].iloc[0]) if not row.empty else 0.0
             c1, c2 = st.columns([2, 1])
             c1.markdown(f"**{cat}**")
-            usd = c2.number_input(f"USD##{cat}", value=curr_usd, min_value=0.0, step=1000.0, label_visibility="collapsed")
+            safe_cat = cat.lower().replace(" ", "_").replace("/", "_")
+            usd = c2.number_input(
+                f"USD##{budget_fy}-{cat}",
+                value=curr_usd,
+                min_value=0.0,
+                step=1000.0,
+                label_visibility="collapsed",
+                key=f"budget_alloc_usd_{budget_fy}_{safe_cat}",
+            )
             alloc_data[cat] = usd
         if st.form_submit_button("Save Allocations", type="primary"):
             ensure_fiscal_year_spreadsheet(budget_fy)
-            for cat, usd in alloc_data.items():
-                set_budget_allocation(cat, 0, usd, budget_fy)
-            st.success(f"✓ Budget allocations saved for {budget_fy}.")
+            set_budget_allocations_usd(alloc_data, budget_fy)
+            st.session_state["_budget_alloc_saved_fy"] = budget_fy
+            st.rerun()
 
 with tab2:
     st.markdown("Manage lab teams. Team leads can add/edit transactions for their team.")

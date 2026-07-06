@@ -340,6 +340,26 @@ def test_set_budget_allocation_writes_to_selected_fiscal_year(mock_ss, _rate):
     calls = [call.args[:3] for call in mock_ws.update_cell.call_args_list]
     assert (2, 3, 25000) in calls
 
+@patch("utils.sheets.get_exchange_rate", return_value=3.6725)
+@patch("utils.sheets.get_spreadsheet")
+def test_set_budget_allocations_usd_batches_selected_fiscal_year(mock_ss, _rate):
+    from utils.sheets import set_budget_allocations_usd
+    mock_ws = MagicMock()
+    mock_ws.get_all_values.return_value = [
+        ["Category", "Budgeted (AED)", "Budgeted (USD)", "Budgeted (AED equiv)"],
+        ["Equipment", "500000", "0", "500000"],
+        ["Consumables", "0", "0", "0"],
+    ]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    set_budget_allocations_usd({"Equipment": 25000, "Consumables": 109500}, "FY2026-27")
+
+    mock_ss.assert_any_call("FY2026-27")
+    mock_ws.batch_update.assert_called_once()
+    updates = mock_ws.batch_update.call_args.args[0]
+    assert {"range": "B2:D2", "values": [[0, 25000.0, 91812.5]]} in updates
+    assert {"range": "B3:D3", "values": [[0, 109500.0, 402138.75]]} in updates
+
 @patch("utils.sheets.get_spreadsheet")
 def test_upsert_team_expands_columns_before_header_update(mock_ss):
     from utils.sheets import TEAM_COLUMNS, upsert_team
