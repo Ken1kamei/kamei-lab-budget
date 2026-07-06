@@ -11,13 +11,32 @@ refresh_runtime_modules()
 from utils.auth import can_manage_all_budgets, current_team, current_teams, require_role
 from utils.budget import get_category_summary, get_lab_totals, get_team_summary, monthly_spending
 from utils.categories import CATEGORY_COLOR_SEQUENCE
-from utils.sheets import get_exchange_rate, get_summary, get_teams, get_transactions
+from utils.sheets import (
+    fiscal_year_options,
+    get_active_fiscal_year,
+    get_exchange_rate,
+    get_summary,
+    get_teams,
+    get_transactions,
+)
 from utils.theme import apply_theme, chart_theme, metric_card
 
 require_role("pi", "budget_manager", "lead", "member")
 theme_mode = apply_theme()
 chart_colors = chart_theme()
 axis_line_color = chart_colors.get("line", chart_colors.get("grid", "#3d4652"))
+
+fy_options = fiscal_year_options()
+active_fy = get_active_fiscal_year()
+if active_fy not in fy_options:
+    fy_options.insert(0, active_fy)
+selected_fy = st.selectbox(
+    "Academic year",
+    fy_options,
+    index=fy_options.index(active_fy),
+    key="selected_fiscal_year",
+    help="Budget years run from September 1 to August 31.",
+)
 
 txns = get_transactions()
 summary = get_summary()
@@ -36,6 +55,7 @@ team_summary = get_team_summary(display_txns if not can_manage_all_budgets() els
 user_email = st.session_state.get("email", "")
 display_name = str(user_email).split("@")[0] if user_email else "Kamei Lab"
 scope = "Lab-wide overview" if can_manage_all_budgets() else f"{', '.join(user_teams) or current_team()} overview"
+fy_caption = f"{selected_fy} · Sep 1 - Aug 31"
 
 total_budget = totals["total_budget"]
 total_committed = totals["total_committed"]
@@ -48,7 +68,7 @@ st.html(
     <div class="lab-dashboard-top">
       <div>
         <h1 class="lab-title">Kamei Lab Budget<br>Manager</h1>
-        <div class="lab-subtitle">{html.escape(scope)} · Hello, {html.escape(display_name)} · USD base</div>
+        <div class="lab-subtitle">{html.escape(scope)} · {html.escape(fy_caption)} · Hello, {html.escape(display_name)} · USD base</div>
       </div>
       <div class="lab-top-tabs">
         <a class="lab-top-tab lab-top-tab-active" href="/Dashboard">Overview</a>
@@ -72,7 +92,7 @@ st.html(
       <div class="lab-stat-card">
         <div class="lab-stat-title">Total Budget</div>
         <div class="lab-stat-value">${total_budget:,.0f}</div>
-        <div class="lab-stat-caption">allocated lab budget<br>for current fiscal year</div>
+        <div class="lab-stat-caption">allocated lab budget<br>for {html.escape(selected_fy)}</div>
         <a class="lab-stat-button" href="/Transactions">Open ledger</a>
       </div>
       <div class="lab-stat-card lab-stat-card-magenta">

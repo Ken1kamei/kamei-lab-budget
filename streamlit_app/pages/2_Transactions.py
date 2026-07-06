@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from utils.sheets import (
+    fiscal_year_options,
+    get_active_fiscal_year,
     get_transactions,
     get_teams,
     get_currency_rates_to_usd,
@@ -8,7 +10,7 @@ from utils.sheets import (
     approve_transaction,
 )
 from utils.auth import require_role, can_edit, can_manage_all_budgets, current_teams
-from utils.budget import BUDGET_STATUSES, SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
+from utils.budget import BUDGET_STATUSES, SUPPORTED_CURRENCIES, fiscal_year_for_date, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
@@ -16,6 +18,18 @@ require_role("pi", "budget_manager", "lead", "member")
 apply_theme()
 
 st.title("Requests / Transactions")
+
+fy_options = fiscal_year_options()
+active_fy = get_active_fiscal_year()
+if active_fy not in fy_options:
+    fy_options.insert(0, active_fy)
+selected_fy = st.selectbox(
+    "Academic year",
+    fy_options,
+    index=fy_options.index(active_fy),
+    key="selected_fiscal_year",
+    help="Budget years run from September 1 to August 31.",
+)
 
 txns     = get_transactions()
 teams_df = get_teams()
@@ -43,6 +57,12 @@ def _team_options(current_value: str) -> list[str]:
     if current_value and current_value not in options:
         options.append(current_value)
     return options or [current_value or ""]
+
+def _date_value(value):
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return pd.Timestamp.today().date()
+    return parsed.date()
 
 if not can_manage_all_budgets() and "Team" in txns.columns:
     txns = txns[txns["Team"].isin(teams)]
@@ -77,7 +97,7 @@ if search:
 if "Date" in filtered.columns:
     filtered = filtered.sort_values("Date", ascending=False)
 
-st.caption(f"Showing {len(filtered)} of {len(txns)} transactions")
+st.caption(f"Showing {len(filtered)} of {len(txns)} transactions for {selected_fy}")
 
 SHOW_COLS = ["Transaction ID", "Date", "Category", "Team",
              "Vendor / Payee", "Description",
@@ -101,7 +121,22 @@ if can_edit():
         with st.form("edit_form"):
             col_a, col_b = st.columns(2)
             with col_a:
-                new_date = st.text_input("Date", value=str(row.get("Date", "")))
+                new_date_value = st.date_input("Date", value=_date_value(row.get("Date", "")))
+                new_date = new_date_value.isoformat()
+                derived_fy = fiscal_year_for_date(new_date)
+                current_fy = str(row.get("Fiscal Year", "") or selected_fy)
+                edit_fy_options = fiscal_year_options()
+                for fy in (derived_fy, current_fy, selected_fy):
+                    if fy and fy not in edit_fy_options:
+                        edit_fy_options.insert(0, fy)
+                new_fiscal_year = st.selectbox(
+                    "Fiscal Year",
+                    edit_fy_options,
+                    index=_option_index(edit_fy_options, current_fy if current_fy in edit_fy_options else derived_fy),
+                    help="Usually auto-derived from Date. Change it only when the item belongs to a different academic year.",
+                )
+                if new_fiscal_year != derived_fy:
+                    st.warning(f"Fiscal Year {new_fiscal_year} differs from the date-derived year {derived_fy}.")
                 new_category = st.selectbox(
                     "Category",
                     CATEGORIES,
@@ -166,6 +201,7 @@ if can_edit():
         if submitted:
             updates = {
                 "Date":     new_date,
+                "Fiscal Year": new_fiscal_year,
                 "Category": new_category,
                 "Sub-category": new_subcategory,
                 "Team":     new_team,
@@ -184,7 +220,7 @@ if can_edit():
                 approve_transaction(selected_id, st.session_state.email, new_status)
                 updates.pop("Status")
             if updates:
-                update_transaction(selected_id, updates)
+                update_transaction(selected_id, updates, source_fiscal_year=selected_fy)
             st.success(f"✓ Updated {selected_id}")
             st.rerun()
     else:

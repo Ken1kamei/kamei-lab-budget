@@ -4,9 +4,9 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.sheets import get_teams, get_currency_rates_to_usd, append_transaction
+from utils.sheets import fiscal_year_options, get_teams, get_currency_rates_to_usd, append_transaction
 from utils.auth import require_role, can_edit, can_manage_all_budgets, current_team, current_teams
-from utils.budget import BUDGET_STATUSES, SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
+from utils.budget import BUDGET_STATUSES, SUPPORTED_CURRENCIES, fiscal_year_for_date, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
@@ -32,6 +32,19 @@ with st.form("add_expense_form", clear_on_submit=True):
         else:
             status = "Allocated"
             st.info("Status: Allocated")
+
+    derived_fy = fiscal_year_for_date(exp_date.isoformat())
+    fy_options = fiscal_year_options()
+    if derived_fy not in fy_options:
+        fy_options.insert(0, derived_fy)
+    fiscal_year = st.selectbox(
+        "Fiscal Year",
+        fy_options,
+        index=fy_options.index(derived_fy),
+        help="Auto-filled from the date. Change this only if the item should be assigned to a different academic year.",
+    )
+    if fiscal_year != derived_fy:
+        st.warning(f"The selected fiscal year ({fiscal_year}) does not match the date-derived fiscal year ({derived_fy}).")
 
     vendor      = st.text_input("Vendor / Payee *")
     description = st.text_input("Description *")
@@ -76,6 +89,7 @@ if submitted:
             }
         txn_id = append_transaction({
             "Date":          exp_date.isoformat(),
+            "Fiscal Year":   fiscal_year,
             "Category":      category,
             "Sub-category":  subcat,
             "Vendor / Payee": vendor.strip(),

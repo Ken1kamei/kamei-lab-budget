@@ -805,7 +805,9 @@ def _current_fy() -> str:
 def append_transaction(data: dict) -> str:
     """Write one transaction row. Returns the Transaction ID."""
     row_date = data.get("Date") or datetime.now(DUBAI_TZ).strftime("%Y-%m-%d")
-    target_fy = fiscal_year_for_date(row_date)
+    target_fy = str(data.get("Fiscal Year") or "").strip()
+    if not target_fy.startswith("FY"):
+        target_fy = fiscal_year_for_date(row_date)
     ws = _ws("Transactions", target_fy)
     headers = ensure_transaction_columns(target_fy)
     txn_id = data.get("Transaction ID") or _next_txn_id(target_fy)
@@ -862,16 +864,18 @@ def append_transaction(data: dict) -> str:
     st.cache_data.clear()
     return txn_id
 
-def update_transaction(txn_id: str, updates: dict):
+def update_transaction(txn_id: str, updates: dict, source_fiscal_year: str | None = None):
     """Update specific fields of a transaction row."""
-    ws = _ws("Transactions")
-    ensure_transaction_columns()
+    source_fy = source_fiscal_year or get_active_fiscal_year()
+    ws = _ws("Transactions", source_fy)
+    ensure_transaction_columns(source_fy)
     all_values = ws.get_all_values()
     if not all_values:
         return
     headers = all_values[0]
     for i, row in enumerate(all_values[1:], start=2):
         if row and row[0] == txn_id:
+            explicit_fiscal_year = bool(str(updates.get("Fiscal Year") or "").strip())
             current = {
                 header: row[idx] if idx < len(row) else ""
                 for idx, header in enumerate(headers)
@@ -882,10 +886,11 @@ def update_transaction(txn_id: str, updates: dict):
                     or current.get("Date")
                     or datetime.now(DUBAI_TZ).strftime("%Y-%m-%d")
                 )
+                target_fy = str(updates.get("Fiscal Year") or "").strip() or fiscal_year_for_date(row_date)
                 updates = {
                     **updates,
                     "Date": row_date,
-                    "Fiscal Year": fiscal_year_for_date(row_date),
+                    "Fiscal Year": target_fy,
                 }
             if (
                 {"Currency", "Amount"} & updates.keys()
@@ -917,6 +922,13 @@ def update_transaction(txn_id: str, updates: dict):
                     updates["Amount (USD equiv)"] = round_currency(
                         float(recalculated_equiv or 0) / get_exchange_rate()
                     )
+            target_fy = str(updates.get("Fiscal Year") or current.get("Fiscal Year") or source_fy).strip()
+            if target_fy.startswith("FY") and target_fy != source_fy and explicit_fiscal_year:
+                moved_row = {**current, **updates, "Transaction ID": txn_id}
+                append_transaction(moved_row)
+                ws.delete_rows(i)
+                st.cache_data.clear()
+                return
             for field, value in updates.items():
                 if field in headers:
                     col = headers.index(field) + 1
