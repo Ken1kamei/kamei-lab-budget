@@ -141,6 +141,20 @@ def fiscal_year_options() -> list[str]:
 def _spreadsheet_id_for_fiscal_year(fiscal_year: str) -> str | None:
     return _read_config_from_base(f"{FY_SPREADSHEET_CONFIG_PREFIX}{fiscal_year}")
 
+def _existing_spreadsheet_id_for_fiscal_year(fiscal_year: str | None) -> str | None:
+    fy = fiscal_year or get_active_fiscal_year()
+    registered_id = _spreadsheet_id_for_fiscal_year(fy)
+    if registered_id:
+        return registered_id
+    base_id = _base_spreadsheet_id()
+    base_fy = _read_config_from_base("Current Fiscal Year") or _read_config_from_base("Fiscal Year")
+    if not base_fy or fy == base_fy:
+        return base_id
+    return None
+
+def fiscal_year_spreadsheet_ready(fiscal_year: str | None = None) -> bool:
+    return bool(_existing_spreadsheet_id_for_fiscal_year(fiscal_year))
+
 def _register_fiscal_year_spreadsheet(fiscal_year: str, spreadsheet_id: str) -> None:
     _set_config_in_base(f"{FY_SPREADSHEET_CONFIG_PREFIX}{fiscal_year}", spreadsheet_id)
 
@@ -203,9 +217,12 @@ def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
     _register_fiscal_year_spreadsheet(fy, copied.id)
     return copied
 
-def get_spreadsheet(fiscal_year: str | None = None):
+def get_spreadsheet(fiscal_year: str | None = None, create_if_missing: bool = True):
     try:
-        return ensure_fiscal_year_spreadsheet(fiscal_year)
+        if create_if_missing:
+            return ensure_fiscal_year_spreadsheet(fiscal_year)
+        spreadsheet_id = _existing_spreadsheet_id_for_fiscal_year(fiscal_year)
+        return _open_spreadsheet(spreadsheet_id) if spreadsheet_id else None
     except gspread.exceptions.APIError as e:
         st.error(
             f"Cannot open spreadsheet. Check that SPREADSHEET_ID is correct and "
@@ -215,6 +232,12 @@ def get_spreadsheet(fiscal_year: str | None = None):
 
 def _ws(name: str, fiscal_year: str | None = None):
     return get_spreadsheet(fiscal_year).worksheet(name)
+
+def _read_ws(name: str, fiscal_year: str | None = None):
+    spreadsheet = get_spreadsheet(fiscal_year, create_if_missing=False)
+    if spreadsheet is None:
+        return None
+    return spreadsheet.worksheet(name)
 
 def _normalize_key(value) -> str:
     return " ".join(str(value or "").strip().casefold().split())
@@ -260,7 +283,12 @@ def get_transactions(fiscal_year: str | None = None) -> pd.DataFrame:
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def _get_transactions_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
     try:
-        records = _ws("Transactions", fiscal_year).get_all_records()
+        ws = _read_ws("Transactions", fiscal_year)
+        if ws is None:
+            return pd.DataFrame(columns=TXN_COLUMNS)
+        records = ws.get_all_records()
+    except gspread.exceptions.WorksheetNotFound:
+        return pd.DataFrame(columns=TXN_COLUMNS)
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Transactions", e)
     df = pd.DataFrame(records) if records else pd.DataFrame(columns=TXN_COLUMNS)
@@ -282,7 +310,11 @@ def get_teams(fiscal_year: str | None = None) -> pd.DataFrame:
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def _get_teams_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
     try:
-        records = _ws("Teams", fiscal_year).get_all_records()
+        ws = _read_ws("Teams", fiscal_year)
+        if ws is None:
+            registry_df = _get_budget_teams_from_portal_registry(fiscal_year, pd.DataFrame(columns=TEAM_COLUMNS))
+            return registry_df if registry_df is not None else pd.DataFrame(columns=TEAM_COLUMNS)
+        records = ws.get_all_records()
         df = pd.DataFrame(records) if records else pd.DataFrame(columns=TEAM_COLUMNS)
         for col in TEAM_COLUMNS:
             if col not in df.columns:
@@ -739,7 +771,12 @@ def get_summary(fiscal_year: str | None = None) -> pd.DataFrame:
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def _get_summary_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
     try:
-        values = _ws("Summary", fiscal_year).get_all_values()
+        ws = _read_ws("Summary", fiscal_year)
+        if ws is None:
+            return pd.DataFrame(columns=SUMMARY_COLS)
+        values = ws.get_all_values()
+    except gspread.exceptions.WorksheetNotFound:
+        return pd.DataFrame(columns=SUMMARY_COLS)
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Summary", e)
     # Match rows by category name in col A — works regardless of title/header layout
@@ -756,7 +793,12 @@ def get_config_values(fiscal_year: str | None = None) -> list[list[str]]:
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def _get_config_values_for_fiscal_year(fiscal_year: str) -> list[list[str]]:
     try:
-        return _ws("Config", fiscal_year).get_all_values()
+        ws = _read_ws("Config", fiscal_year)
+        if ws is None:
+            return _base_ws("Config").get_all_values()
+        return ws.get_all_values()
+    except gspread.exceptions.WorksheetNotFound:
+        return _base_ws("Config").get_all_values()
     except gspread.exceptions.APIError as e:
         _stop_on_sheet_api_error("reading Config", e)
 

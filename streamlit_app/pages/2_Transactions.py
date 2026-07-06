@@ -31,8 +31,8 @@ selected_fy = st.selectbox(
     help="Budget years run from September 1 to August 31.",
 )
 
-txns     = get_transactions()
-teams_df = get_teams()
+txns     = get_transactions(selected_fy)
+teams_df = get_teams(selected_fy)
 teams = current_teams()
 rates = get_currency_rates_to_usd()
 

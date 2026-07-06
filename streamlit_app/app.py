@@ -6,7 +6,7 @@ from utils.auth import (
     oidc_configured,
     sync_session_from_oidc_user,
 )
-from utils.sheets import ensure_fiscal_year_spreadsheet, fiscal_year_options, get_active_fiscal_year
+from utils.sheets import fiscal_year_options, fiscal_year_spreadsheet_ready, get_active_fiscal_year
 from utils.theme import apply_theme
 
 st.set_page_config(
@@ -86,11 +86,10 @@ with st.sidebar:
         index=year_options.index(current_fy) if current_fy in year_options else 0,
         key="selected_fiscal_year",
     )
-    try:
-        active_ss = ensure_fiscal_year_spreadsheet(selected_fy)
-        st.caption(f"Ledger: `{active_ss.title}`")
-    except Exception as e:
-        st.error(f"Cannot prepare ledger for {selected_fy}: {e}")
+    if fiscal_year_spreadsheet_ready(selected_fy):
+        st.caption("Ledger: ready")
+    else:
+        st.caption("Ledger: not created yet. Use Settings > Fiscal Year to prepare it.")
     if st.button("Sign out", use_container_width=True):
         st.session_state.pop(SESSION_EMAIL_KEY, None)
         st.logout()

@@ -47,6 +47,17 @@ def test_get_transactions_reuses_cached_sheet_read(mock_ss):
     assert first.equals(second)
     assert mock_ws.get_all_records.call_count == 1
 
+@patch("utils.sheets.ensure_fiscal_year_spreadsheet")
+@patch("utils.sheets._existing_spreadsheet_id_for_fiscal_year", return_value=None)
+def test_get_transactions_for_unprepared_fiscal_year_does_not_create_sheet(_sheet_id, mock_ensure):
+    from utils.sheets import TXN_COLUMNS, get_transactions
+
+    df = get_transactions("FY2099-00")
+
+    assert df.empty
+    assert list(df.columns) == TXN_COLUMNS
+    mock_ensure.assert_not_called()
+
 @patch("utils.sheets.get_spreadsheet")
 def test_get_teams_returns_dataframe(mock_ss):
     from utils.sheets import get_teams

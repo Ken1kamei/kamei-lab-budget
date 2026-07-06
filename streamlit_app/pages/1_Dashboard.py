@@ -13,6 +13,7 @@ from utils.budget import get_category_summary, get_lab_totals, get_team_summary,
 from utils.categories import CATEGORY_COLOR_SEQUENCE
 from utils.sheets import (
     fiscal_year_options,
+    fiscal_year_spreadsheet_ready,
     get_active_fiscal_year,
     get_exchange_rate,
     get_summary,
@@ -38,9 +39,15 @@ selected_fy = st.selectbox(
     help="Budget years run from September 1 to August 31.",
 )
 
-txns = get_transactions()
-summary = get_summary()
-teams_df = get_teams()
+if not fiscal_year_spreadsheet_ready(selected_fy):
+    st.info(
+        f"{selected_fy} ledger has not been created yet. Showing an empty view. "
+        "Use Settings > Fiscal Year to prepare the Google Sheet when you are ready."
+    )
+
+txns = get_transactions(selected_fy)
+summary = get_summary(selected_fy)
+teams_df = get_teams(selected_fy)
 rate = get_exchange_rate()
 
 cat_summary = get_category_summary(txns, summary, rate)

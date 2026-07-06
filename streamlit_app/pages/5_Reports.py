@@ -2,7 +2,14 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
-from utils.sheets import get_transactions, get_summary, get_exchange_rate, get_teams
+from utils.sheets import (
+    fiscal_year_spreadsheet_ready,
+    get_active_fiscal_year,
+    get_transactions,
+    get_summary,
+    get_exchange_rate,
+    get_teams,
+)
 from utils.budget import get_category_summary, get_team_summary, get_lab_totals, monthly_spending
 from utils.auth import require_role, can_manage_all_budgets, current_team, current_teams
 from utils.categories import CATEGORY_COLOR_SEQUENCE
@@ -44,9 +51,16 @@ def _night_chart(fig, height: int):
 
 st.title("📈 Reports")
 
-txns     = get_transactions()
-summary  = get_summary()
-teams_df = get_teams()
+selected_fy = get_active_fiscal_year()
+if not fiscal_year_spreadsheet_ready(selected_fy):
+    st.info(
+        f"{selected_fy} ledger has not been created yet. Showing an empty report. "
+        "Use Settings > Fiscal Year to prepare the Google Sheet when you are ready."
+    )
+
+txns     = get_transactions(selected_fy)
+summary  = get_summary(selected_fy)
+teams_df = get_teams(selected_fy)
 rate     = get_exchange_rate()
 team     = current_team()
 teams    = current_teams()
