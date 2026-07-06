@@ -8,6 +8,8 @@ from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_us
                            set_budget_allocation, upsert_team, set_config,
                            get_config, get_transactions, append_transaction,
                            update_transaction, ensure_fiscal_year_spreadsheet,
+                           fiscal_year_options, fiscal_year_spreadsheet_ready,
+                           get_active_fiscal_year,
                            registry_connected, require_shared_registry_on_cloud,
                            save_budget_member_access_to_registry)
 from utils.auth import require_role, is_pi
@@ -165,11 +167,28 @@ tab4 = tabs[3] if is_pi() else None
 tab5 = tabs[4] if is_pi() else None
 
 with tab1:
-    st.markdown("Set the lab budget per category for the current fiscal year.")
-    summary_df = get_summary()
+    st.markdown("Set the lab budget per category for each academic year.")
+    fy_options = fiscal_year_options()
+    active_fy = get_active_fiscal_year()
+    if active_fy not in fy_options:
+        fy_options.insert(0, active_fy)
+    budget_fy = st.selectbox(
+        "Academic year",
+        fy_options,
+        index=fy_options.index(active_fy),
+        key="selected_fiscal_year",
+        help="Budget years run from September 1 to August 31.",
+    )
+    ledger_ready = fiscal_year_spreadsheet_ready(budget_fy)
+    if not ledger_ready:
+        st.info(
+            f"{budget_fy} ledger has not been created yet. Saving allocations will prepare "
+            "the Google Sheet for this academic year."
+        )
+    summary_df = get_summary(budget_fy)
 
     with st.form("budget_alloc_form"):
-        st.markdown("**Enter category budgets in USD:**")
+        st.markdown(f"**Enter category budgets in USD for {budget_fy}:**")
         alloc_data = {}
         for cat in CATEGORIES:
             row = summary_df[summary_df["Category"] == cat] if "Category" in summary_df.columns else pd.DataFrame()
@@ -179,9 +198,10 @@ with tab1:
             usd = c2.number_input(f"USD##{cat}", value=curr_usd, min_value=0.0, step=1000.0, label_visibility="collapsed")
             alloc_data[cat] = usd
         if st.form_submit_button("Save Allocations", type="primary"):
+            ensure_fiscal_year_spreadsheet(budget_fy)
             for cat, usd in alloc_data.items():
-                set_budget_allocation(cat, 0, usd)
-            st.success("✓ Budget allocations saved.")
+                set_budget_allocation(cat, 0, usd, budget_fy)
+            st.success(f"✓ Budget allocations saved for {budget_fy}.")
 
 with tab2:
     st.markdown("Manage lab teams. Team leads can add/edit transactions for their team.")

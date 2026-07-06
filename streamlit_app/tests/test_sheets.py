@@ -323,6 +323,23 @@ def test_set_budget_allocation_inserts_missing_category_before_total(mock_ss, _r
     assert index == 3
     assert row[:4] == ["Consumables", 1000, 10, 1036.73]
 
+@patch("utils.sheets.get_exchange_rate", return_value=3.6725)
+@patch("utils.sheets.get_spreadsheet")
+def test_set_budget_allocation_writes_to_selected_fiscal_year(mock_ss, _rate):
+    from utils.sheets import set_budget_allocation
+    mock_ws = MagicMock()
+    mock_ws.get_all_values.return_value = [
+        ["Category", "Budgeted (AED)", "Budgeted (USD)", "Budgeted (AED equiv)"],
+        ["Equipment", "500000", "0", "500000"],
+    ]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    set_budget_allocation("Equipment", 0, 25000, "FY2026-27")
+
+    mock_ss.assert_any_call("FY2026-27")
+    calls = [call.args[:3] for call in mock_ws.update_cell.call_args_list]
+    assert (2, 3, 25000) in calls
+
 @patch("utils.sheets.get_spreadsheet")
 def test_upsert_team_expands_columns_before_header_update(mock_ss):
     from utils.sheets import TEAM_COLUMNS, upsert_team

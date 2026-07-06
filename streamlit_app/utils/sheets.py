@@ -1034,8 +1034,8 @@ def upsert_imported_transaction(data: dict) -> dict:
     txn_id = append_transaction(row)
     return {"transaction_id": txn_id, "matched": False}
 
-def set_budget_allocation(category: str, aed: float, usd: float):
-    ws = _ws("Summary")
+def set_budget_allocation(category: str, aed: float, usd: float, fiscal_year: str | None = None):
+    ws = _ws("Summary", fiscal_year)
     all_values = ws.get_all_values()
     rate = get_exchange_rate()
     equiv = round_currency(to_aed_equivalent(aed, usd, rate))
