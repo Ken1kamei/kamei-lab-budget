@@ -58,43 +58,28 @@ def test_get_transactions_for_unprepared_fiscal_year_does_not_create_sheet(_shee
     assert list(df.columns) == TXN_COLUMNS
     mock_ensure.assert_not_called()
 
+@patch("utils.sheets._prepare_fiscal_year_tabs")
+@patch("utils.sheets._open_spreadsheet")
 @patch("utils.sheets._read_config_from_base")
 @patch("utils.sheets._set_config_in_base")
-@patch("utils.sheets._get_client")
-def test_ensure_fiscal_year_spreadsheet_creates_lightweight_ledger(mock_client, mock_set_config, mock_read_config):
-    from utils.sheets import CATEGORIES, SUMMARY_COLS, TEAM_COLUMNS, TXN_COLUMNS, ensure_fiscal_year_spreadsheet
+def test_ensure_fiscal_year_spreadsheet_prepares_base_workbook_tabs(
+    mock_set_config, mock_read_config, mock_open_spreadsheet, mock_prepare_tabs
+):
+    from utils.sheets import ensure_fiscal_year_spreadsheet
     mock_read_config.side_effect = lambda key: {
         "Spreadsheet ID FY2026-27": None,
         "Current Fiscal Year": "FY2025-26",
         "Fiscal Year": "FY2025-26",
     }.get(key)
     ss = MagicMock()
-    ss.id = "NEW_FY_ID"
-    ss.sheet1.title = "Sheet1"
-    worksheets = {
-        "Summary": MagicMock(),
-        "Teams": MagicMock(),
-        "Config": MagicMock(),
-    }
-    ss.worksheet.side_effect = lambda name: worksheets[name]
-    client = MagicMock()
-    client.create.return_value = ss
-    mock_client.return_value = client
+    mock_open_spreadsheet.return_value = ss
 
     result = ensure_fiscal_year_spreadsheet("FY2026-27")
 
     assert result is ss
-    client.copy.assert_not_called()
-    client.create.assert_called_once_with("KameiLab Budget FY2026-27")
-    ss.sheet1.update_title.assert_called_once_with("Transactions")
-    ss.sheet1.update.assert_called_once()
-    worksheets["Summary"].update.assert_called_once()
-    summary_payload = worksheets["Summary"].update.call_args.args[0]
-    assert summary_payload[0] == SUMMARY_COLS
-    assert len(summary_payload) == len(CATEGORIES) + 2
-    worksheets["Teams"].update.assert_called_once()
-    assert worksheets["Teams"].update.call_args.args[0][0] == TEAM_COLUMNS
-    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "NEW_FY_ID")
+    mock_open_spreadsheet.assert_called_once_with("TEST_ID")
+    mock_prepare_tabs.assert_called_once_with(ss, "FY2026-27")
+    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "TEST_ID")
 
 @patch("utils.sheets._base_fiscal_year", return_value="FY2025-26")
 @patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value="TEST_ID")

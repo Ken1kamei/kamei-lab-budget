@@ -303,23 +303,19 @@ def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
     fy = fiscal_year or get_active_fiscal_year()
     registered_id = _spreadsheet_id_for_fiscal_year(fy)
     if registered_id:
-        return _open_spreadsheet(registered_id)
+        spreadsheet = _open_spreadsheet(registered_id)
+        if registered_id == _base_spreadsheet_id() and fy != _base_fiscal_year():
+            _prepare_fiscal_year_tabs(spreadsheet, fy)
+        return spreadsheet
     base_id = _base_spreadsheet_id()
     base_fy = _read_config_from_base("Current Fiscal Year") or _read_config_from_base("Fiscal Year")
     if not base_fy or fy == base_fy:
         _register_fiscal_year_spreadsheet(fy, base_id)
         return _open_spreadsheet(base_id)
-    try:
-        created = _create_fiscal_year_spreadsheet(fy)
-        _register_fiscal_year_spreadsheet(fy, created.id)
-        return created
-    except gspread.exceptions.APIError as error:
-        if "quota" not in str(error).lower():
-            raise
-        base = _open_spreadsheet(base_id)
-        _prepare_fiscal_year_tabs(base, fy)
-        _register_fiscal_year_spreadsheet(fy, base_id)
-        return base
+    base = _open_spreadsheet(base_id)
+    _prepare_fiscal_year_tabs(base, fy)
+    _register_fiscal_year_spreadsheet(fy, base_id)
+    return base
 
 def get_spreadsheet(fiscal_year: str | None = None, create_if_missing: bool = True):
     try:
@@ -1174,7 +1170,12 @@ def set_budget_allocation(category: str, aed: float, usd: float, fiscal_year: st
 def set_budget_allocations_usd(allocations: dict[str, float], fiscal_year: str | None = None):
     """Save category budget allocations for one fiscal-year ledger in a compact batch."""
     ws = _ws("Summary", fiscal_year)
+    _ensure_sheet_columns(ws, len(SUMMARY_COLS))
     all_values = ws.get_all_values()
+    if not all_values:
+        end_col = _column_label(len(SUMMARY_COLS))
+        ws.update(f"A1:{end_col}1", [SUMMARY_COLS], value_input_option="USER_ENTERED")
+        all_values = [SUMMARY_COLS]
     rate = get_exchange_rate()
     row_by_category = {
         str(row[0]).strip(): index
