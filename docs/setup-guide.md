@@ -138,6 +138,7 @@ Each skill makes API calls to the GAS web app URL. Update the `webAppUrl` variab
 ## Annual Renewal (Fiscal Year Rollover)
 
 See [fiscal-year-procedures.md](fiscal-year-procedures.md) for the full checklist.
+See [maintenance-verification.md](maintenance-verification.md) for the required verification protocol before reporting app maintenance work as complete.
 
 Quick version:
 1. Run `/fiscal-year-init` in Claude Code, or
