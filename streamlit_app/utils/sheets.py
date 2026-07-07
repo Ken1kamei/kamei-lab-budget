@@ -90,14 +90,22 @@ def _base_spreadsheet():
 def _base_ws(name: str):
     return _base_spreadsheet().worksheet(name)
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _base_config_values() -> list[list[str]]:
+    return _base_ws("Config").get_all_values()
+
+def _base_config_map() -> dict[str, str]:
+    return {
+        str(row[0]): (row[1] if len(row) > 1 else "")
+        for row in _base_config_values()
+        if row
+    }
+
 def _read_config_from_base(key: str):
     try:
-        for row in _base_ws("Config").get_all_values():
-            if row and row[0] == key:
-                return row[1] if len(row) > 1 else ""
+        return _base_config_map().get(key)
     except Exception:
         return None
-    return None
 
 def _set_config_in_base(key: str, value) -> None:
     ws = _base_ws("Config")
@@ -119,14 +127,11 @@ def get_active_fiscal_year() -> str:
 def fiscal_year_options() -> list[str]:
     options = {_default_fiscal_year(), get_active_fiscal_year()}
     try:
-        for row in _base_ws("Config").get_all_values():
-            if not row:
-                continue
-            key = str(row[0] or "")
+        for key, value in _base_config_map().items():
             if key.startswith(FY_SPREADSHEET_CONFIG_PREFIX):
                 options.add(key.removeprefix(FY_SPREADSHEET_CONFIG_PREFIX))
-            elif key in {"Current Fiscal Year", "Fiscal Year"} and len(row) > 1 and str(row[1]).startswith("FY"):
-                options.add(str(row[1]))
+            elif key in {"Current Fiscal Year", "Fiscal Year"} and str(value).startswith("FY"):
+                options.add(str(value))
     except Exception:
         pass
     current = _default_fiscal_year()

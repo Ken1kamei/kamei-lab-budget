@@ -27,6 +27,9 @@ theme_mode = apply_theme()
 chart_colors = chart_theme()
 axis_line_color = chart_colors.get("line", chart_colors.get("grid", "#3d4652"))
 
+def _clear_sheet_cache_on_fy_change():
+    st.cache_data.clear()
+
 fy_options = fiscal_year_options()
 active_fy = get_active_fiscal_year()
 if active_fy not in fy_options:
@@ -37,6 +40,7 @@ selected_fy = st.selectbox(
     index=fy_options.index(active_fy),
     key="selected_fiscal_year",
     help="Budget years run from September 1 to August 31.",
+    on_change=_clear_sheet_cache_on_fy_change,
 )
 
 if not fiscal_year_spreadsheet_ready(selected_fy):

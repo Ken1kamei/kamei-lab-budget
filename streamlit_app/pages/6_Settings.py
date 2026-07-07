@@ -23,6 +23,10 @@ apply_theme()
 st.title("⚙️ Settings")
 
 
+def _clear_sheet_cache_on_fy_change():
+    st.cache_data.clear()
+
+
 def _split_emails(value: str) -> list[str]:
     seen = set()
     emails = []
@@ -179,6 +183,7 @@ with tab1:
         index=fy_options.index(active_fy),
         key="selected_fiscal_year",
         help="Budget years run from September 1 to August 31.",
+        on_change=_clear_sheet_cache_on_fy_change,
     )
     ledger_ready = fiscal_year_spreadsheet_ready(budget_fy)
     if not ledger_ready:
