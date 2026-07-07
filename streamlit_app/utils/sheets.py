@@ -342,6 +342,15 @@ def _read_ws(name: str, fiscal_year: str | None = None):
 def _normalize_key(value) -> str:
     return " ".join(str(value or "").strip().casefold().split())
 
+def _sheet_number(value) -> float:
+    text = str(value or "").strip().replace(",", "")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
 def _column_label(index: int) -> str:
     label = ""
     while index:
@@ -1147,9 +1156,16 @@ def set_budget_allocation(category: str, aed: float, usd: float, fiscal_year: st
     equiv = round_currency(to_aed_equivalent(aed, usd, rate))
     for i, row in enumerate(all_values, start=1):
         if row and row[0] == category:
-            ws.update_cell(i, 2, aed)
-            ws.update_cell(i, 3, usd)
-            ws.update_cell(i, 4, equiv)
+            spent_aed = _sheet_number(row[4]) if len(row) > 4 else 0.0
+            spent_usd = _sheet_number(row[5]) if len(row) > 5 else 0.0
+            spent_equiv = _sheet_number(row[6]) if len(row) > 6 else 0.0
+            remaining = round_currency(equiv - spent_equiv)
+            pct_used = round_currency(spent_equiv / equiv) if equiv > 0 else 0.0
+            ws.update(
+                f"B{i}:I{i}",
+                [[aed, usd, equiv, spent_aed, spent_usd, spent_equiv, remaining, pct_used]],
+                value_input_option="USER_ENTERED",
+            )
             st.cache_data.clear()
             return
     new_row = [category, aed, usd, equiv, 0, 0, 0, equiv, 0, ""]
@@ -1189,10 +1205,16 @@ def set_budget_allocations_usd(allocations: dict[str, float], fiscal_year: str |
         equiv = round_currency(to_aed_equivalent(0, usd, rate))
         row_index = row_by_category.get(category)
         if row_index:
+            row = all_values[row_index - 1]
+            spent_aed = _sheet_number(row[4]) if len(row) > 4 else 0.0
+            spent_usd = _sheet_number(row[5]) if len(row) > 5 else 0.0
+            spent_equiv = _sheet_number(row[6]) if len(row) > 6 else 0.0
+            remaining = round_currency(equiv - spent_equiv)
+            pct_used = round_currency(spent_equiv / equiv) if equiv > 0 else 0.0
             updates.append(
                 {
-                    "range": f"B{row_index}:D{row_index}",
-                    "values": [[0, usd, equiv]],
+                    "range": f"B{row_index}:I{row_index}",
+                    "values": [[0, usd, equiv, spent_aed, spent_usd, spent_equiv, remaining, pct_used]],
                 }
             )
         else:
