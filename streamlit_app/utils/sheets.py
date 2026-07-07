@@ -408,14 +408,16 @@ def _get_transactions_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
         df["Status"] = df["Status"].map(canonical_budget_status)
     return df
 
-def get_teams(fiscal_year: str | None = None) -> pd.DataFrame:
-    return _get_teams_for_fiscal_year(fiscal_year or get_active_fiscal_year())
+def get_teams(fiscal_year: str | None = None, include_registry: bool = True) -> pd.DataFrame:
+    return _get_teams_for_fiscal_year(fiscal_year or get_active_fiscal_year(), include_registry)
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def _get_teams_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
+def _get_teams_for_fiscal_year(fiscal_year: str, include_registry: bool = True) -> pd.DataFrame:
     try:
         ws = _read_ws("Teams", fiscal_year)
         if ws is None:
+            if not include_registry:
+                return pd.DataFrame(columns=TEAM_COLUMNS)
             registry_df = _get_budget_teams_from_portal_registry(fiscal_year, pd.DataFrame(columns=TEAM_COLUMNS))
             return registry_df if registry_df is not None else pd.DataFrame(columns=TEAM_COLUMNS)
         records = ws.get_all_records()
@@ -423,9 +425,13 @@ def _get_teams_for_fiscal_year(fiscal_year: str) -> pd.DataFrame:
         for col in TEAM_COLUMNS:
             if col not in df.columns:
                 df[col] = ""
+        if not include_registry:
+            return df
         registry_df = _get_budget_teams_from_portal_registry(fiscal_year, df)
         return registry_df if registry_df is not None else df
     except gspread.exceptions.WorksheetNotFound:
+        if not include_registry:
+            return pd.DataFrame(columns=TEAM_COLUMNS)
         registry_df = _get_budget_teams_from_portal_registry(fiscal_year, pd.DataFrame(columns=TEAM_COLUMNS))
         return registry_df if registry_df is not None else pd.DataFrame(columns=TEAM_COLUMNS)
     except gspread.exceptions.APIError as e:

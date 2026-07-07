@@ -129,6 +129,22 @@ def test_get_teams_returns_dataframe(mock_ss):
     assert df.iloc[0]["Team Name"] == "Synbio"
     assert df.iloc[0]["Allocation (AED)"] == 400000
 
+@patch("utils.sheets._get_budget_teams_from_portal_registry")
+@patch("utils.sheets.get_spreadsheet")
+def test_get_teams_can_skip_registry_for_fast_budget_views(mock_ss, mock_registry):
+    from utils.sheets import get_teams
+    mock_ws = MagicMock()
+    mock_ws.get_all_records.return_value = [
+        {"Team Name": "Diabetes", "Allocation (USD)": 55000, "Active": "Y"}
+    ]
+    mock_ss.return_value.worksheet.return_value = mock_ws
+
+    df = get_teams("FY2026-27", include_registry=False)
+
+    assert df.iloc[0]["Team Name"] == "Diabetes"
+    assert df.iloc[0]["Allocation (USD)"] == 55000
+    mock_registry.assert_not_called()
+
 @patch("utils.sheets.get_spreadsheet")
 def test_get_config_reuses_single_config_sheet_read_for_multiple_keys(mock_ss):
     from utils.sheets import get_config

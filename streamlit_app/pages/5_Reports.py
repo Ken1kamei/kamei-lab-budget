@@ -60,7 +60,7 @@ if not fiscal_year_spreadsheet_ready(selected_fy):
 
 txns     = get_transactions(selected_fy)
 summary  = get_summary(selected_fy)
-teams_df = get_teams(selected_fy)
+teams_df = get_teams(selected_fy, include_registry=False)
 rate     = get_exchange_rate()
 team     = current_team()
 teams    = current_teams()
