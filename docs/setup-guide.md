@@ -116,6 +116,27 @@ The app uses `st.login()` / `st.user`; users cannot choose their email manually.
 
 ---
 
+## Step 8A — Configure the Fiscal-Year Shared Drive Folder
+
+The Streamlit service account can edit the existing ledger, but separate annual
+Google Sheets should be created in a Google **Shared Drive** so they are owned
+by the research group rather than the service account.
+
+1. In NYU Google Drive, create or choose a folder inside a Shared Drive, for
+   example `Kamei Lab Budget / Fiscal Years`.
+2. Add the email in `gcp_service_account.client_email` as a **Content manager**
+   for that Shared Drive or folder.
+3. Copy the folder URL.
+4. In the Budget app, open **Settings → Fiscal Year** and paste the URL in
+   **Shared Drive folder URL or ID**, then select **Save Workspace Settings**.
+
+The next use of **Create Dedicated Google Sheet** will create a clean
+`KameiLab Budget Template` in that folder, then copy it for each fiscal year.
+The app stores the resulting Spreadsheet ID in the FY2025-26 master `Config`
+tab, so fiscal-year switching always opens the correct workbook.
+
+---
+
 ## Step 9 — Configure Claude Code Skills (optional, for power users)
 
 The 8 skills in `.claude/skills/` are usable from the terminal via Claude Code:

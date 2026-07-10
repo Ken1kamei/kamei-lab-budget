@@ -14,12 +14,29 @@
 **By September 15:**
 
 - [ ] Confirm total budget amount from NYUAD grants/finance office
-- [ ] Open web app → **Settings** → enter budget allocations for each category
+- [ ] Confirm that **Settings → Fiscal Year** has a Shared Drive folder URL/ID
+      and that the Budget service account is a Content Manager of that folder.
+- [ ] Open web app → **Settings** → **Fiscal Year** → enter `FY20XX-YY` and select **Create Dedicated Google Sheet**.
+      The first use creates `KameiLab Budget Template`; every later fiscal-year
+      workbook is copied from this template so its worksheet format remains
+      consistent.
+- [ ] Open the new workbook from Settings and confirm it has standard
+      `Transactions`, `Summary`, `Teams`, and `Config` tabs.
+- [ ] Open web app → **Settings** → **Budget Allocations** → select the new
+      academic year and enter budget allocations for each category.
 - [ ] Verify AED/USD exchange rate in Settings (default: 3.6725)
-- [ ] Run `/fiscal-year-init FY20XX-XX` in Claude Code to initialize the new Summary sheet
 - [ ] Check that Gmail auto-import triggers are active (Settings → Setup Triggers)
-- [ ] Share the new spreadsheet URL with lab members if applicable
+- [ ] Share the new spreadsheet URL with the PI or finance team if they need
+      direct Sheet access. The app service account continues to manage app writes.
 - [ ] Archive the previous year's spreadsheet in Google Drive under `Kamei Lab Budget / Archive /`
+
+### Moving a Year Created Under the Old Shared-Tab Layout
+
+If Settings shows a year as stored in the FY2025-26 master workbook, use
+**Move FY20XX-YY** in **Settings → Fiscal Year**. This copies the four active
+app tabs into a dedicated workbook and changes the app routing only after the
+copy succeeds. The original FY-suffixed tabs remain in the master workbook as
+an archival backup.
 
 ## End of Year Checklist
 

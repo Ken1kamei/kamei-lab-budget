@@ -4,7 +4,8 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.sheets import fiscal_year_options, get_teams, get_currency_rates_to_usd, append_transaction
+from utils.sheets import (fiscal_year_options, fiscal_year_spreadsheet_ready,
+                          get_teams, get_currency_rates_to_usd, append_transaction)
 from utils.auth import require_role, can_edit, can_manage_all_budgets, current_team, current_teams
 from utils.budget import BUDGET_STATUSES, SUPPORTED_CURRENCIES, fiscal_year_for_date, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
@@ -45,6 +46,9 @@ with st.form("add_expense_form", clear_on_submit=True):
     )
     if fiscal_year != derived_fy:
         st.warning(f"The selected fiscal year ({fiscal_year}) does not match the date-derived fiscal year ({derived_fy}).")
+    fiscal_year_ready = fiscal_year_spreadsheet_ready(fiscal_year)
+    if not fiscal_year_ready:
+        st.warning(f"{fiscal_year} has not been prepared yet. A PI must create its dedicated Google Sheet in Settings > Fiscal Year before requests can be added.")
 
     vendor      = st.text_input("Vendor / Payee *")
     description = st.text_input("Description *")
@@ -74,7 +78,12 @@ with st.form("add_expense_form", clear_on_submit=True):
         st.info(f"Team: **{my_team}** (pre-assigned)")
         team_value = my_team
 
-    submitted = st.form_submit_button("Add Transaction", type="primary", use_container_width=True)
+    submitted = st.form_submit_button(
+        "Add Transaction",
+        type="primary",
+        use_container_width=True,
+        disabled=not fiscal_year_ready,
+    )
 
 if submitted:
     if not vendor.strip() or not description.strip():
@@ -87,25 +96,29 @@ if submitted:
                 "Approved By": st.session_state.email,
                 "Approved At": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
-        txn_id = append_transaction({
-            "Date":          exp_date.isoformat(),
-            "Fiscal Year":   fiscal_year,
-            "Category":      category,
-            "Sub-category":  subcat,
-            "Vendor / Payee": vendor.strip(),
-            "Description":   description.strip(),
-            "PO Number":     po_num.strip(),
-            "Invoice Number": inv_num.strip(),
-            "Currency":      currency,
-            "Amount":        amount,
-            "Amount (USD equiv)": usd_equiv,
-            "Status":        status,
-            "PDF Link":      pdf_link.strip(),
-            "Notes":         notes.strip(),
-            "Entered By":    st.session_state.email,
-            "Entry Method":  "Manual",
-            "Team":          team_value,
-            **approved_fields,
-        })
+        try:
+            txn_id = append_transaction({
+                "Date":          exp_date.isoformat(),
+                "Fiscal Year":   fiscal_year,
+                "Category":      category,
+                "Sub-category":  subcat,
+                "Vendor / Payee": vendor.strip(),
+                "Description":   description.strip(),
+                "PO Number":     po_num.strip(),
+                "Invoice Number": inv_num.strip(),
+                "Currency":      currency,
+                "Amount":        amount,
+                "Amount (USD equiv)": usd_equiv,
+                "Status":        status,
+                "PDF Link":      pdf_link.strip(),
+                "Notes":         notes.strip(),
+                "Entered By":    st.session_state.email,
+                "Entry Method":  "Manual",
+                "Team":          team_value,
+                **approved_fields,
+            })
+        except ValueError as error:
+            st.error(str(error))
+            st.stop()
         st.success(f"Request saved: **{txn_id}**")
         st.balloons()

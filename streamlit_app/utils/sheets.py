@@ -8,6 +8,7 @@ import re
 import secrets
 from pathlib import Path
 from google.oauth2.service_account import Credentials
+from google.auth.transport.requests import AuthorizedSession
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -56,6 +57,11 @@ DEFAULT_REGISTRY_SPREADSHEET_ID = "1gZU_0tG10O2JuliAq6Hdy3GONVCSBAAuiQAKXNug2Lk"
 STREAMLIT_CLOUD_HOME = "/home/adminuser"
 STREAMLIT_CLOUD_SOURCE_ROOT = "/mount/src"
 FY_SPREADSHEET_CONFIG_PREFIX = "Spreadsheet ID "
+FISCAL_YEAR_TEMPLATE_CONFIG_KEY = "Fiscal Year Template Spreadsheet ID"
+FISCAL_YEAR_TEMPLATE_TITLE = "KameiLab Budget Template"
+FISCAL_YEAR_WORKSHEET_NAMES = ("Transactions", "Summary", "Teams", "Config")
+FISCAL_YEAR_SHARED_DRIVE_FOLDER_CONFIG_KEY = "Fiscal Year Shared Drive Folder ID"
+GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
 TEAM_COLUMNS = [
     "Team Name",
     "Allocation (AED)",
@@ -71,11 +77,18 @@ TEAM_COLUMNS = [
 ]
 
 @st.cache_resource
-def _get_client():
-    creds = Credentials.from_service_account_info(
+def _get_credentials():
+    return Credentials.from_service_account_info(
         dict(st.secrets["gcp_service_account"]), scopes=SCOPES
     )
-    return gspread.authorize(creds, http_client=gspread.BackOffHTTPClient)
+
+@st.cache_resource
+def _get_client():
+    return gspread.authorize(_get_credentials(), http_client=gspread.BackOffHTTPClient)
+
+@st.cache_resource
+def _drive_session():
+    return AuthorizedSession(_get_credentials())
 
 @st.cache_resource(show_spinner=False)
 def _open_spreadsheet(spreadsheet_id: str):
@@ -107,6 +120,9 @@ def _read_config_from_base(key: str):
     except Exception:
         return None
 
+def get_base_config(key: str):
+    return _read_config_from_base(key)
+
 def _set_config_in_base(key: str, value) -> None:
     ws = _base_ws("Config")
     records = ws.get_all_values()
@@ -117,6 +133,9 @@ def _set_config_in_base(key: str, value) -> None:
             return
     ws.append_row([key, value], value_input_option="USER_ENTERED")
     st.cache_data.clear()
+
+def set_base_config(key: str, value) -> None:
+    _set_config_in_base(key, value)
 
 def _default_fiscal_year() -> str:
     return fiscal_year_for_date(datetime.now(DUBAI_TZ))
@@ -146,6 +165,50 @@ def fiscal_year_options() -> list[str]:
 def _spreadsheet_id_for_fiscal_year(fiscal_year: str) -> str | None:
     return _read_config_from_base(f"{FY_SPREADSHEET_CONFIG_PREFIX}{fiscal_year}")
 
+def fiscal_year_template_id() -> str | None:
+    return _read_config_from_base(FISCAL_YEAR_TEMPLATE_CONFIG_KEY)
+
+def fiscal_year_shared_drive_folder_id() -> str | None:
+    value = str(_read_config_from_base(FISCAL_YEAR_SHARED_DRIVE_FOLDER_CONFIG_KEY) or "").strip()
+    match = re.search(r"/folders/([^/?#]+)", value)
+    return match.group(1) if match else value or None
+
+def _require_fiscal_year_shared_drive_folder() -> str:
+    folder_id = fiscal_year_shared_drive_folder_id()
+    if not folder_id:
+        raise RuntimeError(
+            "Set a Shared Drive folder in Settings > Fiscal Year before creating a new fiscal-year workbook."
+        )
+    try:
+        response = _drive_session().get(
+            f"https://www.googleapis.com/drive/v3/files/{folder_id}",
+            params={"supportsAllDrives": "true", "fields": "id,driveId,capabilities(canAddChildren)"},
+            timeout=30,
+        )
+    except Exception as error:
+        raise RuntimeError(f"Could not validate the Shared Drive folder: {error}") from error
+    if not 200 <= response.status_code < 300:
+        raise _drive_copy_error(response)
+    metadata = response.json()
+    if not metadata.get("driveId"):
+        raise RuntimeError(
+            "The configured folder is not in a Google Shared Drive. Use a research-group Shared Drive folder."
+        )
+    if not metadata.get("capabilities", {}).get("canAddChildren", False):
+        raise RuntimeError(
+            "The service account cannot create files in the configured Shared Drive folder. "
+            "Grant it Content Manager access."
+        )
+    return folder_id
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fiscal_year_shared_drive_status() -> tuple[bool, str]:
+    try:
+        folder_id = _require_fiscal_year_shared_drive_folder()
+        return True, f"Shared Drive folder verified: {folder_id}"
+    except RuntimeError as error:
+        return False, str(error)
+
 def _existing_spreadsheet_id_for_fiscal_year(fiscal_year: str | None) -> str | None:
     fy = fiscal_year or get_active_fiscal_year()
     registered_id = _spreadsheet_id_for_fiscal_year(fy)
@@ -166,12 +229,16 @@ def _register_fiscal_year_spreadsheet(fiscal_year: str, spreadsheet_id: str) -> 
 def _base_fiscal_year() -> str | None:
     return _read_config_from_base("Current Fiscal Year") or _read_config_from_base("Fiscal Year")
 
-def _uses_fiscal_year_tabs(fiscal_year: str | None = None) -> bool:
+def fiscal_year_uses_legacy_tabs(fiscal_year: str | None = None) -> bool:
     fy = fiscal_year or get_active_fiscal_year()
-    if not fy:
-        return False
-    registered_id = _spreadsheet_id_for_fiscal_year(fy)
-    return registered_id == _base_spreadsheet_id() and fy != _base_fiscal_year()
+    return bool(
+        fy
+        and _spreadsheet_id_for_fiscal_year(fy) == _base_spreadsheet_id()
+        and fy != _base_fiscal_year()
+    )
+
+def _uses_fiscal_year_tabs(fiscal_year: str | None = None) -> bool:
+    return fiscal_year_uses_legacy_tabs(fiscal_year)
 
 def _worksheet_name(name: str, fiscal_year: str | None = None) -> str:
     return f"{name} {fiscal_year}" if fiscal_year and _uses_fiscal_year_tabs(fiscal_year) else name
@@ -255,6 +322,8 @@ def _config_rows_for_fiscal_year(fiscal_year: str) -> list[list[str]]:
             continue
         key = str(row[0])
         value = row[1] if len(row) > 1 else ""
+        if key.startswith(FY_SPREADSHEET_CONFIG_PREFIX) or key == FISCAL_YEAR_TEMPLATE_CONFIG_KEY:
+            continue
         if key in {"Current Fiscal Year", "Fiscal Year"}:
             value = fiscal_year
         output.append([key, value])
@@ -273,22 +342,128 @@ def _config_rows_for_fiscal_year(fiscal_year: str) -> list[list[str]]:
             output.append([key, value])
     return output
 
-def _create_fiscal_year_spreadsheet(fiscal_year: str):
-    ss = _get_client().create(f"KameiLab Budget {fiscal_year}")
-    txn_ws = _worksheet_for_new_ledger(ss, "Transactions", 1000, len(TXN_COLUMNS), use_default=True)
-    _replace_worksheet_values(txn_ws, TXN_COLUMNS)
-
+def _blank_summary_rows() -> list[list]:
     summary_rows = [[category, 0, 0, 0, 0, 0, 0, 0, 0, ""] for category in CATEGORIES]
     summary_rows.append(["TOTAL", 0, 0, 0, 0, 0, 0, 0, 0, ""])
-    summary_ws = _worksheet_for_new_ledger(ss, "Summary", max(len(summary_rows) + 10, 100), len(SUMMARY_COLS))
-    _replace_worksheet_values(summary_ws, SUMMARY_COLS, summary_rows)
+    return summary_rows
+
+def _remove_legacy_fiscal_year_tabs(ss) -> None:
+    for ws in ss.worksheets():
+        if re.fullmatch(r"(?:Transactions|Summary|Teams|Config) FY\d{4}-\d{2}", ws.title):
+            ss.del_worksheet(ws)
+
+def _blank_team_rows(ws) -> list[list]:
+    try:
+        records = ws.get_all_records()
+    except Exception:
+        records = []
+    rows = []
+    for record in records:
+        if not str(record.get("Team Name", "")).strip():
+            continue
+        row = [record.get(column, "") for column in TEAM_COLUMNS]
+        row[TEAM_COLUMNS.index("Allocation (AED)")] = 0
+        row[TEAM_COLUMNS.index("Allocation (USD)")] = 0
+        rows.append(row)
+    return rows
+
+def _initialize_new_fiscal_year_workbook(ss, fiscal_year: str) -> None:
+    """Reset a copied template while retaining worksheet formatting and team roster."""
+    _remove_legacy_fiscal_year_tabs(ss)
+    txn_ws = _worksheet_for_new_ledger(ss, "Transactions", 1000, len(TXN_COLUMNS))
+    _replace_worksheet_values(txn_ws, TXN_COLUMNS)
+
+    summary_ws = _worksheet_for_new_ledger(ss, "Summary", max(len(CATEGORIES) + 10, 100), len(SUMMARY_COLS))
+    _replace_worksheet_values(summary_ws, SUMMARY_COLS, _blank_summary_rows())
 
     teams_ws = _worksheet_for_new_ledger(ss, "Teams", 1000, len(TEAM_COLUMNS))
-    _replace_worksheet_values(teams_ws, TEAM_COLUMNS)
+    _replace_worksheet_values(teams_ws, TEAM_COLUMNS, _blank_team_rows(teams_ws))
 
     config_ws = _worksheet_for_new_ledger(ss, "Config", 100, 2)
     _replace_worksheet_values(config_ws, ["Key", "Value"], _config_rows_for_fiscal_year(fiscal_year))
-    return ss
+    st.cache_data.clear()
+
+def _share_with_pi(ss) -> None:
+    email = str(st.secrets.get("PI_EMAIL", "") or "").strip()
+    if not email:
+        return
+    try:
+        ss.share(email, perm_type="user", role="writer", notify=False)
+    except Exception:
+        # The copy remains usable by the app service account even if the PI is
+        # already an owner/editor or the domain blocks duplicate invitations.
+        pass
+
+def _drive_copy_error(response) -> RuntimeError:
+    try:
+        payload = response.json().get("error", {})
+        message = str(payload.get("message", "") or "")
+        reasons = ", ".join(
+            str(item.get("reason", "")) for item in payload.get("errors", []) if item.get("reason")
+        )
+    except Exception:
+        message = ""
+        reasons = ""
+    status = int(getattr(response, "status_code", 0) or 0)
+    if status == 403 and ("storageQuota" in reasons or "quota" in message.lower()):
+        return RuntimeError(
+            "Google Drive cannot create the workbook in the service account's My Drive. "
+            "Set a Shared Drive folder in Settings > Fiscal Year and add the service account as a Content Manager."
+        )
+    if status in {403, 404} and fiscal_year_shared_drive_folder_id():
+        return RuntimeError(
+            "The configured Shared Drive folder is not accessible to the service account. "
+            "Confirm the folder is in a Shared Drive and grant the service account Content Manager access."
+        )
+    detail = message or reasons or "Unknown Google Drive error"
+    return RuntimeError(f"Google Drive could not copy the fiscal-year workbook (HTTP {status}): {detail}")
+
+def _copy_fiscal_year_workbook(source_id: str, title: str):
+    folder_id = _require_fiscal_year_shared_drive_folder()
+    body = {
+        "name": title,
+        "mimeType": GOOGLE_SHEETS_MIME_TYPE,
+        "parents": [folder_id],
+    }
+    response = _drive_session().post(
+        f"https://www.googleapis.com/drive/v3/files/{source_id}/copy",
+        params={"supportsAllDrives": "true", "fields": "id,name"},
+        json=body,
+        timeout=45,
+    )
+    if not 200 <= response.status_code < 300:
+        raise _drive_copy_error(response)
+    workbook_id = str(response.json().get("id", "") or "")
+    if not workbook_id:
+        raise RuntimeError("Google Drive copied the fiscal-year workbook but did not return a file ID.")
+    return _open_spreadsheet(workbook_id)
+
+def _delete_fiscal_year_workbook(workbook_id: str) -> None:
+    response = _drive_session().delete(
+        f"https://www.googleapis.com/drive/v3/files/{workbook_id}",
+        params={"supportsAllDrives": "true"},
+        timeout=45,
+    )
+    if not 200 <= response.status_code < 300:
+        raise _drive_copy_error(response)
+
+def ensure_fiscal_year_template():
+    template_id = fiscal_year_template_id()
+    if template_id:
+        return _open_spreadsheet(template_id)
+
+    template = _copy_fiscal_year_workbook(_base_spreadsheet_id(), FISCAL_YEAR_TEMPLATE_TITLE)
+    _share_with_pi(template)
+    _initialize_new_fiscal_year_workbook(template, _base_fiscal_year() or _default_fiscal_year())
+    _set_config_in_base(FISCAL_YEAR_TEMPLATE_CONFIG_KEY, template.id)
+    return template
+
+def _create_fiscal_year_spreadsheet(fiscal_year: str):
+    template = ensure_fiscal_year_template()
+    workbook = _copy_fiscal_year_workbook(template.id, f"KameiLab Budget {fiscal_year}")
+    _share_with_pi(workbook)
+    _initialize_new_fiscal_year_workbook(workbook, fiscal_year)
+    return workbook
 
 def _prepare_fiscal_year_tabs(ss, fiscal_year: str) -> None:
     suffix = fiscal_year
@@ -303,19 +478,57 @@ def ensure_fiscal_year_spreadsheet(fiscal_year: str | None = None):
     fy = fiscal_year or get_active_fiscal_year()
     registered_id = _spreadsheet_id_for_fiscal_year(fy)
     if registered_id:
-        spreadsheet = _open_spreadsheet(registered_id)
-        if registered_id == _base_spreadsheet_id() and fy != _base_fiscal_year():
-            _prepare_fiscal_year_tabs(spreadsheet, fy)
-        return spreadsheet
+        return _open_spreadsheet(registered_id)
     base_id = _base_spreadsheet_id()
     base_fy = _read_config_from_base("Current Fiscal Year") or _read_config_from_base("Fiscal Year")
     if not base_fy or fy == base_fy:
         _register_fiscal_year_spreadsheet(fy, base_id)
         return _open_spreadsheet(base_id)
-    base = _open_spreadsheet(base_id)
-    _prepare_fiscal_year_tabs(base, fy)
-    _register_fiscal_year_spreadsheet(fy, base_id)
-    return base
+    workbook = _create_fiscal_year_spreadsheet(fy)
+    _register_fiscal_year_spreadsheet(fy, workbook.id)
+    st.cache_data.clear()
+    return workbook
+
+def create_fiscal_year_workbook(fiscal_year: str):
+    fy = str(fiscal_year or "").strip()
+    if not re.fullmatch(r"FY\d{4}-\d{2}", fy):
+        raise ValueError("Fiscal year must look like FY2026-27.")
+    if _spreadsheet_id_for_fiscal_year(fy):
+        raise ValueError(f"{fy} already has a registered workbook.")
+    return ensure_fiscal_year_spreadsheet(fy)
+
+def migrate_fiscal_year_to_dedicated_workbook(fiscal_year: str):
+    """Copy legacy FY tabs into a dedicated workbook without changing the source tabs."""
+    fy = str(fiscal_year or "").strip()
+    if not fiscal_year_uses_legacy_tabs(fy):
+        raise ValueError(f"{fy} is already stored in a dedicated workbook.")
+
+    source = _base_spreadsheet()
+    workbook = _create_fiscal_year_spreadsheet(fy)
+    try:
+        copied_sheet_ids = {}
+        for name in FISCAL_YEAR_WORKSHEET_NAMES:
+            source_ws = source.worksheet(f"{name} {fy}")
+            copied_sheet_ids[name] = source_ws.copy_to(workbook.id)["sheetId"]
+        for name in FISCAL_YEAR_WORKSHEET_NAMES:
+            workbook.del_worksheet(workbook.worksheet(name))
+        for name, sheet_id in copied_sheet_ids.items():
+            workbook.get_worksheet_by_id(sheet_id).update_title(name)
+    except Exception:
+        try:
+            _delete_fiscal_year_workbook(workbook.id)
+        finally:
+            raise
+
+    _register_fiscal_year_spreadsheet(fy, workbook.id)
+    st.cache_data.clear()
+    return workbook
+
+def fiscal_year_workbook_url(fiscal_year: str | None = None) -> str | None:
+    spreadsheet_id = _existing_spreadsheet_id_for_fiscal_year(fiscal_year)
+    if not spreadsheet_id:
+        return None
+    return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
 
 def get_spreadsheet(fiscal_year: str | None = None, create_if_missing: bool = True):
     try:
@@ -331,7 +544,13 @@ def get_spreadsheet(fiscal_year: str | None = None, create_if_missing: bool = Tr
         st.stop()
 
 def _ws(name: str, fiscal_year: str | None = None):
-    return get_spreadsheet(fiscal_year).worksheet(_worksheet_name(name, fiscal_year))
+    fy = fiscal_year or get_active_fiscal_year()
+    spreadsheet = get_spreadsheet(fy, create_if_missing=False)
+    if spreadsheet is None:
+        raise ValueError(
+            f"{fy} has not been prepared. Ask a PI to create its dedicated Google Sheet in Settings > Fiscal Year."
+        )
+    return spreadsheet.worksheet(_worksheet_name(name, fy))
 
 def _read_ws(name: str, fiscal_year: str | None = None):
     spreadsheet = get_spreadsheet(fiscal_year, create_if_missing=False)
@@ -965,6 +1184,10 @@ def append_transaction(data: dict) -> str:
     target_fy = str(data.get("Fiscal Year") or "").strip()
     if not target_fy.startswith("FY"):
         target_fy = fiscal_year_for_date(row_date)
+    if get_spreadsheet(target_fy, create_if_missing=False) is None:
+        raise ValueError(
+            f"{target_fy} has not been prepared. Ask a PI to create its dedicated Google Sheet in Settings > Fiscal Year."
+        )
     ws = _ws("Transactions", target_fy)
     headers = ensure_transaction_columns(target_fy)
     txn_id = data.get("Transaction ID") or _next_txn_id(target_fy)
@@ -1270,9 +1493,9 @@ GLOBAL_CONFIG_KEYS = {
 }
 
 def set_config(key: str, value):
+    ws = _ws("Config")
     if key in GLOBAL_CONFIG_KEYS:
         _set_config_in_base(key, value)
-    ws = _ws("Config")
     if getattr(get_spreadsheet(), "id", "") == _base_spreadsheet_id() and key in GLOBAL_CONFIG_KEYS:
         st.cache_data.clear()
         return

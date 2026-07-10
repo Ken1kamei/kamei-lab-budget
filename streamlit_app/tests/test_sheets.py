@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import pandas as pd
 import pytest
 
@@ -58,12 +58,11 @@ def test_get_transactions_for_unprepared_fiscal_year_does_not_create_sheet(_shee
     assert list(df.columns) == TXN_COLUMNS
     mock_ensure.assert_not_called()
 
-@patch("utils.sheets._prepare_fiscal_year_tabs")
-@patch("utils.sheets._open_spreadsheet")
 @patch("utils.sheets._read_config_from_base")
 @patch("utils.sheets._set_config_in_base")
-def test_ensure_fiscal_year_spreadsheet_prepares_base_workbook_tabs(
-    mock_set_config, mock_read_config, mock_open_spreadsheet, mock_prepare_tabs
+@patch("utils.sheets._create_fiscal_year_spreadsheet")
+def test_ensure_fiscal_year_spreadsheet_creates_a_dedicated_workbook(
+    mock_create, mock_set_config, mock_read_config
 ):
     from utils.sheets import ensure_fiscal_year_spreadsheet
     mock_read_config.side_effect = lambda key: {
@@ -71,15 +70,221 @@ def test_ensure_fiscal_year_spreadsheet_prepares_base_workbook_tabs(
         "Current Fiscal Year": "FY2025-26",
         "Fiscal Year": "FY2025-26",
     }.get(key)
-    ss = MagicMock()
-    mock_open_spreadsheet.return_value = ss
+    workbook = MagicMock()
+    workbook.id = "FY2026_ID"
+    mock_create.return_value = workbook
 
     result = ensure_fiscal_year_spreadsheet("FY2026-27")
 
-    assert result is ss
-    mock_open_spreadsheet.assert_called_once_with("TEST_ID")
-    mock_prepare_tabs.assert_called_once_with(ss, "FY2026-27")
-    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "TEST_ID")
+    assert result is workbook
+    mock_create.assert_called_once_with("FY2026-27")
+    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "FY2026_ID")
+
+
+@patch("utils.sheets._share_with_pi")
+@patch("utils.sheets._initialize_new_fiscal_year_workbook")
+@patch("utils.sheets.ensure_fiscal_year_template")
+@patch("utils.sheets._copy_fiscal_year_workbook")
+def test_create_fiscal_year_spreadsheet_copies_the_template(
+    mock_copy, mock_template, mock_initialize, mock_share
+):
+    from utils.sheets import _create_fiscal_year_spreadsheet
+
+    template = MagicMock()
+    template.id = "TEMPLATE_ID"
+    workbook = MagicMock()
+    workbook.id = "FY2027_ID"
+    mock_template.return_value = template
+    mock_copy.return_value = workbook
+
+    result = _create_fiscal_year_spreadsheet("FY2027-28")
+
+    assert result is workbook
+    mock_copy.assert_called_once_with(
+        "TEMPLATE_ID",
+        "KameiLab Budget FY2027-28",
+    )
+    mock_share.assert_called_once_with(workbook)
+    mock_initialize.assert_called_once_with(workbook, "FY2027-28")
+
+
+@patch("utils.sheets._open_spreadsheet")
+@patch("utils.sheets._drive_session")
+@patch("utils.sheets._require_fiscal_year_shared_drive_folder", return_value="SHARED_FOLDER")
+def test_copy_fiscal_year_workbook_uses_configured_shared_drive_folder(
+    _folder_id, mock_drive_session, mock_open_spreadsheet
+):
+    from utils.sheets import _copy_fiscal_year_workbook
+
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"id": "NEW_WORKBOOK_ID"}
+    mock_drive_session.return_value.post.return_value = response
+    workbook = MagicMock()
+    mock_open_spreadsheet.return_value = workbook
+
+    result = _copy_fiscal_year_workbook("SOURCE_ID", "KameiLab Budget FY2027-28")
+
+    assert result is workbook
+    mock_drive_session.return_value.post.assert_called_once_with(
+        "https://www.googleapis.com/drive/v3/files/SOURCE_ID/copy",
+        params={"supportsAllDrives": "true", "fields": "id,name"},
+        json={
+            "name": "KameiLab Budget FY2027-28",
+            "mimeType": "application/vnd.google-apps.spreadsheet",
+            "parents": ["SHARED_FOLDER"],
+        },
+        timeout=45,
+    )
+    mock_open_spreadsheet.assert_called_once_with("NEW_WORKBOOK_ID")
+
+
+@patch("utils.sheets._drive_session")
+@patch("utils.sheets.fiscal_year_shared_drive_folder_id", return_value="SHARED_FOLDER")
+def test_shared_drive_preflight_requires_a_writable_shared_drive_folder(_folder_id, mock_drive_session):
+    from utils.sheets import _require_fiscal_year_shared_drive_folder
+
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "id": "SHARED_FOLDER",
+        "driveId": "SHARED_DRIVE",
+        "capabilities": {"canAddChildren": True},
+    }
+    mock_drive_session.return_value.get.return_value = response
+
+    assert _require_fiscal_year_shared_drive_folder() == "SHARED_FOLDER"
+    mock_drive_session.return_value.get.assert_called_once_with(
+        "https://www.googleapis.com/drive/v3/files/SHARED_FOLDER",
+        params={"supportsAllDrives": "true", "fields": "id,driveId,capabilities(canAddChildren)"},
+        timeout=30,
+    )
+
+
+@patch("utils.sheets.get_spreadsheet", return_value=None)
+def test_append_transaction_rejects_an_unprepared_fiscal_year(mock_spreadsheet):
+    from utils.sheets import append_transaction
+
+    with pytest.raises(ValueError, match="has not been prepared"):
+        append_transaction({"Date": "2026-09-01", "Category": "Consumables"})
+
+    mock_spreadsheet.assert_called_once_with("FY2026-27", create_if_missing=False)
+
+
+@patch("utils.sheets.get_spreadsheet", return_value=None)
+def test_ws_rejects_all_unprepared_fiscal_year_writes(mock_spreadsheet):
+    from utils.sheets import _ws
+
+    with pytest.raises(ValueError, match="has not been prepared"):
+        _ws("Teams", "FY2027-28")
+
+    mock_spreadsheet.assert_called_once_with("FY2027-28", create_if_missing=False)
+
+
+@patch("utils.sheets._set_config_in_base")
+@patch("utils.sheets._ws", side_effect=ValueError("FY2027-28 has not been prepared"))
+def test_set_config_does_not_write_global_values_when_the_selected_year_is_unprepared(
+    _worksheet, mock_set_base
+):
+    from utils.sheets import set_config
+
+    with pytest.raises(ValueError, match="has not been prepared"):
+        set_config("AED/USD Exchange Rate", 3.67)
+
+    mock_set_base.assert_not_called()
+
+
+@patch("utils.sheets._set_config_in_base")
+@patch("utils.sheets._create_fiscal_year_spreadsheet")
+@patch("utils.sheets._base_spreadsheet")
+@patch("utils.sheets.fiscal_year_uses_legacy_tabs", return_value=True)
+def test_migrate_fiscal_year_copies_legacy_tabs_without_rewriting_values(
+    _legacy_tabs, mock_base, mock_create, mock_set_config
+):
+    from utils.sheets import migrate_fiscal_year_to_dedicated_workbook
+
+    source = MagicMock()
+    source_transaction = MagicMock()
+    source_summary = MagicMock()
+    source_teams = MagicMock()
+    source_config = MagicMock()
+    source.worksheet.side_effect = {
+        "Transactions FY2026-27": source_transaction,
+        "Summary FY2026-27": source_summary,
+        "Teams FY2026-27": source_teams,
+        "Config FY2026-27": source_config,
+    }.get
+    source_transaction.copy_to.return_value = {"sheetId": 101}
+    source_summary.copy_to.return_value = {"sheetId": 102}
+    source_teams.copy_to.return_value = {"sheetId": 103}
+    source_config.copy_to.return_value = {"sheetId": 104}
+    mock_base.return_value = source
+
+    target = MagicMock()
+    target.id = "FY2026_ID"
+    target_transaction = MagicMock()
+    target_summary = MagicMock()
+    target_teams = MagicMock()
+    target_config = MagicMock()
+    target.worksheet.side_effect = {
+        "Transactions": target_transaction,
+        "Summary": target_summary,
+        "Teams": target_teams,
+        "Config": target_config,
+    }.get
+    copied_transaction = MagicMock()
+    copied_summary = MagicMock()
+    copied_teams = MagicMock()
+    copied_config = MagicMock()
+    target.get_worksheet_by_id.side_effect = {
+        101: copied_transaction,
+        102: copied_summary,
+        103: copied_teams,
+        104: copied_config,
+    }.get
+    mock_create.return_value = target
+
+    result = migrate_fiscal_year_to_dedicated_workbook("FY2026-27")
+
+    assert result is target
+    mock_create.assert_called_once_with("FY2026-27")
+    source_transaction.copy_to.assert_called_once_with("FY2026_ID")
+    source_summary.copy_to.assert_called_once_with("FY2026_ID")
+    source_teams.copy_to.assert_called_once_with("FY2026_ID")
+    source_config.copy_to.assert_called_once_with("FY2026_ID")
+    assert target.del_worksheet.call_args_list == [
+        call(target_transaction),
+        call(target_summary),
+        call(target_teams),
+        call(target_config),
+    ]
+    copied_transaction.update_title.assert_called_once_with("Transactions")
+    copied_summary.update_title.assert_called_once_with("Summary")
+    copied_teams.update_title.assert_called_once_with("Teams")
+    copied_config.update_title.assert_called_once_with("Config")
+    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "FY2026_ID")
+
+
+@patch("utils.sheets._base_ws")
+def test_config_rows_for_a_new_fiscal_year_exclude_workbook_registry_keys(mock_base_ws):
+    from utils.sheets import _config_rows_for_fiscal_year
+
+    mock_base_ws.return_value.get_all_values.return_value = [
+        ["Current Fiscal Year", "FY2025-26"],
+        ["Spreadsheet ID FY2025-26", "MASTER_ID"],
+        ["Spreadsheet ID FY2026-27", "FY2026_ID"],
+        ["Fiscal Year Template Spreadsheet ID", "TEMPLATE_ID"],
+        ["Gmail Label", "Budget/Invoices"],
+    ]
+
+    rows = _config_rows_for_fiscal_year("FY2027-28")
+    values = {row[0]: row[1] for row in rows}
+
+    assert values["Current Fiscal Year"] == "FY2027-28"
+    assert values["Fiscal Year"] == "FY2027-28"
+    assert "Spreadsheet ID FY2025-26" not in values
+    assert "Spreadsheet ID FY2026-27" not in values
+    assert "Fiscal Year Template Spreadsheet ID" not in values
 
 @patch("utils.sheets._base_fiscal_year", return_value="FY2025-26")
 @patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value="TEST_ID")
@@ -394,7 +599,7 @@ def test_set_budget_allocation_writes_to_selected_fiscal_year(mock_ss, _rate):
 
     set_budget_allocation("Equipment", 0, 25000, "FY2026-27")
 
-    mock_ss.assert_any_call("FY2026-27")
+    mock_ss.assert_any_call("FY2026-27", create_if_missing=False)
     mock_ws.update.assert_called_once_with(
         "B2:I2",
         [[0, 25000, 91812.5, 0.0, 0.0, 0.0, 91812.5, 0.0]],
@@ -415,7 +620,7 @@ def test_set_budget_allocations_usd_batches_selected_fiscal_year(mock_ss, _rate)
 
     set_budget_allocations_usd({"Equipment": 25000, "Consumables": 109500}, "FY2026-27")
 
-    mock_ss.assert_any_call("FY2026-27")
+    mock_ss.assert_any_call("FY2026-27", create_if_missing=False)
     mock_ws.batch_update.assert_called_once()
     updates = mock_ws.batch_update.call_args.args[0]
     assert {"range": "B2:I2", "values": [[0, 25000.0, 91812.5, 0.0, 0.0, 0.0, 91812.5, 0.0]]} in updates

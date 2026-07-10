@@ -6,10 +6,11 @@ from utils.runtime import refresh_runtime_modules
 
 refresh_runtime_modules()
 
-from utils.sheets import get_teams, get_transactions, get_currency_rates_to_usd, upsert_imported_transaction
+from utils.sheets import (fiscal_year_spreadsheet_ready, get_teams, get_transactions,
+                          get_currency_rates_to_usd, upsert_imported_transaction)
 from utils.parse_invoice import parse_pdf_bytes, parse_erb_excel_bytes, enrich_with_history
 from utils.auth import require_role, can_manage_all_budgets, current_team, current_teams
-from utils.budget import SUPPORTED_CURRENCIES, round_currency, to_usd_equivalent
+from utils.budget import SUPPORTED_CURRENCIES, fiscal_year_for_date, round_currency, to_usd_equivalent
 from utils.categories import CATEGORIES, SUBCATEGORIES
 from utils.theme import apply_theme
 
@@ -174,23 +175,27 @@ def _render_pdf_import(pdf_name: str, parsed: dict, index: int, queue_id: str):
         if not vendor.strip():
             st.error("Vendor is required.")
             return
-        result = upsert_imported_transaction({
-            "Date": inv_date,
-            "Category": category,
-            "Sub-category": subcategory,
-            "Vendor / Payee": vendor.strip(),
-            "Description": description,
-            "Invoice Number": inv_num,
-            "PO Number": po_num,
-            "Currency": currency,
-            "Amount": amount,
-            "Amount (USD equiv)": usd_equiv,
-            "Status": status,
-            "Notes": notes,
-            "Entry Method": "Auto-PDF",
-            "Entered By": st.session_state.email,
-            "Team": team_value,
-        })
+        try:
+            result = upsert_imported_transaction({
+                "Date": inv_date,
+                "Category": category,
+                "Sub-category": subcategory,
+                "Vendor / Payee": vendor.strip(),
+                "Description": description,
+                "Invoice Number": inv_num,
+                "PO Number": po_num,
+                "Currency": currency,
+                "Amount": amount,
+                "Amount (USD equiv)": usd_equiv,
+                "Status": status,
+                "Notes": notes,
+                "Entry Method": "Auto-PDF",
+                "Entered By": st.session_state.email,
+                "Team": team_value,
+            })
+        except ValueError as error:
+            st.error(str(error))
+            return
         verb = "updated" if result["matched"] else "imported"
         st.success(f"Invoice {verb} as **{result['transaction_id']}**")
         if st.button("Remove this PDF from queue", key=f"{prefix}_remove_after_import"):
@@ -319,19 +324,32 @@ with tab2:
                 st.info(f"Team: **{my_team}**")
 
             if st.button(f"Import all {len(rows)} transactions", type="primary"):
-                prog = st.progress(0)
-                for i, row in enumerate(rows):
-                    row["Category"] = excel_category
-                    row["Sub-category"] = excel_subcategory
-                    row["Team"] = team_value
-                    row["Entered By"] = st.session_state.email
-                    row["Status"] = "Allocated"
-                    row["Currency"] = "AED"
-                    row["Amount"] = row.get("Amount (AED)", 0)
-                    row["Amount (USD equiv)"] = round_currency(
-                        to_usd_equivalent("AED", row["Amount"], rates)
+                fiscal_years = sorted({
+                    fiscal_year_for_date(str(row.get("Date", "")))
+                    for row in rows
+                    if str(row.get("Date", "")).strip()
+                })
+                unprepared = [fy for fy in fiscal_years if not fiscal_year_spreadsheet_ready(fy)]
+                if unprepared:
+                    st.error(
+                        "These fiscal years have not been prepared: "
+                        + ", ".join(unprepared)
+                        + ". Ask a PI to create their dedicated Google Sheets in Settings > Fiscal Year."
                     )
-                    upsert_imported_transaction(row)
-                    prog.progress((i + 1) / len(rows))
-                st.success(f"Imported or updated {len(rows)} transaction(s) for review.")
-                st.balloons()
+                else:
+                    prog = st.progress(0)
+                    for i, row in enumerate(rows):
+                        row["Category"] = excel_category
+                        row["Sub-category"] = excel_subcategory
+                        row["Team"] = team_value
+                        row["Entered By"] = st.session_state.email
+                        row["Status"] = "Allocated"
+                        row["Currency"] = "AED"
+                        row["Amount"] = row.get("Amount (AED)", 0)
+                        row["Amount (USD equiv)"] = round_currency(
+                            to_usd_equivalent("AED", row["Amount"], rates)
+                        )
+                        upsert_imported_transaction(row)
+                        prog.progress((i + 1) / len(rows))
+                    st.success(f"Imported or updated {len(rows)} transaction(s) for review.")
+                    st.balloons()
