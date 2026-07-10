@@ -22,6 +22,20 @@ def test_pi_role(mock_st, mock_get_teams, teams_df):
     assert role == "pi"
     assert team is None
 
+
+@patch("utils.auth.get_teams")
+@patch("utils.auth.st")
+def test_pi_role_overrides_team_budget_manager(mock_st, mock_get_teams, teams_df):
+    mock_st.secrets = {"PI_EMAIL": "pi@nyu.edu"}
+    pi_team_row = teams_df.iloc[[0]].copy()
+    pi_team_row.loc[:, "Budget Manager Emails"] = "pi@nyu.edu"
+    mock_get_teams.return_value = pi_team_row
+
+    from utils.auth import get_user_access, get_user_role
+
+    assert get_user_access("pi@nyu.edu") == ("pi", [])
+    assert get_user_role("pi@nyu.edu") == ("pi", None)
+
 @patch("utils.auth.get_teams")
 @patch("utils.auth.st")
 def test_lead_role(mock_st, mock_get_teams, teams_df):
