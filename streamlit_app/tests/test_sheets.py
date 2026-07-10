@@ -58,11 +58,10 @@ def test_get_transactions_for_unprepared_fiscal_year_does_not_create_sheet(_shee
     assert list(df.columns) == TXN_COLUMNS
     mock_ensure.assert_not_called()
 
+@patch("utils.sheets._queue_fiscal_year_request")
 @patch("utils.sheets._read_config_from_base")
-@patch("utils.sheets._set_config_in_base")
-@patch("utils.sheets._create_fiscal_year_spreadsheet")
-def test_ensure_fiscal_year_spreadsheet_creates_a_dedicated_workbook(
-    mock_create, mock_set_config, mock_read_config
+def test_ensure_fiscal_year_spreadsheet_queues_a_dedicated_workbook(
+    mock_read_config, mock_queue
 ):
     from utils.sheets import ensure_fiscal_year_spreadsheet
     mock_read_config.side_effect = lambda key: {
@@ -70,95 +69,106 @@ def test_ensure_fiscal_year_spreadsheet_creates_a_dedicated_workbook(
         "Current Fiscal Year": "FY2025-26",
         "Fiscal Year": "FY2025-26",
     }.get(key)
-    workbook = MagicMock()
-    workbook.id = "FY2026_ID"
-    mock_create.return_value = workbook
 
-    result = ensure_fiscal_year_spreadsheet("FY2026-27")
+    with pytest.raises(ValueError, match="queued for PI My Drive creation"):
+        ensure_fiscal_year_spreadsheet("FY2026-27")
 
-    assert result is workbook
-    mock_create.assert_called_once_with("FY2026-27")
-    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "FY2026_ID")
+    mock_queue.assert_called_once_with("FY2026-27")
 
 
-@patch("utils.sheets._share_with_pi")
-@patch("utils.sheets._initialize_new_fiscal_year_workbook")
-@patch("utils.sheets.ensure_fiscal_year_template")
-@patch("utils.sheets._copy_fiscal_year_workbook")
-def test_create_fiscal_year_spreadsheet_copies_the_template(
-    mock_copy, mock_template, mock_initialize, mock_share
+@patch("utils.sheets._read_config_from_base")
+def test_fiscal_year_creator_status_requires_a_recent_pi_owned_trigger(mock_read_config):
+    from utils.sheets import DUBAI_TZ, fiscal_year_creator_status
+    from datetime import datetime
+
+    mock_read_config.side_effect = lambda key: {
+        "Fiscal Year Creator Trigger Status": "Enabled 2026-07-10T00:00:00Z",
+        "Fiscal Year Creator Trigger Heartbeat": f"Success {datetime.now(DUBAI_TZ).isoformat()}",
+    }.get(key)
+
+    assert fiscal_year_creator_status() == (
+        True,
+        "PI My Drive fiscal-year creator is ready. New requests are processed within about one minute.",
+    )
+
+
+@patch("utils.sheets._read_config_from_base", return_value="")
+def test_fiscal_year_creator_status_requires_trigger_setup(_read_config):
+    from utils.sheets import fiscal_year_creator_status
+
+    ready, message = fiscal_year_creator_status()
+
+    assert ready is False
+    assert "trigger is not enabled" in message
+
+
+@patch("utils.sheets._read_config_from_base")
+def test_fiscal_year_creator_status_rejects_a_stale_heartbeat(mock_read_config):
+    from utils.sheets import fiscal_year_creator_status
+
+    mock_read_config.side_effect = lambda key: {
+        "Fiscal Year Creator Trigger Status": "Enabled 2026-07-10T00:00:00Z",
+        "Fiscal Year Creator Trigger Heartbeat": "Success 2000-01-01T00:00:00+00:00",
+    }.get(key)
+
+    ready, message = fiscal_year_creator_status()
+
+    assert ready is False
+    assert "has not reported recently" in message
+
+
+@patch("utils.sheets._queue_fiscal_year_request", return_value="Queued 2026-07-10T00:00:00+04:00")
+@patch("utils.sheets.fiscal_year_creator_status", return_value=(True, "ready"))
+@patch("utils.sheets.fiscal_year_uses_legacy_tabs", return_value=False)
+@patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value=None)
+@patch("utils.sheets._base_fiscal_year", return_value="FY2025-26")
+def test_create_fiscal_year_workbook_queues_a_pi_owned_copy(
+    _base_fy, _registered_id, _legacy, _creator_status, mock_queue
 ):
-    from utils.sheets import _create_fiscal_year_spreadsheet
+    from utils.sheets import create_fiscal_year_workbook
 
-    template = MagicMock()
-    template.id = "TEMPLATE_ID"
-    workbook = MagicMock()
-    workbook.id = "FY2027_ID"
-    mock_template.return_value = template
-    mock_copy.return_value = workbook
+    status = create_fiscal_year_workbook("FY2027-28")
 
-    result = _create_fiscal_year_spreadsheet("FY2027-28")
-
-    assert result is workbook
-    mock_copy.assert_called_once_with(
-        "TEMPLATE_ID",
-        "KameiLab Budget FY2027-28",
-    )
-    mock_share.assert_called_once_with(workbook)
-    mock_initialize.assert_called_once_with(workbook, "FY2027-28")
+    assert status.startswith("Queued")
+    mock_queue.assert_called_once_with("FY2027-28", migration=False)
 
 
-@patch("utils.sheets._open_spreadsheet")
-@patch("utils.sheets._drive_session")
-@patch("utils.sheets._require_fiscal_year_shared_drive_folder", return_value="SHARED_FOLDER")
-def test_copy_fiscal_year_workbook_uses_configured_shared_drive_folder(
-    _folder_id, mock_drive_session, mock_open_spreadsheet
+@patch("utils.sheets._queue_fiscal_year_request")
+@patch("utils.sheets.fiscal_year_creator_status", return_value=(True, "ready"))
+@patch("utils.sheets._base_fiscal_year", return_value="FY2025-26")
+def test_create_fiscal_year_workbook_rejects_the_master_ledger_year(
+    _base_fy, _creator_status, mock_queue
 ):
-    from utils.sheets import _copy_fiscal_year_workbook
+    from utils.sheets import create_fiscal_year_workbook
 
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {"id": "NEW_WORKBOOK_ID"}
-    mock_drive_session.return_value.post.return_value = response
-    workbook = MagicMock()
-    mock_open_spreadsheet.return_value = workbook
+    with pytest.raises(ValueError, match="master ledger year"):
+        create_fiscal_year_workbook("FY2025-26")
 
-    result = _copy_fiscal_year_workbook("SOURCE_ID", "KameiLab Budget FY2027-28")
+    mock_queue.assert_not_called()
 
-    assert result is workbook
-    mock_drive_session.return_value.post.assert_called_once_with(
-        "https://www.googleapis.com/drive/v3/files/SOURCE_ID/copy",
-        params={"supportsAllDrives": "true", "fields": "id,name"},
-        json={
-            "name": "KameiLab Budget FY2027-28",
-            "mimeType": "application/vnd.google-apps.spreadsheet",
-            "parents": ["SHARED_FOLDER"],
-        },
-        timeout=45,
-    )
-    mock_open_spreadsheet.assert_called_once_with("NEW_WORKBOOK_ID")
+@patch("utils.sheets._set_config_in_base")
+@patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value="FY2027_ID")
+@patch("utils.sheets.fiscal_year_uses_legacy_tabs", return_value=False)
+def test_fiscal_year_deletion_is_queued_for_the_pi_trigger(
+    _legacy, _registered_id, mock_set_config
+):
+    from utils.sheets import request_fiscal_year_workbook_deletion
+
+    status = request_fiscal_year_workbook_deletion("FY2027-28")
+
+    assert status.startswith("Queued")
+    key, value = mock_set_config.call_args.args
+    assert key == "Fiscal Year Deletion Request FY2027-28"
+    assert value.startswith("Queued")
 
 
-@patch("utils.sheets._drive_session")
-@patch("utils.sheets.fiscal_year_shared_drive_folder_id", return_value="SHARED_FOLDER")
-def test_shared_drive_preflight_requires_a_writable_shared_drive_folder(_folder_id, mock_drive_session):
-    from utils.sheets import _require_fiscal_year_shared_drive_folder
+@patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value="TEST_ID")
+@patch("utils.sheets.fiscal_year_uses_legacy_tabs", return_value=True)
+def test_fiscal_year_deletion_rejects_a_legacy_master_tab(_legacy, _registered_id):
+    from utils.sheets import request_fiscal_year_workbook_deletion
 
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {
-        "id": "SHARED_FOLDER",
-        "driveId": "SHARED_DRIVE",
-        "capabilities": {"canAddChildren": True},
-    }
-    mock_drive_session.return_value.get.return_value = response
-
-    assert _require_fiscal_year_shared_drive_folder() == "SHARED_FOLDER"
-    mock_drive_session.return_value.get.assert_called_once_with(
-        "https://www.googleapis.com/drive/v3/files/SHARED_FOLDER",
-        params={"supportsAllDrives": "true", "fields": "id,driveId,capabilities(canAddChildren)"},
-        timeout=30,
-    )
+    with pytest.raises(ValueError, match="does not have a dedicated workbook"):
+        request_fiscal_year_workbook_deletion("FY2026-27")
 
 
 @patch("utils.sheets.get_spreadsheet", return_value=None)
@@ -194,97 +204,19 @@ def test_set_config_does_not_write_global_values_when_the_selected_year_is_unpre
     mock_set_base.assert_not_called()
 
 
-@patch("utils.sheets._set_config_in_base")
-@patch("utils.sheets._create_fiscal_year_spreadsheet")
-@patch("utils.sheets._base_spreadsheet")
+@patch("utils.sheets._queue_fiscal_year_request", return_value="Migrate queued 2026-07-10T00:00:00+04:00")
+@patch("utils.sheets.fiscal_year_creator_status", return_value=(True, "ready"))
 @patch("utils.sheets.fiscal_year_uses_legacy_tabs", return_value=True)
-def test_migrate_fiscal_year_copies_legacy_tabs_without_rewriting_values(
-    _legacy_tabs, mock_base, mock_create, mock_set_config
+def test_migrate_fiscal_year_queues_a_pi_owned_copy_without_rewriting_values(
+    _legacy_tabs, _creator_status, mock_queue
 ):
     from utils.sheets import migrate_fiscal_year_to_dedicated_workbook
 
-    source = MagicMock()
-    source_transaction = MagicMock()
-    source_summary = MagicMock()
-    source_teams = MagicMock()
-    source_config = MagicMock()
-    source.worksheet.side_effect = {
-        "Transactions FY2026-27": source_transaction,
-        "Summary FY2026-27": source_summary,
-        "Teams FY2026-27": source_teams,
-        "Config FY2026-27": source_config,
-    }.get
-    source_transaction.copy_to.return_value = {"sheetId": 101}
-    source_summary.copy_to.return_value = {"sheetId": 102}
-    source_teams.copy_to.return_value = {"sheetId": 103}
-    source_config.copy_to.return_value = {"sheetId": 104}
-    mock_base.return_value = source
+    status = migrate_fiscal_year_to_dedicated_workbook("FY2026-27")
 
-    target = MagicMock()
-    target.id = "FY2026_ID"
-    target_transaction = MagicMock()
-    target_summary = MagicMock()
-    target_teams = MagicMock()
-    target_config = MagicMock()
-    target.worksheet.side_effect = {
-        "Transactions": target_transaction,
-        "Summary": target_summary,
-        "Teams": target_teams,
-        "Config": target_config,
-    }.get
-    copied_transaction = MagicMock()
-    copied_summary = MagicMock()
-    copied_teams = MagicMock()
-    copied_config = MagicMock()
-    target.get_worksheet_by_id.side_effect = {
-        101: copied_transaction,
-        102: copied_summary,
-        103: copied_teams,
-        104: copied_config,
-    }.get
-    mock_create.return_value = target
+    assert status.startswith("Migrate queued")
+    mock_queue.assert_called_once_with("FY2026-27", migration=True)
 
-    result = migrate_fiscal_year_to_dedicated_workbook("FY2026-27")
-
-    assert result is target
-    mock_create.assert_called_once_with("FY2026-27")
-    source_transaction.copy_to.assert_called_once_with("FY2026_ID")
-    source_summary.copy_to.assert_called_once_with("FY2026_ID")
-    source_teams.copy_to.assert_called_once_with("FY2026_ID")
-    source_config.copy_to.assert_called_once_with("FY2026_ID")
-    assert target.del_worksheet.call_args_list == [
-        call(target_transaction),
-        call(target_summary),
-        call(target_teams),
-        call(target_config),
-    ]
-    copied_transaction.update_title.assert_called_once_with("Transactions")
-    copied_summary.update_title.assert_called_once_with("Summary")
-    copied_teams.update_title.assert_called_once_with("Teams")
-    copied_config.update_title.assert_called_once_with("Config")
-    mock_set_config.assert_called_once_with("Spreadsheet ID FY2026-27", "FY2026_ID")
-
-
-@patch("utils.sheets._base_ws")
-def test_config_rows_for_a_new_fiscal_year_exclude_workbook_registry_keys(mock_base_ws):
-    from utils.sheets import _config_rows_for_fiscal_year
-
-    mock_base_ws.return_value.get_all_values.return_value = [
-        ["Current Fiscal Year", "FY2025-26"],
-        ["Spreadsheet ID FY2025-26", "MASTER_ID"],
-        ["Spreadsheet ID FY2026-27", "FY2026_ID"],
-        ["Fiscal Year Template Spreadsheet ID", "TEMPLATE_ID"],
-        ["Gmail Label", "Budget/Invoices"],
-    ]
-
-    rows = _config_rows_for_fiscal_year("FY2027-28")
-    values = {row[0]: row[1] for row in rows}
-
-    assert values["Current Fiscal Year"] == "FY2027-28"
-    assert values["Fiscal Year"] == "FY2027-28"
-    assert "Spreadsheet ID FY2025-26" not in values
-    assert "Spreadsheet ID FY2026-27" not in values
-    assert "Fiscal Year Template Spreadsheet ID" not in values
 
 @patch("utils.sheets._base_fiscal_year", return_value="FY2025-26")
 @patch("utils.sheets._spreadsheet_id_for_fiscal_year", return_value="TEST_ID")

@@ -14,21 +14,23 @@
 **By September 15:**
 
 - [ ] Confirm total budget amount from NYUAD grants/finance office
-- [ ] Confirm that **Settings → Fiscal Year** has a Shared Drive folder URL/ID
-      and that the Budget service account is a Content Manager of that folder.
-- [ ] Open web app → **Settings** → **Fiscal Year** → enter `FY20XX-YY` and select **Create Dedicated Google Sheet**.
+- [ ] Confirm that **Settings → Fiscal Year** shows that the PI My Drive
+      fiscal-year creator is configured.
+- [ ] Open web app → **Settings** → **Fiscal Year** → enter `FY20XX-YY` and select **Queue Dedicated Google Sheet**. Refresh after about one minute.
       The first use creates `KameiLab Budget Template`; every later fiscal-year
       workbook is copied from this template so its worksheet format remains
       consistent.
-- [ ] Open the new workbook from Settings and confirm it has standard
+- [ ] Use **Open FY20XX-YY workbook** in Settings and confirm it has standard
       `Transactions`, `Summary`, `Teams`, and `Config` tabs.
 - [ ] Open web app → **Settings** → **Budget Allocations** → select the new
       academic year and enter budget allocations for each category.
 - [ ] Verify AED/USD exchange rate in Settings (default: 3.6725)
 - [ ] Check that Gmail auto-import triggers are active (Settings → Setup Triggers)
-- [ ] Share the new spreadsheet URL with the PI or finance team if they need
-      direct Sheet access. The app service account continues to manage app writes.
-- [ ] Archive the previous year's spreadsheet in Google Drive under `Kamei Lab Budget / Archive /`
+- [ ] Confirm that the new spreadsheet is owned by the PI in **My Drive** and
+      that the Budget service account has Editor access.
+- [ ] Share the new spreadsheet URL with finance if direct Sheet access is
+      needed. The app service account continues to manage app writes.
+- [ ] Archive the previous year's spreadsheet in Google Drive when appropriate.
 
 ### Moving a Year Created Under the Old Shared-Tab Layout
 

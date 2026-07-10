@@ -116,24 +116,30 @@ The app uses `st.login()` / `st.user`; users cannot choose their email manually.
 
 ---
 
-## Step 8A — Configure the Fiscal-Year Shared Drive Folder
+## Step 8A — Configure PI My Drive Fiscal-Year Creation
 
-The Streamlit service account can edit the existing ledger, but separate annual
-Google Sheets should be created in a Google **Shared Drive** so they are owned
-by the research group rather than the service account.
+The Streamlit service account can edit a shared ledger, but it has no personal
+Drive quota and cannot create annual files itself. A small standalone Apps
+Script runs as the PI once per minute, creates new annual Google Sheets in the
+PI's **My Drive**, then shares each new workbook with the service account.
 
-1. In NYU Google Drive, create or choose a folder inside a Shared Drive, for
-   example `Kamei Lab Budget / Fiscal Years`.
-2. Add the email in `gcp_service_account.client_email` as a **Content manager**
-   for that Shared Drive or folder.
-3. Copy the folder URL.
-4. In the Budget app, open **Settings → Fiscal Year** and paste the URL in
-   **Shared Drive folder URL or ID**, then select **Save Workspace Settings**.
+1. Ensure `clasp show-authorized-user` reports the PI's NYU account.
+2. From the repository root, create and upload the dedicated script:
+   ```bash
+   clasp create --type standalone --title "Kamei Lab Budget Fiscal Year Creator" --rootDir gas_fiscal_year_creator
+   clasp push
+   ```
+3. In the Apps Script editor, run `setupFiscalYearCreatorTrigger` once and
+   approve the requested Drive and Sheets permissions. It installs the
+   PI-owned one-minute trigger.
+4. Confirm that **Settings → Fiscal Year** says the PI My Drive creator is
+   ready.
 
-The next use of **Create Dedicated Google Sheet** will create a clean
-`KameiLab Budget Template` in that folder, then copy it for each fiscal year.
-The app stores the resulting Spreadsheet ID in the FY2025-26 master `Config`
-tab, so fiscal-year switching always opens the correct workbook.
+The next use of **Queue Dedicated Google Sheet** writes a request to the master
+ledger. The trigger creates a clean `KameiLab Budget Template` in the PI's My
+Drive, then copies it for each fiscal year. The app records each resulting
+Spreadsheet ID in the FY2025-26 master `Config` tab, so fiscal-year switching
+always opens the correct workbook.
 
 ---
 
@@ -162,6 +168,6 @@ See [fiscal-year-procedures.md](fiscal-year-procedures.md) for the full checklis
 See [maintenance-verification.md](maintenance-verification.md) for the required verification protocol before reporting app maintenance work as complete.
 
 Quick version:
-1. Run `/fiscal-year-init` in Claude Code, or
-2. Go to web app **Settings → Initialize New Fiscal Year**
-3. Enter `FY2026-27` and the new budget allocations
+1. Go to **Settings → Fiscal Year** and queue `FY2026-27`.
+2. Wait about one minute, then confirm the new workbook opens from Settings.
+3. Go to **Budget Allocations**, select `FY2026-27`, and enter the new budget allocations.

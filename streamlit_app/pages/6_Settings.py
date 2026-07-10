@@ -13,7 +13,7 @@ from utils.sheets import (get_teams, get_exchange_rate, get_currency_rates_to_us
                            get_active_fiscal_year,
                            create_fiscal_year_workbook, migrate_fiscal_year_to_dedicated_workbook,
                            fiscal_year_uses_legacy_tabs, fiscal_year_template_id,
-                           fiscal_year_workbook_url, fiscal_year_shared_drive_status,
+                           fiscal_year_creator_status, fiscal_year_creation_request_status,
                            get_base_config, set_base_config,
                            registry_connected, require_shared_registry_on_cloud,
                            save_budget_member_access_to_registry)
@@ -190,14 +190,17 @@ with tab1:
         on_change=_clear_sheet_cache_on_fy_change,
     )
     ledger_ready = fiscal_year_spreadsheet_ready(budget_fy)
-    shared_drive_ready, shared_drive_message = fiscal_year_shared_drive_status()
+    creator_ready, creator_message = fiscal_year_creator_status()
     if not ledger_ready:
         st.info(
-            f"{budget_fy} ledger has not been created yet. Saving allocations will prepare "
-            "the Google Sheet for this academic year."
+            f"{budget_fy} ledger has not been created yet. Queue it in the Fiscal Year tab, "
+            "then refresh after about one minute."
         )
-        if not shared_drive_ready:
-            st.warning(shared_drive_message)
+        if not creator_ready:
+            st.warning(creator_message)
+        request_status = fiscal_year_creation_request_status(budget_fy)
+        if request_status:
+            st.caption(f"Creation request: {request_status}")
     saved_fy = st.session_state.pop("_budget_alloc_saved_fy", None)
     if saved_fy:
         st.success(f"✓ Budget allocations saved for {saved_fy}.")
@@ -221,7 +224,7 @@ with tab1:
                 key=f"budget_alloc_usd_{budget_fy}_{safe_cat}",
             )
             alloc_data[cat] = usd
-        if st.form_submit_button("Save Allocations", type="primary", disabled=not ledger_ready and not shared_drive_ready):
+        if st.form_submit_button("Save Allocations", type="primary", disabled=not ledger_ready):
             ensure_fiscal_year_spreadsheet(budget_fy)
             set_budget_allocations_usd(alloc_data, budget_fy)
             st.session_state["_budget_alloc_saved_fy"] = budget_fy
@@ -378,7 +381,7 @@ with tab3:
 
 if is_pi() and tab4 is not None:
     with tab4:
-        st.markdown("Create one dedicated Google Sheet per academic year. New workbooks are copied from the standard template, so every year keeps the same worksheet format.")
+        st.markdown("Create one dedicated Google Sheet per academic year in the PI's Google My Drive. A PI-owned background task processes each request within about one minute; every workbook is copied from the standard template.")
         master_fy = get_base_config("Current Fiscal Year") or get_base_config("Fiscal Year") or "FY2025-26"
         try:
             start_year = int(str(master_fy)[2:6])
@@ -393,28 +396,37 @@ if is_pi() and tab4 is not None:
         else:
             st.info("The fiscal-year template will be created automatically from the current workbook when the first new year is created.")
 
-        shared_drive_folder = str(get_base_config("Fiscal Year Shared Drive Folder ID") or "").strip()
-        shared_drive_ready, shared_drive_message = fiscal_year_shared_drive_status()
-        if shared_drive_ready:
-            st.caption(shared_drive_message)
+        creator_ready, creator_message = fiscal_year_creator_status()
+        if creator_ready:
+            st.caption(creator_message)
         else:
-            st.warning(shared_drive_message)
+            st.warning(creator_message)
 
         with st.form("create_fiscal_year_workbook_form"):
             new_fy = st.text_input("New academic year", value=next_fy, placeholder="FY2026-27")
             create_submitted = st.form_submit_button(
-                "Create Dedicated Google Sheet",
+                "Queue Dedicated Google Sheet",
                 type="primary",
-                disabled=not shared_drive_ready,
+                disabled=not creator_ready,
             )
         if create_submitted:
             try:
-                workbook = create_fiscal_year_workbook(new_fy)
+                request_status = create_fiscal_year_workbook(new_fy)
                 st.session_state["selected_fiscal_year"] = new_fy.strip()
-                st.success(f"Created {workbook.title}. This fiscal year now has its own Google Sheet.")
-                st.link_button("Open New Fiscal Year Workbook", fiscal_year_workbook_url(new_fy))
+                st.success(f"{new_fy.strip()} has been queued for PI My Drive creation. Refresh this page after about one minute. ({request_status})")
             except Exception as error:
                 st.error(f"Could not create the fiscal-year workbook: {error}")
+
+        request_status = fiscal_year_creation_request_status(new_fy.strip())
+        if request_status:
+            st.caption(f"Latest request for {new_fy.strip()}: {request_status}")
+        created_workbook_id = str(get_base_config(f"Spreadsheet ID {new_fy.strip()}") or "").strip()
+        master_workbook_id = str(get_base_config(f"Spreadsheet ID {master_fy}") or "").strip()
+        if created_workbook_id and created_workbook_id != master_workbook_id:
+            st.link_button(
+                f"Open {new_fy.strip()} workbook",
+                f"https://docs.google.com/spreadsheets/d/{created_workbook_id}/edit",
+            )
 
         legacy_fys = [fy for fy in fiscal_year_options() if fiscal_year_uses_legacy_tabs(fy)]
         if legacy_fys:
@@ -428,33 +440,26 @@ if is_pi() and tab4 is not None:
                     f"Move {legacy_fy}",
                     key=f"migrate_{legacy_fy}",
                     use_container_width=True,
-                    disabled=not shared_drive_ready,
+                    disabled=not creator_ready,
                 ):
                     try:
-                        workbook = migrate_fiscal_year_to_dedicated_workbook(legacy_fy)
+                        request_status = migrate_fiscal_year_to_dedicated_workbook(legacy_fy)
                         st.session_state["selected_fiscal_year"] = legacy_fy
-                        st.success(f"Moved {legacy_fy} to {workbook.title}. The original tabs were retained as a backup.")
-                        st.link_button(f"Open {legacy_fy} Workbook", fiscal_year_workbook_url(legacy_fy))
+                        st.success(f"Migration of {legacy_fy} is queued. Refresh this page after about one minute. ({request_status})")
                     except Exception as error:
                         st.error(f"Could not move {legacy_fy}: {error}")
 
         st.divider()
-        st.markdown("**Master workbook and Shared Drive settings**")
+        st.markdown("**Master workbook settings**")
         threshold = get_base_config("Notification Threshold %") or "80"
         gmail_label = get_base_config("Gmail Label") or "Budget/Invoices"
         with st.form("fiscal_year_notification_form"):
-            shared_drive_folder_value = st.text_input(
-                "Shared Drive folder URL or ID",
-                value=shared_drive_folder,
-                help="Create a folder in an NYU Google Shared Drive, add the Budget service account as Content Manager, then paste the folder URL or ID here.",
-            )
             notify = st.number_input("Notification Threshold %", value=float(threshold), min_value=1.0, max_value=100.0, step=1.0)
             label = st.text_input("Gmail Label", value=str(gmail_label))
             if st.form_submit_button("Save Workspace Settings", type="primary"):
-                set_base_config("Fiscal Year Shared Drive Folder ID", shared_drive_folder_value.strip())
                 set_base_config("Notification Threshold %", notify)
                 set_base_config("Gmail Label", label.strip() or "Budget/Invoices")
-                st.success("Shared Drive and notification settings saved.")
+                st.success("Notification settings saved.")
 
 if is_pi() and tab5 is not None:
     with tab5:
