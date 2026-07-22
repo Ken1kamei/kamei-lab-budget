@@ -37,7 +37,8 @@ Credentials. The gateway requests a read-only Sheets scope unless
 
 ## Production requirements
 
-- Cloud SQL PostgreSQL configured through `DATABASE_URL`.
+- Cloud SQL PostgreSQL configured through the Secret Manager-backed
+  `CLOUD_DATABASE_URL` (or `DATABASE_URL` for local compatibility).
 - A private GCS bucket configured through `INVOICE_BUCKET`.
 - Cloud Run IAP with `IAP_EXPECTED_AUDIENCE` and the approved NYU users.
 - `ENABLE_SHEET_WRITES=true` only after the PostgreSQL migration and smoke test.
@@ -52,7 +53,7 @@ Recommended Cloud Run job schedule after PostgreSQL is connected:
 - Daily after the sync: `python manage.py verify_streamlit_parity`
 - Each release: `python manage.py migrate --noinput`, then one `sync_sheets`
 
-The scheduled job and web service must use the same `DATABASE_URL`, service
+The scheduled job and web service must use the same database URL, service
 account, registry/Sheet configuration, and private invoice bucket. Alert on any
 non-zero exit; a parity mismatch is deliberately returned as a failed job.
 
@@ -62,7 +63,8 @@ Run only with write mode explicitly enabled. The first command temporarily sets
 the selected category allocation, verifies the Sheet and web mirror, then restores
 the original value. The second creates a USD 0.01 transaction, verifies it,
 cancels it to prove the budget is released, deletes it, and compares the complete
-row set with its original state.
+row set with its original state. The storage check writes, reads, and removes a
+temporary private invoice object without changing the ledger.
 
 ```bash
 ENABLE_SHEET_WRITES=true .venv/bin/python manage.py verify_budget_roundtrip \
@@ -72,4 +74,8 @@ ENABLE_SHEET_WRITES=true .venv/bin/python manage.py verify_budget_roundtrip \
 ```bash
 ENABLE_SHEET_WRITES=true .venv/bin/python manage.py verify_invoice_roundtrip \
   --fiscal-year FY2025-26 --team "Core Lab"
+```
+
+```bash
+.venv/bin/python manage.py verify_storage_roundtrip
 ```

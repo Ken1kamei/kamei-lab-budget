@@ -75,12 +75,17 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-database_url = os.environ.get("DATABASE_URL", "").strip()
+database_url = (
+    os.environ.get("CLOUD_DATABASE_URL", "").strip()
+    or os.environ.get("DATABASE_URL", "").strip()
+)
 if not DEBUG and not database_url:
-    raise ImproperlyConfigured("DATABASE_URL is required outside DEBUG mode.")
+    raise ImproperlyConfigured(
+        "CLOUD_DATABASE_URL or DATABASE_URL is required outside DEBUG mode."
+    )
 DATABASES = {
-    "default": dj_database_url.config(
-        default=database_url or f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+    "default": dj_database_url.parse(
+        database_url or f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
         conn_max_age=600,
         conn_health_checks=True,
     )
