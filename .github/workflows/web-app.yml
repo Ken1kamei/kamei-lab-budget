@@ -1,0 +1,38 @@
+name: Web app checks
+
+on:
+  push:
+    paths:
+      - "web_app/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".gcloudignore"
+      - ".github/workflows/web-app.yml"
+  pull_request:
+    paths:
+      - "web_app/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".gcloudignore"
+      - ".github/workflows/web-app.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: web_app/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+      - run: python manage.py check
+      - run: python manage.py makemigrations --check --dry-run
+      - name: Build deployment image
+        working-directory: .
+        run: docker build --tag kamei-budget-web:test .

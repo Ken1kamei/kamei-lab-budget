@@ -1,6 +1,10 @@
 .worktrees/
 streamlit_app/.streamlit/secrets.toml
 streamlit_app/.venv/
+web_app/.venv/
+web_app/db.sqlite3
+web_app/.env
+web_app/staticfiles/
 __pycache__/
 *.pyc
 .superpowers/

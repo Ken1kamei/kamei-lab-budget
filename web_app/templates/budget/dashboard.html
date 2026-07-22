@@ -1,0 +1,40 @@
+{% extends 'budget/base.html' %}
+{% load humanize %}
+{% block content %}
+<header class="page-head">
+  <div><div class="eyebrow">READ-ONLY PARALLEL WEB VERSION</div><h1>Kamei Lab Budget</h1><p>Fast fiscal-year overview backed by a verified local mirror of Google Sheets.</p></div>
+  {% include 'budget/_year_picker.html' %}
+</header>
+{% if not fiscal_year %}
+<div class="notice">No fiscal year has been synchronized yet.</div>
+{% else %}
+<section class="metric-grid">
+  <article class="metric cyan"><span>Total budget</span><strong>${{ totals.total_budget|floatformat:2|intcomma }}</strong><small>{{ fiscal_year.label }}</small></article>
+  <article class="metric magenta"><span>Allocated</span><strong>${{ totals.total_allocated|floatformat:2|intcomma }}</strong><small>Cancelled entries excluded</small></article>
+  <article class="metric amber"><span>Available</span><strong>${{ totals.available|floatformat:2|intcomma }}</strong><small>Budget less allocated</small></article>
+  <article class="metric"><span>Transactions</span><strong>{{ totals.transaction_count }}</strong><small>{{ cancelled_count }} cancelled</small></article>
+</section>
+
+<section class="panel panel-wide">
+  <div class="panel-heading"><div><span class="eyebrow">TREND</span><h2>Monthly spending</h2></div><span>USD</span></div>
+  {% if monthly_rows %}<div class="trend-chart">
+    {% for row in monthly_rows %}<div class="trend-row"><time>{{ row.month }}</time><div class="trend-track"><span style="width: {{ row.width }}%"></span></div><strong>${{ row.amount|floatformat:2|intcomma }}</strong></div>{% endfor %}
+  </div>{% else %}<p class="empty">No allocated transactions in this fiscal year.</p>{% endif %}
+</section>
+
+<section class="two-column">
+  <article class="panel">
+    <div class="panel-heading"><div><span class="eyebrow">CATEGORY</span><h2>Budget position</h2></div></div>
+    <div class="data-list">
+    {% for row in category_rows %}<div class="data-row"><div><strong>{{ row.name }}</strong><small>${{ row.allocated|floatformat:2|intcomma }} allocated</small></div><span>${{ row.available|floatformat:2|intcomma }}</span></div>{% empty %}<p class="empty">No category budgets yet.</p>{% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-heading"><div><span class="eyebrow">SOURCE CHECK</span><h2>Google Sheet parity</h2></div></div>
+    {% if sync_run %}<div class="parity-status {{ sync_run.status }}"><strong>{{ sync_run.get_status_display }}</strong><span>{{ sync_run.finished_at|date:'Y-m-d H:i T' }}</span></div>
+    {% if lab_role == 'pi' or lab_role == 'budget_manager' %}<a class="button secondary" href="{% url 'budget:comparison' %}?fy={{ fiscal_year.label }}">Open comparison</a>{% endif %}
+    {% else %}<p class="empty">No comparison has run yet.</p>{% endif %}
+  </article>
+</section>
+{% endif %}
+{% endblock %}

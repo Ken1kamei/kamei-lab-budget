@@ -1,0 +1,16 @@
+.git
+.venv
+node_modules
+backups
+outputs
+streamlit_app/*
+!streamlit_app/utils/
+streamlit_app/utils/*
+!streamlit_app/utils/parse_invoice.py
+web_app/.venv
+web_app/.pytest_cache
+web_app/db.sqlite3
+web_app/staticfiles
+web_app/.env
+**/__pycache__
+**/*.pyc

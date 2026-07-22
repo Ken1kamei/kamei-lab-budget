@@ -1,0 +1,16 @@
+{% extends 'budget/base.html' %}
+{% block title %}Sign in | Kamei Lab Budget{% endblock %}
+{% block content %}
+<section class="auth-panel">
+  <div class="eyebrow">PRIVATE LAB PORTAL</div>
+  <h1>Kamei Lab<br>Budget Manager</h1>
+  <p>Sign in with your registered NYU Google account.</p>
+  {% if google_enabled %}<a class="button primary" href="{% url 'budget:google_login' %}">Continue with Google</a>{% endif %}
+  {% if dev_enabled %}
+  <form method="post" action="{% url 'budget:dev_login' %}">
+    {% csrf_token %}<button class="button secondary" type="submit">Local development sign-in</button>
+  </form>
+  {% endif %}
+  {% if not google_enabled and not dev_enabled %}<div class="notice error">Authentication has not been configured.</div>{% endif %}
+</section>
+{% endblock %}

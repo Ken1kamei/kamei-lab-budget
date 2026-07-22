@@ -1,0 +1,4 @@
+{% extends 'budget/base.html' %}
+{% block content %}
+<section class="auth-panel"><h1>Access not registered</h1><p>{{ email }} is not in the Kamei Lab budget allowlist. Ask the PI to add this address in the lab registry.</p><a class="button secondary" href="{% url 'budget:logout' %}">Sign out</a></section>
+{% endblock %}

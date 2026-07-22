@@ -1,0 +1,5 @@
+{% extends 'budget/base.html' %}
+{% block content %}
+<section class="page-head"><div><div class="eyebrow">REQUEST {{ request_id }}</div><h1>Something needs attention</h1><p>{{ friendly_message }}</p></div></section>
+<div class="notice error">No Google Sheet data was changed. Retry in a moment or give the request ID above to the PI.</div>
+{% endblock %}

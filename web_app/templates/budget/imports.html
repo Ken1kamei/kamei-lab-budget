@@ -1,0 +1,7 @@
+{% extends 'budget/base.html' %}
+{% block content %}
+<header class="page-head"><div><div class="eyebrow">DRAFT ONLY</div><h1>Import invoices</h1><p>Upload up to 20 PDFs. Parsed records remain local review drafts and do not write to Google Sheets.</p></div></header>
+{% if form_error %}<div class="notice error">{{ form_error }}</div>{% endif %}
+<section class="panel upload-panel"><form method="post" enctype="multipart/form-data">{% csrf_token %}<label class="dropzone" for="pdfs"><strong>Select PDF invoices</strong><span>Multiple files supported</span><input id="pdfs" name="pdfs" type="file" accept="application/pdf" multiple required></label><button class="button primary" type="submit">Parse files</button></form></section>
+<section class="draft-grid">{% for draft in drafts %}<article class="draft-card"><span class="status {{ draft.status }}">{{ draft.get_status_display }}</span><h2>{{ draft.file_name }}</h2><dl><dt>Vendor</dt><dd>{{ draft.parsed_data.vendor|default:'Review needed' }}</dd><dt>Invoice</dt><dd>{{ draft.parsed_data.invoice_number|default:'Review needed' }}</dd><dt>Amount</dt><dd>{{ draft.parsed_data.currency }} {{ draft.parsed_data.total_amount|default:'Review needed' }}</dd></dl></article>{% empty %}<p class="empty">No invoice drafts yet.</p>{% endfor %}</section>
+{% endblock %}

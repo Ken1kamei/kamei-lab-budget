@@ -1,0 +1,9 @@
+{% extends 'budget/base.html' %}
+{% load humanize %}
+{% block content %}
+<header class="page-head"><div><div class="eyebrow">CONTROL PANEL</div><h1>Parity checks</h1><p>Compare the Google Sheet source with the new web mirror to the cent.</p></div>{% include 'budget/_year_picker.html' %}</header>
+{% if fiscal_year %}<form method="post" action="{% url 'budget:sync' %}" class="action-row">{% csrf_token %}<input type="hidden" name="fy" value="{{ fiscal_year.label }}"><button class="button primary" type="submit">Refresh and compare {{ fiscal_year.label }}</button><span>This reads Google Sheets; it never writes to them.</span></form>{% endif %}
+<section class="panel table-panel"><table><thead><tr><th>Run</th><th>Started</th><th>Status</th><th class="number">Source rows</th><th class="number">Mirror rows</th><th>Differences</th></tr></thead><tbody>
+{% for run in runs %}<tr><td>#{{ run.id }}</td><td>{{ run.started_at|date:'Y-m-d H:i:s T' }}</td><td><span class="status {{ run.status }}">{{ run.get_status_display }}</span></td><td class="number">{{ run.source_transaction_count }}</td><td class="number">{{ run.mirror_transaction_count }}</td><td>{% if run.differences %}<details><summary>{{ run.differences|length }} found</summary><pre>{{ run.differences }}</pre></details>{% else %}Exact match{% endif %}</td></tr>{% empty %}<tr><td colspan="6" class="empty">No comparison runs yet.</td></tr>{% endfor %}
+</tbody></table></section>
+{% endblock %}

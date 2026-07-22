@@ -1,0 +1,11 @@
+{% if years %}
+<form method="get" class="year-picker">
+  <label for="fy">Academic year</label>
+  <select id="fy" name="fy" onchange="this.form.submit()">
+    {% for year in years %}
+    <option value="{{ year.label }}" {% if fiscal_year.label == year.label %}selected{% endif %}>{{ year.label }}</option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit">Apply</button></noscript>
+</form>
+{% endif %}

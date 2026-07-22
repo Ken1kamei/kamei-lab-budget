@@ -1,0 +1,35 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Kamei Lab Budget{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'budget/app.css' %}">
+</head>
+<body>
+  <div class="shell">
+    {% if request.user.is_authenticated %}
+    <aside class="sidebar">
+      <a class="brand" href="{% url 'budget:dashboard' %}">Kamei Lab</a>
+      <div class="brand-subtitle">Budget Manager</div>
+      <nav aria-label="Main navigation">
+        <a href="{% url 'budget:dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Overview</a>
+        <a href="{% url 'budget:transactions' %}" class="{% if request.resolver_match.url_name == 'transactions' %}active{% endif %}">Transactions</a>
+        <a href="{% url 'budget:imports' %}" class="{% if request.resolver_match.url_name == 'imports' %}active{% endif %}">Import invoices</a>
+        {% if lab_role == 'pi' or lab_role == 'budget_manager' %}
+        <a href="{% url 'budget:comparison' %}" class="{% if request.resolver_match.url_name == 'comparison' %}active{% endif %}">Parity checks</a>
+        {% endif %}
+      </nav>
+      <div class="sidebar-footer">
+        <span>{{ request.user.email }}</span>
+        <a href="{% url 'budget:logout' %}">Sign out</a>
+      </div>
+    </aside>
+    {% endif %}
+    <main class="content {% if not request.user.is_authenticated %}content-auth{% endif %}">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>
