@@ -58,8 +58,9 @@ def test_gcs_storage_uses_private_blob_operations(settings, monkeypatch):
             self.content_type = ""
             self.deleted = False
 
-        def upload_from_file(self, handle, *, rewind, content_type):
+        def upload_from_file(self, handle, *, rewind, content_type, if_generation_match=None):
             assert rewind is True
+            assert if_generation_match == 0
             self.payload = handle.read()
             self.content_type = content_type
 

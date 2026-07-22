@@ -81,6 +81,36 @@ class Command(BaseCommand):
                     "mirror_total_allocated": str(database_totals(run.fiscal_year)["total_allocated"]),
                 }
             )
+            gateway.cancel_transaction(fiscal_year, result["transaction_id"])
+            cancelled = gateway.read_fiscal_year(fiscal_year)
+            cancelled_matches = [
+                row
+                for row in cancelled["transactions"]
+                if str(row.get("Transaction ID")) == result["transaction_id"]
+            ]
+            if len(cancelled_matches) != 1 or str(
+                cancelled_matches[0].get("Status")
+            ).strip() != "Cancelled":
+                raise CommandError("The transaction cancellation did not read back exactly once.")
+            cancelled_run = sync_fiscal_year(
+                cancelled, actor="codex-verification-cancel"
+            )
+            cancelled_totals = database_totals(cancelled_run.fiscal_year)
+            if (
+                cancelled_run.status != "matched"
+                or cancelled_totals["total_allocated"]
+                != before_totals["total_allocated"]
+            ):
+                raise CommandError("Cancelling the transaction did not release its budget.")
+            evidence.update(
+                {
+                    "cancel_status": "Cancelled",
+                    "cancelled_total_allocated": str(
+                        cancelled_totals["total_allocated"]
+                    ),
+                    "budget_released": True,
+                }
+            )
         finally:
             cleanup_error = None
             for attempt in range(1, 4):

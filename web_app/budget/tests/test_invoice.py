@@ -16,7 +16,9 @@ class Upload:
 
 
 @pytest.mark.django_db
-def test_multiple_invoice_uploads_create_distinct_review_drafts(monkeypatch):
+def test_multiple_invoice_uploads_create_distinct_review_drafts(monkeypatch, settings, tmp_path):
+    settings.DEBUG = True
+    settings.MEDIA_ROOT = tmp_path
     LabMember.objects.create(email="member@nyu.edu", highest_role="member", active=True)
     monkeypatch.setattr(
         "budget.services.invoices.parse_pdf_bytes",
@@ -31,7 +33,7 @@ def test_multiple_invoice_uploads_create_distinct_review_drafts(monkeypatch):
     )
 
     drafts = create_invoice_drafts(
-        [Upload("first.pdf", b"first"), Upload("second.pdf", b"second")],
+        [Upload("first.pdf", b"%PDF-first"), Upload("second.pdf", b"%PDF-second")],
         uploader_email="member@nyu.edu",
     )
 
@@ -41,8 +43,10 @@ def test_multiple_invoice_uploads_create_distinct_review_drafts(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_reupload_preserves_imported_state(monkeypatch):
-    payload = b"same-pdf"
+def test_reupload_preserves_imported_state(monkeypatch, settings, tmp_path):
+    settings.DEBUG = True
+    settings.MEDIA_ROOT = tmp_path
+    payload = b"%PDF-same-pdf"
     digest = hashlib.sha256(payload).hexdigest()
     imported = InvoiceDraft.objects.create(
         uploader_email="member@nyu.edu",
@@ -66,3 +70,17 @@ def test_reupload_preserves_imported_state(monkeypatch):
     assert draft.status == "imported"
     assert draft.imported_transaction_id == "TXN-1"
     assert draft.parsed_data["total_amount"] == 11
+
+
+@pytest.mark.django_db
+def test_html_disguised_as_pdf_is_rejected_before_storage(settings, tmp_path):
+    settings.DEBUG = True
+    settings.MEDIA_ROOT = tmp_path
+
+    with pytest.raises(ValueError, match="not a valid PDF"):
+        create_invoice_drafts(
+            [Upload("malicious.pdf", b"<script>alert(1)</script>")],
+            uploader_email="member@nyu.edu",
+        )
+
+    assert InvoiceDraft.objects.count() == 0

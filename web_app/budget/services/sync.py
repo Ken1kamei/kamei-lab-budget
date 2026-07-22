@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from django.conf import settings
@@ -36,6 +36,19 @@ def _parse_date(value):
         return date.fromisoformat(text[:10])
     except ValueError:
         return None
+
+
+def _parse_datetime(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
 
 
 def _validate_snapshot(snapshot: dict) -> str:
@@ -80,8 +93,8 @@ def _database_snapshot(fiscal_year: FiscalYear) -> dict:
         "summary": summary,
         "teams": teams,
         "transactions": transactions,
-        "exchange_rates": {"USD": "1"},
-        "aed_per_usd": "3.6725",
+        "exchange_rates": fiscal_year.exchange_rates or {"USD": "1"},
+        "aed_per_usd": str(fiscal_year.aed_per_usd),
     }
 
 
@@ -112,29 +125,89 @@ def _role_members(team_row: dict):
             yield role, email, names[index] if index < len(names) else email
 
 
-def _sync_members(team_rows: list[dict], synced_at):
-    aggregate = {}
+def _sync_members(team_rows: list[dict], member_rows: list[dict], fiscal_year_label, synced_at):
+    display_names = {}
     for team_row in team_rows:
-        team_name = str(team_row.get("Team Name", "")).strip()
-        for role, email, name in _role_members(team_row):
-            current = aggregate.setdefault(email, {"role": role, "teams": set(), "name": name})
-            if ROLE_PRIORITY[role] > ROLE_PRIORITY[current["role"]]:
-                current["role"] = role
-            if team_name:
-                current["teams"].add(team_name)
+        for _, email, name in _role_members(team_row):
             if name and name != email:
-                current["name"] = name
+                display_names[email] = name
+    aggregate = {}
+    for row in member_rows:
+        email = str(row.get("email", "")).strip().lower()
+        if not email or not row.get("active", True):
+            continue
+        role = str(row.get("role", "member")).strip().lower()
+        if role not in ROLE_PRIORITY:
+            role = "member"
+        raw_team_roles = row.get("team_roles") or {}
+        team_roles = {
+            str(name): "lead" if str(team_role).lower() == "lead" else "member"
+            for name, team_role in raw_team_roles.items()
+        }
+        aggregate[email] = {
+            "role": role,
+            "teams": set(team_roles),
+            "team_roles": {fiscal_year_label: team_roles},
+            "name": str(row.get("display_name") or email),
+        }
+    for team in Team.objects.filter(active=True):
+        role_emails = (
+            ("lead", team.manager_emails),
+            ("lead", team.lead_emails),
+            ("member", team.member_emails),
+        )
+        for role, emails in role_emails:
+            for email in emails:
+                email = str(email or "").strip().lower()
+                if not email:
+                    continue
+                current = aggregate.setdefault(
+                    email,
+                    {
+                        "role": role,
+                        "teams": set(),
+                        "team_roles": {},
+                        "name": display_names.get(email, email),
+                    },
+                )
+                existing = LabMember.objects.filter(email=email).first()
+                if existing and existing.highest_role in {"pi", "budget_manager"}:
+                    current["role"] = existing.highest_role
+                elif ROLE_PRIORITY[role] > ROLE_PRIORITY[current["role"]]:
+                    current["role"] = role
+                current["teams"].add(team.name)
+                annual_roles = current["team_roles"].setdefault(team.fiscal_year.label, {})
+                if role == "lead" or annual_roles.get(team.name) != "lead":
+                    annual_roles[team.name] = role
+                if email in display_names:
+                    current["name"] = display_names[email]
     pi_email = settings.PI_EMAIL
     if pi_email:
-        pi = aggregate.setdefault(pi_email, {"role": "pi", "teams": set(), "name": pi_email})
+        pi = aggregate.setdefault(
+            pi_email,
+            {"role": "pi", "teams": set(), "team_roles": {}, "name": pi_email},
+        )
         pi["role"] = "pi"
+    LabMember.objects.filter(last_synced_at__isnull=False).exclude(
+        email__in=aggregate.keys()
+    ).update(active=False, last_synced_at=synced_at)
     for email, data in aggregate.items():
+        existing_name = (
+            LabMember.objects.filter(email=email)
+            .values_list("display_name", flat=True)
+            .first()
+        )
         LabMember.objects.update_or_create(
             email=email,
             defaults={
-                "display_name": data["name"],
+                "display_name": (
+                    data["name"]
+                    if data["name"] != email
+                    else existing_name or email
+                ),
                 "highest_role": data["role"],
                 "team_names": sorted(data["teams"]),
+                "team_roles": data["team_roles"],
                 "active": True,
                 "last_synced_at": synced_at,
             },
@@ -148,9 +221,19 @@ def sync_fiscal_year(snapshot: dict, actor="system") -> SyncRun:
     with transaction.atomic():
         fiscal_year, _ = FiscalYear.objects.select_for_update().get_or_create(label=fiscal_year_label)
         fiscal_year.spreadsheet_id = str(snapshot.get("spreadsheet_id", ""))
+        fiscal_year.exchange_rates = _safe_payload(snapshot.get("exchange_rates", {}))
+        fiscal_year.aed_per_usd = decimal_value(snapshot.get("aed_per_usd"), "3.6725")
         fiscal_year.sync_state = "running"
         fiscal_year.sync_error = ""
-        fiscal_year.save(update_fields=["spreadsheet_id", "sync_state", "sync_error"])
+        fiscal_year.save(
+            update_fields=[
+                "spreadsheet_id",
+                "exchange_rates",
+                "aed_per_usd",
+                "sync_state",
+                "sync_error",
+            ]
+        )
         run = SyncRun.objects.create(
             fiscal_year=fiscal_year,
             actor=actor,
@@ -193,7 +276,12 @@ def sync_fiscal_year(snapshot: dict, actor="system") -> SyncRun:
                 description=str(row.get("Description", "")),
                 active=str(row.get("Active", "Y")).strip().upper() in {"Y", "YES", "TRUE", "1"},
             )
-        _sync_members(team_rows, synced_at)
+        _sync_members(
+            team_rows,
+            snapshot.get("members", []),
+            fiscal_year_label,
+            synced_at,
+        )
 
         incoming_ids = []
         rates = snapshot.get("exchange_rates", {})
@@ -202,10 +290,13 @@ def sync_fiscal_year(snapshot: dict, actor="system") -> SyncRun:
             if not transaction_id:
                 continue
             incoming_ids.append(transaction_id)
-            currency = str(row.get("Currency", "") or "USD").strip().upper()
+            raw_currency = str(row.get("Currency", "") or "").strip().upper()
             amount = decimal_value(row.get("Amount"))
+            legacy_usd = decimal_value(row.get("Amount (USD)"))
+            legacy_aed = decimal_value(row.get("Amount (AED)"))
+            currency = raw_currency or ("USD" if legacy_usd else "AED" if legacy_aed else "USD")
             if amount == 0:
-                amount = decimal_value(row.get("Amount (USD)")) or decimal_value(row.get("Amount (AED)"))
+                amount = legacy_usd or legacy_aed
             Transaction.objects.update_or_create(
                 fiscal_year=fiscal_year,
                 transaction_id=transaction_id,
@@ -226,6 +317,12 @@ def sync_fiscal_year(snapshot: dict, actor="system") -> SyncRun:
                     "entry_method": str(row.get("Entry Method", "")),
                     "notes": str(row.get("Notes", "")),
                     "pdf_link": str(row.get("PDF Link", "")),
+                    "receipt_confirmed": str(row.get("Receipt Confirmed", "")).strip().upper()
+                    in {"TRUE", "Y", "YES", "1"},
+                    "email_thread_id": str(row.get("Email Thread ID", "")),
+                    "approved_by": str(row.get("Approved By", "")),
+                    "approved_at": _parse_datetime(row.get("Approved At")),
+                    "sheet_last_modified_at": _parse_datetime(row.get("Last Modified")),
                     "source_payload": _safe_payload(row),
                 },
             )

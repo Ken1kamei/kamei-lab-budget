@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, SuspiciousFileOperation
 from google.cloud import storage as gcs_storage
+from google.api_core.exceptions import PreconditionFailed
 
 
 @dataclass(frozen=True)
@@ -83,13 +84,27 @@ def save_invoice(content, *, filename: str, content_type: str | None = None,
 
     if _backend() == "gcs":
         blob = _gcs_bucket().blob(key)
-        blob.upload_from_file(io.BytesIO(payload), rewind=True, content_type=media_type)
+        try:
+            blob.upload_from_file(
+                io.BytesIO(payload),
+                rewind=True,
+                content_type=media_type,
+                if_generation_match=0,
+            )
+        except PreconditionFailed:
+            blob.reload()
+            if int(blob.size or 0) != len(payload):
+                raise
     else:
         path = _local_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        temporary.write_bytes(payload)
-        os.replace(temporary, path)
+        if path.exists():
+            if path.stat().st_size != len(payload):
+                raise FileExistsError("Stored invoice key already has different content.")
+        else:
+            temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            temporary.write_bytes(payload)
+            os.replace(temporary, path)
 
     return StoredInvoice(object_key=key, content_type=media_type, size=len(payload))
 

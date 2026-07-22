@@ -2,7 +2,7 @@
 {% load humanize %}
 {% block content %}
 <header class="page-head">
-  <div><div class="eyebrow">READ-ONLY PARALLEL WEB VERSION</div><h1>Kamei Lab Budget</h1><p>Fast fiscal-year overview backed by a verified local mirror of Google Sheets.</p></div>
+  <div><div class="eyebrow">FISCAL YEAR OVERVIEW</div><h1>Kamei Lab Budget</h1><p>Google Sheet-backed budget operations with a verified web mirror.</p></div>
   {% include 'budget/_year_picker.html' %}
 </header>
 {% if not fiscal_year %}
@@ -17,9 +17,14 @@
 
 <section class="panel panel-wide">
   <div class="panel-heading"><div><span class="eyebrow">TREND</span><h2>Monthly spending</h2></div><span>USD</span></div>
-  {% if monthly_rows %}<div class="trend-chart">
-    {% for row in monthly_rows %}<div class="trend-row"><time>{{ row.month }}</time><div class="trend-track"><span style="width: {{ row.width }}%"></span></div><strong>${{ row.amount|floatformat:2|intcomma }}</strong></div>{% endfor %}
-  </div>{% else %}<p class="empty">No allocated transactions in this fiscal year.</p>{% endif %}
+  <div class="line-chart" role="img" aria-label="Monthly allocated spending in USD">
+    <svg viewBox="0 0 1000 250" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="0" y1="220" x2="1000" y2="220" class="chart-axis" />
+      <polygon points="{{ monthly_area_points }}" class="chart-area" />
+      <polyline points="{{ monthly_points }}" class="chart-line" />
+    </svg>
+    <div class="chart-labels">{% for row in monthly_rows %}<span title="{{ row.month }}: ${{ row.amount|floatformat:2|intcomma }}">{{ row.month|slice:'5:' }}</span>{% endfor %}</div>
+  </div>
 </section>
 
 <section class="two-column">

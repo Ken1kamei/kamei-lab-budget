@@ -1,0 +1,11 @@
+{% extends 'budget/base.html' %}
+{% block content %}
+<header class="page-head"><div><div class="eyebrow">{% if mode == 'edit' %}CORRECT LEDGER{% else %}NEW ALLOCATION{% endif %}</div><h1>{% if mode == 'edit' %}Edit transaction{% else %}Add expense{% endif %}</h1><p>Amounts are stored in the selected currency and converted to USD using the fiscal-year rate.</p></div></header>
+{% if not sheet_write_allowed %}<div class="notice">This account can review the form, but Google Sheet writes are currently disabled.</div>{% endif %}
+{% if transaction %}<div class="notice">Editing <strong>{{ transaction.transaction_id }}</strong>. Select Cancelled to release this amount back to the budget.</div>{% endif %}
+<form method="post" class="panel form-grid">{% csrf_token %}
+  {% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<label class="{% if field.name == 'description' or field.name == 'notes' %}span-2{% endif %}"><span>{{ field.label }}</span>{{ field }}{% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}</label>{% endif %}{% endfor %}
+  {% for error in form.non_field_errors %}<div class="notice error span-2">{{ error }}</div>{% endfor %}
+  <div class="form-actions span-2"><button class="button primary" type="submit">{% if mode == 'edit' %}Save verified changes{% else %}Save expense{% endif %}</button><a class="button secondary" href="{% url 'budget:transactions' %}">Cancel</a></div>
+</form>
+{% endblock %}

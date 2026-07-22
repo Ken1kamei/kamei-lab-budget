@@ -1,7 +1,12 @@
 # Kamei Lab Budget Web
 
-This Django application is the parallel web version of the existing Streamlit
-budget manager. Google Sheets remain the source of truth during validation.
+This Django application is the operational web version of the Kamei Lab Budget
+Manager. Google Sheets remain the fiscal-year source of truth while PostgreSQL
+provides the fast web mirror, audit trail, durable import queue, and idempotency.
+
+The existing Streamlit application remains available during the measured
+parallel-run period. Do not switch the production entry point until the two
+systems have matched for at least one week.
 
 ## Local verification
 
@@ -11,7 +16,7 @@ python -m venv .venv
 .venv/bin/python manage.py migrate
 .venv/bin/python manage.py sync_sheets
 .venv/bin/python manage.py verify_streamlit_parity
-ENABLE_SHEET_WRITES=true .venv/bin/python manage.py runserver
+.venv/bin/python manage.py runserver
 ```
 
 Local development may reuse `../streamlit_app/.streamlit/secrets.toml`.
@@ -19,27 +24,50 @@ Production never reads that file and uses Cloud Run Application Default
 Credentials. The gateway requests a read-only Sheets scope unless
 `ENABLE_SHEET_WRITES=true`.
 
-## Safety boundary
+## Supported workflows
 
-- Dashboard and transactions remain read-only in the parallel web UI.
-- Refresh copies Google Sheet values into a mirror and compares all totals.
-- Every lab member may upload PDF review drafts.
-- Registration requires both `ENABLE_SHEET_WRITES=true` and membership in
-  `SHEET_WRITE_ALLOWED_EMAILS`. The staging pilot limits this list to the PI;
-  Team Lead and Budget Manager registration waits for durable draft routing.
-- Registration is serialized with a process lock, carries a durable PDF hash,
-  checks every registered fiscal year for duplicates, reads the Sheet row back,
-  and refreshes the web mirror before reporting success.
-- The staging service must remain at a maximum of one Cloud Run instance while
-  it uses temporary SQLite. Drafts may disappear on a restart; registered Sheet
-  transactions do not.
-- The Streamlit application remains unchanged and continues to be the production entry point during parallel validation.
+- Fiscal-year dashboard, team/category/monthly reports, filters, and CSV export.
+- Manual transaction creation, correction, fiscal-year moves, and cancellation.
+- Multi-PDF upload with private durable object storage and review-before-import.
+- NYUAD ERB Excel preview and verified multi-row registration.
+- Category budgets, teams, exchange rates, members/roles, and fiscal-year creation.
+- PI, Budget Manager, Team Leader, Member, and unknown-user access boundaries.
+- Every Sheet mutation is serialized, read back, mirrored, and audited before
+  the UI reports success. Repeated submissions use durable idempotency keys.
+
+## Production requirements
+
+- Cloud SQL PostgreSQL configured through `DATABASE_URL`.
+- A private GCS bucket configured through `INVOICE_BUCKET`.
+- Cloud Run IAP with `IAP_EXPECTED_AUDIENCE` and the approved NYU users.
+- `ENABLE_SHEET_WRITES=true` only after the PostgreSQL migration and smoke test.
+- `SHEET_WRITE_ALLOWED_EMAILS` set to the accounts permitted for the rollout;
+  `*` enables each role's normal application permission.
+- Run `manage.py migrate`, `manage.py sync_sheets`, and `manage.py verify_parity`
+  as release/scheduled jobs. They are intentionally not run by every web startup.
+
+Recommended Cloud Run job schedule after PostgreSQL is connected:
+
+- Every 5 minutes: `python manage.py sync_sheets`
+- Daily after the sync: `python manage.py verify_streamlit_parity`
+- Each release: `python manage.py migrate --noinput`, then one `sync_sheets`
+
+The scheduled job and web service must use the same `DATABASE_URL`, service
+account, registry/Sheet configuration, and private invoice bucket. Alert on any
+non-zero exit; a parity mismatch is deliberately returned as a failed job.
 
 ## Reversible Sheet verification
 
-Run only with write mode explicitly enabled. The command writes a USD 0.01
-verification transaction, reads it back, refreshes the mirror, removes the row,
-and compares the complete transaction row set with its original state.
+Run only with write mode explicitly enabled. The first command temporarily sets
+the selected category allocation, verifies the Sheet and web mirror, then restores
+the original value. The second creates a USD 0.01 transaction, verifies it,
+cancels it to prove the budget is released, deletes it, and compares the complete
+row set with its original state.
+
+```bash
+ENABLE_SHEET_WRITES=true .venv/bin/python manage.py verify_budget_roundtrip \
+  --fiscal-year FY2026-27 --category Consumables --amount 10000
+```
 
 ```bash
 ENABLE_SHEET_WRITES=true .venv/bin/python manage.py verify_invoice_roundtrip \

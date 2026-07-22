@@ -1,8 +1,17 @@
 {% extends 'budget/base.html' %}
 {% load humanize %}
 {% block content %}
-<header class="page-head"><div><div class="eyebrow">LEDGER</div><h1>Transactions</h1><p>Read-only view during the parallel validation period.</p></div>{% include 'budget/_year_picker.html' %}</header>
-<section class="panel table-panel"><table><thead><tr><th>ID</th><th>Date</th><th>Team</th><th>Category</th><th>Vendor</th><th>Status</th><th class="number">USD</th></tr></thead><tbody>
-{% for txn in transactions %}<tr><td>{{ txn.transaction_id }}</td><td>{{ txn.date|date:'Y-m-d' }}</td><td>{{ txn.team|default:'Unassigned' }}</td><td>{{ txn.category }}</td><td>{{ txn.vendor }}</td><td><span class="status {{ txn.status|lower }}">{{ txn.status }}</span></td><td class="number">${{ txn.amount_usd_equiv|floatformat:2|intcomma }}</td></tr>{% empty %}<tr><td colspan="7" class="empty">No transactions found.</td></tr>{% endfor %}
+<header class="page-head"><div><div class="eyebrow">LEDGER</div><h1>Transactions</h1><p>Search, review, correct, or cancel budget allocations.</p></div>{% include 'budget/_year_picker.html' %}</header>
+<div class="toolbar"><a class="button primary" href="{% url 'budget:add_transaction' %}?fy={{ fiscal_year.label }}">Add expense</a><a class="button secondary" href="{% url 'budget:export_transactions' %}?fy={{ fiscal_year.label }}">Export CSV</a></div>
+<form method="get" class="panel filter-form">
+  <input type="hidden" name="fy" value="{{ fiscal_year.label }}">
+  <label><span>Search</span><input type="text" name="q" value="{{ filters.q }}" placeholder="ID, vendor, description, PO, invoice"></label>
+  <label><span>Category</span><select name="category"><option value="">All</option>{% for value in categories %}<option value="{{ value }}" {% if filters.category == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+  <label><span>Status</span><select name="status"><option value="">All</option>{% for value in statuses %}<option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+  <label><span>Team</span><select name="team"><option value="">All</option>{% for value in team_names %}<option value="{{ value }}" {% if filters.team == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+  <button class="button secondary" type="submit">Apply filters</button>
+</form>
+<section class="panel table-panel"><table><thead><tr><th>ID</th><th>Date</th><th>Team</th><th>Category</th><th>Vendor</th><th>Invoice / PO</th><th>Status</th><th class="number">Original</th><th class="number">USD</th><th>Action</th></tr></thead><tbody>
+{% for txn in transactions %}<tr><td>{{ txn.transaction_id }}</td><td>{{ txn.date|date:'Y-m-d' }}</td><td>{{ txn.team|default:'Unassigned' }}</td><td>{{ txn.category }}{% if txn.subcategory %}<small>{{ txn.subcategory }}</small>{% endif %}</td><td>{{ txn.vendor }}</td><td>{{ txn.invoice_number|default:txn.po_number }}</td><td><span class="status {{ txn.status|lower }}">{{ txn.status }}</span></td><td class="number">{{ txn.currency }} {{ txn.amount|floatformat:2|intcomma }}</td><td class="number">${{ txn.amount_usd_equiv|floatformat:2|intcomma }}</td><td><a class="text-link" href="{% url 'budget:edit_transaction' fiscal_year.label txn.transaction_id %}">Edit</a></td></tr>{% empty %}<tr><td colspan="10" class="empty">No transactions found.</td></tr>{% endfor %}
 </tbody></table></section>
 {% endblock %}

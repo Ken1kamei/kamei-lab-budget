@@ -4,6 +4,8 @@ from django.db import models
 class FiscalYear(models.Model):
     label = models.CharField(max_length=9, unique=True)
     spreadsheet_id = models.CharField(max_length=128, blank=True)
+    exchange_rates = models.JSONField(default=dict, blank=True)
+    aed_per_usd = models.DecimalField(max_digits=12, decimal_places=6, default=3.6725)
     synced_at = models.DateTimeField(null=True, blank=True)
     sync_state = models.CharField(max_length=20, default="pending")
     sync_error = models.TextField(blank=True)
@@ -53,6 +55,7 @@ class LabMember(models.Model):
     display_name = models.CharField(max_length=160, blank=True)
     highest_role = models.CharField(max_length=32, choices=ROLE_CHOICES, default="member")
     team_names = models.JSONField(default=list, blank=True)
+    team_roles = models.JSONField(default=dict, blank=True)
     active = models.BooleanField(default=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
 
@@ -174,6 +177,19 @@ class TransactionAudit(models.Model):
     class Meta:
         ordering = ["-timestamp", "-id"]
         indexes = [models.Index(fields=["transaction", "-timestamp"])]
+
+
+class AdministrativeAudit(models.Model):
+    actor = models.EmailField(blank=True)
+    action = models.CharField(max_length=64)
+    target = models.CharField(max_length=255)
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-timestamp", "-id"]
+        indexes = [models.Index(fields=["action", "-timestamp"])]
 
 
 class SheetOperation(models.Model):

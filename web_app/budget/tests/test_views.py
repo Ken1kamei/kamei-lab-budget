@@ -61,6 +61,37 @@ def test_comparison_page_is_restricted_to_pi_and_budget_manager(client):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("role", "settings_status"),
+    [
+        ("pi", 200),
+        ("budget_manager", 200),
+        ("lead", 403),
+        ("member", 403),
+    ],
+)
+def test_role_access_matrix_for_operational_pages(client, role, settings_status):
+    email = f"{role}@nyu.edu"
+    user = get_user_model().objects.create_user(username=role, email=email)
+    LabMember.objects.create(
+        email=email,
+        highest_role=role,
+        team_names=["Diabetes"],
+        active=True,
+    )
+    fiscal_year = FiscalYear.objects.create(label="FY2026-27", spreadsheet_id="sheet")
+    Team.objects.create(fiscal_year=fiscal_year, name="Diabetes", active=True)
+    client.force_login(user)
+
+    assert client.get(reverse("budget:dashboard")).status_code == 200
+    assert client.get(reverse("budget:transactions")).status_code == 200
+    assert client.get(reverse("budget:add_transaction")).status_code == 200
+    assert client.get(reverse("budget:imports")).status_code == 200
+    assert client.get(reverse("budget:reports")).status_code == 200
+    assert client.get(reverse("budget:settings")).status_code == settings_status
+
+
+@pytest.mark.django_db
 def test_lead_can_review_and_commit_invoice_to_own_team(client, monkeypatch, settings):
     settings.ENABLE_SHEET_WRITES = True
     settings.SHEET_WRITE_ALLOWED_EMAILS = {"lead@nyu.edu"}
@@ -88,6 +119,7 @@ def test_lead_can_review_and_commit_invoice_to_own_team(client, monkeypatch, set
         uploader_email="member@nyu.edu",
         file_name="invoice.pdf",
         file_sha256="abc123",
+        team="Diabetes",
         parsed_data={},
     )
     captured = {}
@@ -268,3 +300,48 @@ def test_invoice_commit_endpoint_is_closed_when_sheet_writes_are_disabled(client
     response = client.post(reverse("budget:commit_invoice_draft", args=[draft.id]))
 
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_lead_only_sees_team_drafts_and_own_unassigned_drafts(client):
+    user = get_user_model().objects.create_user(
+        username="mixed-lead", email="mixed-lead@nyu.edu"
+    )
+    LabMember.objects.create(
+        email=user.email,
+        highest_role="lead",
+        team_names=["Diabetes", "IoC"],
+        team_roles={"FY2025-26": {"Diabetes": "lead", "IoC": "member"}},
+        active=True,
+    )
+    fy = FiscalYear.objects.create(label="FY2025-26", spreadsheet_id="sheet")
+    Team.objects.create(fiscal_year=fy, name="Diabetes", active=True)
+    Team.objects.create(fiscal_year=fy, name="IoC", active=True)
+    InvoiceDraft.objects.create(
+        uploader_email="other@nyu.edu",
+        file_name="diabetes.pdf",
+        file_sha256="diabetes-hash",
+        team="Diabetes",
+        parsed_data={},
+    )
+    InvoiceDraft.objects.create(
+        uploader_email="other@nyu.edu",
+        file_name="ioc.pdf",
+        file_sha256="ioc-hash",
+        team="IoC",
+        parsed_data={},
+    )
+    InvoiceDraft.objects.create(
+        uploader_email=user.email,
+        file_name="own.pdf",
+        file_sha256="own-hash",
+        parsed_data={},
+    )
+    client.force_login(user)
+
+    response = client.get(reverse("budget:imports"))
+
+    assert response.status_code == 200
+    assert b"diabetes.pdf" in response.content
+    assert b"own.pdf" in response.content
+    assert b"ioc.pdf" not in response.content

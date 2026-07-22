@@ -7,7 +7,9 @@ from authlib.integrations.django_client import OAuth
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, login, logout
-from django.http import HttpResponse, HttpResponseBadRequest
+from django.db import transaction as db_transaction
+from django.db.models import Q
+from django.http import FileResponse, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -15,10 +17,21 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from budget.access import current_member, lab_access
 from budget.forms import InvoiceCommitForm
-from budget.models import FiscalYear, InvoiceDraft, LabMember, SyncRun, Team, Transaction
+from budget.models import (
+    AdministrativeAudit,
+    FiscalYear,
+    InvoiceDraft,
+    LabMember,
+    SheetOperation,
+    SyncRun,
+    Team,
+    Transaction,
+    TransactionAudit,
+)
 from budget.services.calculations import CATEGORIES, compare_totals, fiscal_year_for_date, money
 from budget.services.invoices import create_invoice_drafts
 from budget.services.sheets import SheetsGateway, SheetsSourceError
+from budget.services.storage import open_invoice
 from budget.services.sync import database_totals, sync_fiscal_year
 
 
@@ -135,48 +148,141 @@ def _selected_fiscal_year(request):
 def _scoped_transactions(member, fiscal_year):
     transactions = fiscal_year.transactions.all()
     if member.highest_role not in {"pi", "budget_manager"}:
-        transactions = transactions.filter(team__in=member.team_names)
+        transactions = transactions.filter(
+            team__in=_visible_team_names(member, fiscal_year)
+        )
     return transactions
 
 
-def _allowed_team_names(member, fiscal_year=None):
-    teams = Team.objects.filter(active=True)
-    if fiscal_year is not None:
-        teams = teams.filter(fiscal_year=fiscal_year)
+def _team_roles_for(member, fiscal_year=None):
+    label = fiscal_year.label if hasattr(fiscal_year, "label") else str(fiscal_year or "")
+    configured = member.team_roles or {}
+    roles = configured.get(label, {}) if label else {}
+    if not roles and not configured:
+        fallback_role = "lead" if member.highest_role == "lead" else "member"
+        roles = {name: fallback_role for name in (member.team_names or [])}
+    return {str(name): str(role) for name, role in roles.items()}
+
+
+def _visible_team_names(member, fiscal_year=None):
     if member.highest_role in {"pi", "budget_manager"}:
+        teams = Team.objects.filter(active=True)
+        if fiscal_year is not None:
+            teams = teams.filter(fiscal_year=fiscal_year)
         return list(teams.order_by("name").values_list("name", flat=True).distinct())
-    if member.highest_role == "lead":
-        email = member.email.strip().lower()
+    if fiscal_year is not None:
+        return sorted(_team_roles_for(member, fiscal_year))
+    configured = member.team_roles or {}
+    if configured:
+        return sorted(
+            {name for annual_roles in configured.values() for name in annual_roles}
+        )
+    return sorted(set(member.team_names or []))
+
+
+def _lead_team_names(member, fiscal_year=None):
+    if member.highest_role in {"pi", "budget_manager"}:
+        return _visible_team_names(member, fiscal_year)
+    if fiscal_year is not None:
+        return sorted(
+            name
+            for name, role in _team_roles_for(member, fiscal_year).items()
+            if role == "lead"
+        )
+    configured = member.team_roles or {}
+    if configured:
         return sorted(
             {
-                team.name
-                for team in teams
-                if email in {str(value).strip().lower() for value in team.lead_emails}
+                name
+                for annual_roles in configured.values()
+                for name, role in annual_roles.items()
+                if role == "lead"
             }
         )
-    return []
+    return sorted(set(member.team_names or [])) if member.highest_role == "lead" else []
+
+
+def _scoped_totals(member, fiscal_year):
+    if member.highest_role in {"pi", "budget_manager"}:
+        return database_totals(fiscal_year)
+    rows = _scoped_transactions(member, fiscal_year).exclude(status="Cancelled")
+    team_names = set(_visible_team_names(member, fiscal_year))
+    team_budget = money(
+        sum(
+            (
+                team.allocation_usd
+                for team in fiscal_year.teams.filter(active=True, name__in=team_names)
+            ),
+            Decimal("0"),
+        )
+    )
+    total_allocated = money(sum((row.amount_usd_equiv for row in rows), Decimal("0")))
+    categories = {}
+    for category in CATEGORIES:
+        allocated = money(
+            sum(
+                (
+                    row.amount_usd_equiv
+                    for row in rows
+                    if row.category == category
+                ),
+                Decimal("0"),
+            )
+        )
+        categories[category] = {
+            "budget": Decimal("0.00"),
+            "allocated": allocated,
+            "available": Decimal("0.00"),
+        }
+    teams = {}
+    for team in fiscal_year.teams.filter(active=True, name__in=team_names):
+        allocated = money(
+            sum(
+                (
+                    row.amount_usd_equiv
+                    for row in rows
+                    if row.team == team.name
+                ),
+                Decimal("0"),
+            )
+        )
+        teams[team.name] = {
+            "budget": money(team.allocation_usd),
+            "allocated": allocated,
+            "available": money(team.allocation_usd - allocated),
+        }
+    return {
+        "total_budget": team_budget,
+        "total_allocated": total_allocated,
+        "available": money(team_budget - total_allocated),
+        "transaction_count": rows.count(),
+        "categories": categories,
+        "teams": teams,
+    }
+
+
+def _allowed_team_names(member, fiscal_year=None):
+    return _lead_team_names(member, fiscal_year)
 
 
 def _visible_invoice_drafts(request):
     member = request.lab_member
     if member.highest_role in {"pi", "budget_manager"}:
         return InvoiceDraft.objects.all()
-    if member.highest_role == "lead":
-        lead_teams = set(_allowed_team_names(member))
-        visible_emails = [
-            lab_member.email
-            for lab_member in LabMember.objects.filter(active=True)
-            if lead_teams.intersection(lab_member.team_names)
-        ]
-        return InvoiceDraft.objects.filter(uploader_email__in=visible_emails)
-    return InvoiceDraft.objects.filter(uploader_email=request.user.email)
+    lead_teams = _lead_team_names(member)
+    return InvoiceDraft.objects.filter(
+        Q(uploader_email__iexact=request.user.email) | Q(team__in=lead_teams)
+    )
 
 
 def _can_commit_invoices(request):
     return (
         settings.ENABLE_SHEET_WRITES
         and request.lab_member.highest_role in {"pi", "budget_manager", "lead"}
-        and request.user.email.strip().lower() in settings.SHEET_WRITE_ALLOWED_EMAILS
+        and (
+            "*" in settings.SHEET_WRITE_ALLOWED_EMAILS
+            or request.user.email.strip().lower() in settings.SHEET_WRITE_ALLOWED_EMAILS
+        )
     )
 
 
@@ -217,7 +323,7 @@ def _imports_context(request, active_draft=None, active_form=None, form_error=No
     year_labels = list(FiscalYear.objects.order_by("-label").values_list("label", flat=True))
     team_names = _allowed_team_names(member)
     rows = []
-    for draft in _visible_invoice_drafts(request):
+    for draft in _visible_invoice_drafts(request).exclude(status="dismissed"):
         form = active_form if active_draft and draft.id == active_draft.id else None
         if form is None and draft.status != "imported":
             form = InvoiceCommitForm(
@@ -232,6 +338,8 @@ def _imports_context(request, active_draft=None, active_form=None, form_error=No
         "form_error": form_error,
         "sheet_writes_enabled": settings.ENABLE_SHEET_WRITES,
         "can_commit_invoices": _can_commit_invoices(request),
+        "upload_team_names": _visible_team_names(member),
+        "selected_upload_team": request.POST.get("upload_team", ""),
     }
 
 
@@ -241,12 +349,22 @@ def dashboard(request):
     if fiscal_year is None:
         return render(request, "budget/dashboard.html", {"years": [], "fiscal_year": None})
     member = request.lab_member
-    totals = database_totals(fiscal_year)
+    totals = _scoped_totals(member, fiscal_year)
     scoped = _scoped_transactions(member, fiscal_year)
     monthly = defaultdict(Decimal)
     for txn in scoped.exclude(status="Cancelled").exclude(date=None):
         monthly[txn.date.strftime("%Y-%m")] += txn.amount_usd_equiv
-    max_month = max(monthly.values(), default=Decimal("1")) or Decimal("1")
+    start_year = int(fiscal_year.label[2:6])
+    month_keys = [f"{start_year}-{month:02d}" for month in range(9, 13)] + [
+        f"{start_year + 1}-{month:02d}" for month in range(1, 9)
+    ]
+    monthly_values = [money(monthly.get(month, 0)) for month in month_keys]
+    max_month = max(monthly_values, default=Decimal("1")) or Decimal("1")
+    chart_points = []
+    for index, amount in enumerate(monthly_values):
+        x = round(index * 1000 / max(len(monthly_values) - 1, 1), 2)
+        y = round(220 - float(amount / max_month * Decimal("190")), 2)
+        chart_points.append(f"{x},{y}")
     category_rows = [
         {"name": category, **totals["categories"][category]}
         for category in CATEGORIES
@@ -261,9 +379,11 @@ def dashboard(request):
             "totals": totals,
             "category_rows": category_rows,
             "monthly_rows": [
-                {"month": month, "amount": money(amount), "width": float(amount / max_month * 100)}
-                for month, amount in sorted(monthly.items())
+                {"month": month, "amount": amount}
+                for month, amount in zip(month_keys, monthly_values, strict=True)
             ],
+            "monthly_points": " ".join(chart_points),
+            "monthly_area_points": "0,220 " + " ".join(chart_points) + " 1000,220",
             "cancelled_count": scoped.filter(status="Cancelled").count(),
             "sync_run": fiscal_year.sync_runs.first(),
         },
@@ -274,10 +394,39 @@ def dashboard(request):
 def transactions_view(request):
     years, fiscal_year = _selected_fiscal_year(request)
     transactions = _scoped_transactions(request.lab_member, fiscal_year) if fiscal_year else []
+    if fiscal_year:
+        category = request.GET.get("category", "").strip()
+        status = request.GET.get("status", "").strip()
+        team = request.GET.get("team", "").strip()
+        query = request.GET.get("q", "").strip()
+        if category:
+            transactions = transactions.filter(category=category)
+        if status:
+            transactions = transactions.filter(status=status)
+        if team:
+            transactions = transactions.filter(team=team)
+        if query:
+            from django.db.models import Q
+
+            transactions = transactions.filter(
+                Q(transaction_id__icontains=query)
+                | Q(vendor__icontains=query)
+                | Q(description__icontains=query)
+                | Q(po_number__icontains=query)
+                | Q(invoice_number__icontains=query)
+            )
     return render(
         request,
         "budget/transactions.html",
-        {"years": years, "fiscal_year": fiscal_year, "transactions": transactions},
+        {
+            "years": years,
+            "fiscal_year": fiscal_year,
+            "transactions": transactions,
+            "categories": CATEGORIES,
+            "statuses": ["Allocated", "Cancelled"],
+            "team_names": _allowed_team_names(request.lab_member, fiscal_year) if fiscal_year else [],
+            "filters": request.GET,
+        },
     )
 
 
@@ -285,6 +434,14 @@ def transactions_view(request):
 @require_http_methods(["GET", "POST"])
 def imports_view(request):
     if request.method == "POST":
+        upload_team = request.POST.get("upload_team", "").strip()
+        if upload_team not in _visible_team_names(request.lab_member):
+            return render(
+                request,
+                "budget/imports.html",
+                _imports_context(request, form_error="Select a team you can access."),
+                status=400,
+            )
         uploads = request.FILES.getlist("pdfs")
         if not uploads:
             return render(
@@ -301,11 +458,53 @@ def imports_view(request):
                 status=400,
             )
         try:
-            create_invoice_drafts(uploads, request.user.email)
+            drafts = create_invoice_drafts(uploads, request.user.email)
+            InvoiceDraft.objects.filter(
+                id__in=[draft.id for draft in drafts]
+            ).exclude(status="imported").update(team=upload_team)
         except Exception:
             return _error_response(request, "One or more PDFs could not be parsed.", status=422)
         return redirect("budget:imports")
     return render(request, "budget/imports.html", _imports_context(request))
+
+
+@lab_access("member")
+def invoice_file(request, draft_id):
+    draft = get_object_or_404(_visible_invoice_drafts(request), id=draft_id)
+    if not draft.object_key:
+        return HttpResponse(status=404)
+    try:
+        handle = open_invoice(draft.object_key)
+    except (FileNotFoundError, OSError):
+        return _error_response(request, "The stored invoice file could not be opened.", 404)
+    return FileResponse(
+        handle,
+        content_type="application/pdf",
+        as_attachment=True,
+        filename=draft.file_name,
+    )
+
+
+@lab_access("member")
+@require_POST
+def dismiss_invoice_draft(request, draft_id):
+    draft = get_object_or_404(_visible_invoice_drafts(request), id=draft_id)
+    if draft.status == "imported":
+        return HttpResponseBadRequest("Imported invoices cannot be dismissed.")
+    if request.lab_member.highest_role == "member" and draft.uploader_email != request.user.email:
+        return HttpResponse(status=403)
+    previous_status = draft.status
+    draft.status = "dismissed"
+    draft.save(update_fields=["status"])
+    AdministrativeAudit.objects.create(
+        actor=request.user.email,
+        action="invoice_draft_dismissed",
+        target=str(draft.id),
+        before={"status": previous_status, "file_name": draft.file_name},
+        after={"status": "dismissed", "team": draft.team},
+    )
+    messages.success(request, f"Dismissed {draft.file_name}.")
+    return redirect("budget:imports")
 
 
 @lab_access("lead")
@@ -369,6 +568,30 @@ def commit_invoice_draft(request, draft_id):
             if part
         ),
     }
+    operation_key = f"invoice:{draft.file_sha256}"
+    with db_transaction.atomic():
+        operation, created = SheetOperation.objects.select_for_update().get_or_create(
+            idempotency_key=operation_key,
+            defaults={
+                "operation_type": "import_invoice",
+                "actor": request.user.email,
+                "fiscal_year": fiscal_year,
+                "request": {key: str(value) for key, value in payload.items()},
+            },
+        )
+        if not created and operation.status == "succeeded":
+            messages.info(request, f"{draft.file_name} has already been imported.")
+            return redirect("budget:imports")
+        if not created and operation.status == "pending":
+            messages.warning(request, f"{draft.file_name} is already being processed.")
+            return redirect("budget:imports")
+        operation.status = "pending"
+        operation.error = ""
+        operation.save(update_fields=["status", "error", "updated_at"])
+        draft.status = "processing"
+        draft.team = cleaned["team"]
+        draft.fiscal_year = fiscal_year
+        draft.save(update_fields=["status", "team", "fiscal_year"])
     try:
         gateway = SheetsGateway()
         result = gateway.write_invoice_transaction(fiscal_year.label, payload)
@@ -382,7 +605,13 @@ def commit_invoice_draft(request, draft_id):
             raise SheetsSourceError(
                 "The imported transaction was not read back exactly once."
             )
-    except (SheetsSourceError, ValueError):
+    except (SheetsSourceError, ValueError) as error:
+        operation.status = "failed"
+        operation.error = str(error)
+        operation.completed_at = timezone.now()
+        operation.save(update_fields=["status", "error", "completed_at", "updated_at"])
+        draft.status = "review"
+        draft.save(update_fields=["status"])
         return _error_response(
             request,
             "The invoice could not be verified in Google Sheets. Retrying is safe because PDF imports are idempotent.",
@@ -423,6 +652,23 @@ def commit_invoice_draft(request, draft_id):
     )
     if mirror_warning:
         messages.warning(request, mirror_warning)
+    transaction = Transaction.objects.filter(
+        fiscal_year=fiscal_year, transaction_id=result["transaction_id"]
+    ).first()
+    if transaction:
+        TransactionAudit.objects.create(
+            transaction=transaction,
+            actor=request.user.email,
+            action="invoice_imported",
+            after=transaction.source_payload,
+        )
+        operation.transaction = transaction
+    operation.status = "succeeded"
+    operation.result = result
+    operation.completed_at = timezone.now()
+    operation.save(
+        update_fields=["status", "result", "completed_at", "transaction", "updated_at"]
+    )
     return redirect(f"{reverse('budget:transactions')}?fy={fiscal_year.label}")
 
 

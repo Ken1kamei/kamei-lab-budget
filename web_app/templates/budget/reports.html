@@ -1,0 +1,13 @@
+{% extends 'budget/base.html' %}
+{% load humanize %}
+{% block content %}
+<header class="page-head"><div><div class="eyebrow">ANALYSIS</div><h1>Reports</h1><p>Fiscal-year budget, team, category, and monthly allocation summaries in USD.</p></div>{% include 'budget/_year_picker.html' %}</header>
+{% if fiscal_year %}
+<div class="toolbar"><a class="button secondary" href="{% url 'budget:export_transactions' %}?fy={{ fiscal_year.label }}">Export transactions CSV</a></div>
+<section class="panel panel-wide"><div class="panel-heading"><div><span class="eyebrow">MONTHLY</span><h2>Allocation trend</h2></div><span>USD</span></div><div class="report-lines">{% for row in monthly_rows %}<div class="report-line"><strong>{{ row.month }}</strong><span>${{ row.total|floatformat:2|intcomma }}</span><small>{% for item in row.categories %}{{ item.name }} ${{ item.amount|floatformat:0|intcomma }}{% if not forloop.last %} · {% endif %}{% endfor %}</small></div>{% empty %}<p class="empty">No allocations in this fiscal year.</p>{% endfor %}</div></section>
+<section class="two-column">
+<article class="panel"><div class="panel-heading"><h2>Category position</h2></div><div class="data-list">{% for row in category_rows %}<div class="data-row"><div><strong>{{ row.name }}</strong><small>${{ row.allocated|floatformat:2|intcomma }} of ${{ row.budget|floatformat:2|intcomma }}</small></div><span>${{ row.available|floatformat:2|intcomma }}</span></div>{% endfor %}</div></article>
+<article class="panel"><div class="panel-heading"><h2>Team position</h2></div><div class="data-list">{% for row in team_rows %}<div class="data-row"><div><strong>{{ row.name }}</strong><small>${{ row.allocated|floatformat:2|intcomma }} of ${{ row.budget|floatformat:2|intcomma }}</small></div><span>${{ row.available|floatformat:2|intcomma }}</span></div>{% empty %}<p class="empty">No team allocations found.</p>{% endfor %}</div></article>
+</section>
+{% endif %}
+{% endblock %}

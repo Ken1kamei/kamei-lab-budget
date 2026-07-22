@@ -2,11 +2,24 @@ import os
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get("SECRET_KEY", "local-development-only-change-me")
-DEBUG = os.environ.get("DEBUG", "true").strip().lower() in {"1", "true", "yes"}
+IS_CLOUD_RUN = bool(os.environ.get("K_SERVICE", "").strip())
+BUILD_STATIC = os.environ.get("BUILD_STATIC", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+DEBUG = os.environ.get("DEBUG", "false" if IS_CLOUD_RUN else "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+if IS_CLOUD_RUN and DEBUG:
+    raise ImproperlyConfigured("DEBUG cannot be enabled on Cloud Run.")
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
@@ -62,9 +75,12 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
+database_url = os.environ.get("DATABASE_URL", "").strip()
+if not DEBUG and not database_url:
+    raise ImproperlyConfigured("DATABASE_URL is required outside DEBUG mode.")
 DATABASES = {
     "default": dj_database_url.config(
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        default=database_url or f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
         conn_max_age=600,
         conn_health_checks=True,
     )
@@ -132,6 +148,14 @@ SHEET_WRITE_ALLOWED_EMAILS = {
     for email in os.environ.get("SHEET_WRITE_ALLOWED_EMAILS", PI_EMAIL).split(",")
     if email.strip()
 }
+if not DEBUG and not BUILD_STATIC:
+    oidc_configured = bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
+    if not IAP_EXPECTED_AUDIENCE and not oidc_configured:
+        raise ImproperlyConfigured(
+            "Configure IAP_EXPECTED_AUDIENCE or Google OIDC outside DEBUG mode."
+        )
+    if not INVOICE_BUCKET:
+        raise ImproperlyConfigured("INVOICE_BUCKET is required outside DEBUG mode.")
 
 LOGGING = {
     "version": 1,

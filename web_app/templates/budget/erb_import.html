@@ -1,0 +1,8 @@
+{% extends 'budget/base.html' %}
+{% load humanize %}
+{% block content %}
+<header class="page-head"><div><div class="eyebrow">NYUAD ERB</div><h1>Import ERB Excel</h1><p>Parse cross-charge rows, review the fiscal-year routing, then register stable transaction IDs.</p></div></header>
+<div class="toolbar"><a class="button secondary" href="{% url 'budget:imports' %}">PDF invoices</a></div>
+<form method="post" enctype="multipart/form-data" class="panel form-grid">{% csrf_token %}<input type="hidden" name="action" value="parse">{% for field in form %}<label><span>{{ field.label }}</span>{{ field }}{% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}</label>{% endfor %}<button class="button primary span-2" type="submit">Parse ERB file</button></form>
+{% if preview %}<section class="panel table-panel spaced"><table><thead><tr><th>Date</th><th>FY</th><th>Description</th><th>Team</th><th>Invoice</th><th class="number">AED</th></tr></thead><tbody>{% for row in preview_rows %}<tr><td>{{ row.date }}</td><td>{{ row.fiscal_year }}</td><td>{{ row.description }}</td><td>{{ row.team }}</td><td>{{ row.invoice_number }}</td><td class="number">{{ row.amount_aed|floatformat:2|intcomma }}</td></tr>{% endfor %}</tbody></table></section><form method="post" class="toolbar">{% csrf_token %}<input type="hidden" name="action" value="commit"><button class="button primary" type="submit" {% if not sheet_write_allowed %}disabled{% endif %}>Import and verify {{ preview|length }} rows</button></form>{% endif %}
+{% endblock %}

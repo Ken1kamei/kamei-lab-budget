@@ -5,8 +5,11 @@ Last verified: 2026-07-22 (Asia/Dubai)
 ## Scope
 
 - Existing Streamlit remains the production application.
-- Django staging mirrors Google Sheets and has a feature-flagged invoice
-  registration path.
+- Django staging currently mirrors Google Sheets and retains its controlled
+  invoice pilot until the Cloud SQL/GCS promotion below is approved.
+- The completed local candidate adds the full Budget workflow: manual
+  transactions, edit/cancel, reports, ERB import, Settings, roles, audit and
+  durable storage models.
 - Uploaded invoices remain temporary review drafts until a Team Lead, Budget
   Manager, or PI confirms the extracted fields.
 - Existing Streamlit remains the production application and is unchanged.
@@ -20,9 +23,10 @@ Last verified: 2026-07-22 (Asia/Dubai)
 - Access: Google Cloud IAP plus the application lab-member allowlist
 - Scaling: zero idle instances, maximum one instance
 
-The one-instance limit is required while staging uses temporary SQLite and a
-cross-process file lock for Sheet writes. A durable database and distributed
-lock are required before production cutover or scale-out.
+The currently deployed one-instance staging revision still uses temporary
+SQLite. The new candidate refuses to start in production without a configured
+`DATABASE_URL`; it must be deployed with Cloud SQL PostgreSQL and a private GCS
+invoice bucket.
 
 ## Controlled staging write path
 
@@ -31,8 +35,8 @@ lock are required before production cutover or scale-out.
 - Member: upload and view their own review drafts.
 - Registration is additionally restricted by `SHEET_WRITE_ALLOWED_EMAILS`.
   During the temporary-SQLite pilot this list contains only the PI.
-- Team Lead and Budget Manager registration stays disabled until durable draft
-  routing is stored in Cloud SQL.
+- The candidate supports Team Lead and Budget Manager registration within their
+  normal role/team scope after Cloud SQL is connected.
 - Registration always writes `Allocated`; a `Cancelled` transaction cannot be
   restored by re-importing its PDF.
 - The PDF SHA-256 marker is checked across all registered fiscal years.
@@ -53,10 +57,12 @@ The verification command compares Django output against the existing
 Streamlit calculation functions, including fiscal-year routing, currency
 conversion, team allocations, and `Cancelled` exclusion.
 
-## Tests completed
+## Candidate verification completed
 
-- Django test suite: 25 passed.
-- Django deployment check: no issues.
+- Django test suite: 67 passed.
+- Django production deployment check: no issues with production settings.
+- Production Docker image: built successfully; migrations completed and the
+  Gunicorn login endpoint returned HTTP 200 from the running container.
 - Google Sheet sync: row counts and normalized transaction rows matched.
 - Dashboard: fiscal-year selection and all four FY2025-26 metrics verified.
 - Transactions: 27 FY2025-26 rows and transaction IDs verified.
@@ -66,11 +72,14 @@ conversion, team allocations, and `Cancelled` exclusion.
 - Deployed parser: `INS6000_9216658.PDF` produced PeopleSoft Inventory,
   invoice `INS6000_9216658`, USD 151.95, date 2026-03-26, description, fiscal
   year, category, and team controls through the authenticated staging UI.
-- Reversible Sheet write: a temporary USD 0.01 row was written to FY2025-26,
-  read back exactly once, mirrored with `Matched`, and removed. The complete
-  27-row transaction set and totals matched the original after restoration.
-- Responsive UI: desktop and 390 x 844 mobile viewports had no horizontal
-  overflow.
+- Reversible category budget: FY2026-27 Consumables was changed from $109,500
+  to $10,000, read back from Google Sheets, mirrored as `Matched`, and restored
+  to $109,500 in both Sheet and web mirror.
+- Reversible transaction lifecycle: a temporary USD 0.01 row was written to
+  FY2025-26, read back, cancelled, verified to release the budget, deleted, and
+  restored to the exact original 27-row set and totals.
+- Responsive UI: desktop 1440px and small-screen 500px viewports had no
+  horizontal overflow; metric values remained inside their panels.
 - Browser console: no JavaScript errors.
 - IAP: anonymous requests redirect to Google sign-in; direct public Cloud Run
   invocation is disabled.
@@ -81,8 +90,11 @@ conversion, team allocations, and `Cancelled` exclusion.
 - Cloud live parity refresh: run `#3` at `2026-07-22 12:44:17 +04` reported
   `Matched`, 27 source rows, 27 mirror rows, and `Exact match`.
 - Cloud browser console: no errors or warnings after the authenticated flow.
-- Cloud startup: migrations, both sheet syncs, both parity comparisons, and
-  Gunicorn startup completed successfully.
+- Local startup: migrations are separate from web startup; both Sheet syncs and
+  parity comparisons completed successfully before Gunicorn/Django serving.
+- Summary formulas: all eight category/TOTAL formula ranges were repaired and
+  read back successfully in both FY2025-26 and FY2026-27 without changing their
+  category budget inputs.
 
 ## Rollback
 
@@ -92,7 +104,6 @@ row has been removed and no dummy transaction remains.
 
 ## Promotion gate
 
-Do not replace Streamlit or increase Cloud Run beyond one instance until the
-Django app has a durable database, distributed idempotency/outbox, durable PDF
-storage, edit/cancel audit history, and a second production-data round trip
-after those components are installed.
+Do not replace Streamlit until Cloud SQL PostgreSQL and the private GCS bucket
+are provisioned, migrations/sync run as release jobs, authenticated role smoke
+tests pass in Cloud Run, and daily Streamlit-vs-Web totals match for one week.
