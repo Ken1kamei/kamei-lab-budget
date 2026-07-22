@@ -1,8 +1,10 @@
-# Kamei Lab Budget Web
+# Kamei Lab Integrated Web
 
-This Django application is the operational web version of the Kamei Lab Budget
-Manager. Google Sheets remain the fiscal-year source of truth while PostgreSQL
-provides the fast web mirror, audit trail, durable import queue, and idempotency.
+This Django application is the integrated web version of the Kamei Lab Budget
+Manager, Portal, Project Tracker, and Notebooks/Protocols. Google Sheets remain
+the structured-data source of truth, private GCS buckets hold uploaded files,
+and PostgreSQL provides the fast web mirror, audit trail, durable import queue,
+and idempotency.
 
 The existing Streamlit application remains available during the measured
 parallel-run period. Do not switch the production entry point until the two
@@ -34,12 +36,17 @@ Credentials. The gateway requests a read-only Sheets scope unless
 - PI, Budget Manager, Team Leader, Member, and unknown-user access boundaries.
 - Every Sheet mutation is serialized, read back, mirrored, and audited before
   the UI reports success. Repeated submissions use durable idempotency keys.
+- Shared launcher and registry administration at `/portal/`.
+- Project, milestone, experiment, review, and next-action workflows at `/tracker/`.
+- Searchable protocol and notebook registry plus private uploads at `/knowledge/`.
 
 ## Production requirements
 
 - Cloud SQL PostgreSQL configured through the Secret Manager-backed
   `CLOUD_DATABASE_URL` (or `DATABASE_URL` for local compatibility).
 - A private GCS bucket configured through `INVOICE_BUCKET`.
+- A separate private GCS bucket configured through `KNOWLEDGE_BUCKET`; public
+  access prevention and uniform bucket-level access must remain enabled.
 - Cloud Run IAP with `IAP_EXPECTED_AUDIENCE` and the approved NYU users.
 - `ENABLE_SHEET_WRITES=true` only after the PostgreSQL migration and smoke test.
 - `SHEET_WRITE_ALLOWED_EMAILS` set to the accounts permitted for the rollout;
@@ -49,9 +56,21 @@ Credentials. The gateway requests a read-only Sheets scope unless
 
 Recommended Cloud Run job schedule after PostgreSQL is connected:
 
-- Every 5 minutes: `python manage.py sync_sheets`
+- Every 5 minutes: `python manage.py sync_sheets`, then
+  `python manage.py sync_lab_apps`
 - Daily after the sync: `python manage.py verify_streamlit_parity`
-- Each release: `python manage.py migrate --noinput`, then one `sync_sheets`
+- Each release: `python manage.py migrate --noinput`, then one `sync_sheets` and
+  one `sync_lab_apps`
+
+The integrated-app parity and reversible release checks are:
+
+```bash
+python manage.py verify_lab_apps_parity
+python manage.py verify_lab_apps_roundtrip --actor kk4801@nyu.edu
+```
+
+The round trip temporarily adds and removes one Project row and one private GCS
+object. It fails unless both sources are restored exactly.
 
 The scheduled job and web service must use the same database URL, service
 account, registry/Sheet configuration, and private invoice bucket. Alert on any

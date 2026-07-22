@@ -1,0 +1,31 @@
+{% extends "budget/base.html" %}
+{% block title %}Kamei Lab Portal{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <span class="eyebrow">Private lab portal</span>
+    <h1>Kamei Lab Apps</h1>
+    <p>One sign-in for the lab's operational tools. Hello, {{ member.display_name|default:"Lab member" }}.</p>
+  </div>
+</header>
+
+<section class="metric-grid app-metric-grid" aria-label="Lab registry summary">
+  <article class="metric cyan"><span>Active members</span><strong>{{ counts.members }}</strong><small>Shared allowlist</small></article>
+  <article class="metric magenta"><span>Teams</span><strong>{{ counts.teams }}</strong><small>Cross-team membership supported</small></article>
+  <article class="metric amber"><span>Projects</span><strong>{{ counts.projects }}</strong><small>Tracked research projects</small></article>
+  <article class="metric cyan"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>Private knowledge records</small></article>
+</section>
+
+<section class="app-card-grid">
+  {% for card in cards %}
+  <a class="app-card" href="{{ card.url }}">
+    <span class="status ready">{{ card.role }}</span>
+    <h2>{{ card.name }}</h2>
+    <p>{{ card.description }}</p>
+    <strong>Open app</strong>
+  </a>
+  {% empty %}
+  <div class="panel empty">No app roles are assigned to your account.</div>
+  {% endfor %}
+</section>
+{% endblock %}

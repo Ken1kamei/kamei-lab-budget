@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Kamei Lab Budget{% endblock %}</title>
+  <title>{% block title %}Kamei Lab Apps{% endblock %}</title>
   <link rel="icon" href="{% static 'budget/favicon.svg' %}" type="image/svg+xml">
   <link rel="stylesheet" href="{% static 'budget/app.css' %}">
 </head>
@@ -12,19 +12,14 @@
   <div class="shell">
     {% if request.user.is_authenticated %}
     <aside class="sidebar">
-      <a class="brand" href="{% url 'budget:dashboard' %}">Kamei Lab</a>
-      <div class="brand-subtitle">Budget Manager</div>
-      <nav aria-label="Main navigation">
-        <a href="{% url 'budget:dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Overview</a>
-        <a href="{% url 'budget:transactions' %}" class="{% if request.resolver_match.url_name == 'transactions' %}active{% endif %}">Transactions</a>
-        <a href="{% url 'budget:add_transaction' %}" class="{% if request.resolver_match.url_name == 'add_transaction' %}active{% endif %}">Add expense</a>
-        <a href="{% url 'budget:imports' %}" class="{% if request.resolver_match.url_name == 'imports' or request.resolver_match.url_name == 'erb_import' %}active{% endif %}">Import invoices</a>
-        <a href="{% url 'budget:reports' %}" class="{% if request.resolver_match.url_name == 'reports' %}active{% endif %}">Reports</a>
-        {% if lab_role == 'pi' or lab_role == 'budget_manager' %}
-        <a href="{% url 'budget:settings' %}" class="{% if request.resolver_match.url_name == 'settings' %}active{% endif %}">Settings</a>
-        <a href="{% url 'budget:comparison' %}" class="{% if request.resolver_match.url_name == 'comparison' %}active{% endif %}">Parity checks</a>
-        {% endif %}
-      </nav>
+      <a class="brand" href="{% url 'labapps:portal' %}">Kamei Lab</a>
+      <div class="brand-subtitle">Private lab portal</div>
+      <nav class="desktop-navigation" aria-label="Main navigation">{% include "budget/_navigation.html" %}</nav>
+      <details class="mobile-navigation">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile navigation">{% include "budget/_navigation.html" %}</nav>
+        <div class="mobile-session"><span>{{ request.user.email }}</span><a href="{% url 'budget:logout' %}">Sign out</a></div>
+      </details>
       <div class="sidebar-footer">
         <span>{{ request.user.email }}</span>
         <a href="{% url 'budget:logout' %}">Sign out</a>

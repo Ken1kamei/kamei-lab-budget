@@ -17,5 +17,6 @@ Including another URLconf
 from django.urls import include, path
 
 urlpatterns = [
+    path('', include('labapps.urls')),
     path('', include('budget.urls')),
 ]

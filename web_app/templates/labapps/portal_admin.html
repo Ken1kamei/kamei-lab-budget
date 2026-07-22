@@ -1,0 +1,34 @@
+{% extends "budget/base.html" %}
+{% load labapps_tags %}
+{% block title %}Lab Registry{% endblock %}
+{% block content %}
+<header class="page-head"><div><span class="eyebrow">PI / Admin</span><h1>Lab registry</h1><p>Members, teams, and app roles are written to the shared Google Sheet and read back before success is shown.</p></div></header>
+
+<div class="section-tabs">
+  <a href="#members">Members</a><a href="#teams">Teams</a><a href="#roles">App access</a>
+</div>
+
+<section id="members" class="panel settings-section">
+  <div class="panel-heading"><div><span>Allowlist</span><h2>Members</h2></div><span>{{ members|length }} records</span></div>
+  <div class="two-column registry-layout">
+    <form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="member">{{ member_form.as_div }}<button class="button primary" type="submit">Save member</button></form>
+    <div class="table-panel"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th></tr></thead><tbody>{% for row in members %}<tr><td>{{ row.display_name|default:row.name }}</td><td>{{ row.email }}</td><td>{{ row.global_role }}</td><td>{{ row.active }}</td></tr>{% endfor %}</tbody></table></div>
+  </div>
+</section>
+
+<section id="teams" class="panel settings-section">
+  <div class="panel-heading"><div><span>Organization</span><h2>Teams</h2></div><span>{{ teams|length }} records</span></div>
+  <div class="two-column registry-layout">
+    <form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="team">{{ team_form.as_div }}<button class="button primary" type="submit">Save team</button></form>
+    <div class="data-list">{% for row in teams %}<div class="data-row"><div><strong>{{ row.team_name }}</strong><small>{{ row.description }}</small></div><span>{{ row.active }}</span></div>{% endfor %}</div>
+  </div>
+</section>
+
+<section id="roles" class="panel settings-section">
+  <div class="panel-heading"><div><span>Permissions</span><h2>App access</h2></div><span>{{ roles|length }} assignments</span></div>
+  <div class="two-column registry-layout">
+    <form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="role">{{ role_form.as_div }}<button class="button primary" type="submit">Save app role</button></form>
+    <div class="table-panel"><table><thead><tr><th>Member</th><th>App</th><th>Role</th><th>Team scope</th><th>Active</th></tr></thead><tbody>{% for row in roles %}<tr><td>{{ member_lookup|get_item:row.member_id }}</td><td>{{ row.app_id }}</td><td>{{ row.app_role }}</td><td>{{ row.scope_team_id|default:"All" }}</td><td>{{ row.active }}</td></tr>{% endfor %}</tbody></table></div>
+  </div>
+</section>
+{% endblock %}

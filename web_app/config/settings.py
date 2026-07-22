@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.humanize",
     "budget.apps.BudgetConfig",
+    "labapps.apps.LabAppsConfig",
 ]
 
 MIDDLEWARE = [
@@ -67,6 +68,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "budget.context_processors.lab_context",
+                "labapps.context_processors.lab_apps_context",
             ],
         },
     },
@@ -102,6 +104,13 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 INVOICE_BUCKET = os.environ.get("INVOICE_BUCKET", "").strip()
 INVOICE_STORAGE_PREFIX = os.environ.get("INVOICE_STORAGE_PREFIX", "invoices").strip("/")
+KNOWLEDGE_BUCKET = os.environ.get("KNOWLEDGE_BUCKET", INVOICE_BUCKET).strip()
+KNOWLEDGE_STORAGE_PREFIX = os.environ.get(
+    "KNOWLEDGE_STORAGE_PREFIX", "knowledge"
+).strip("/")
+KNOWLEDGE_SEED_OBJECT = os.environ.get(
+    "KNOWLEDGE_SEED_OBJECT", "knowledge-seed/records.json"
+).strip("/")
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {
@@ -115,7 +124,7 @@ STORAGES = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOGIN_URL = "budget:login"
-LOGIN_REDIRECT_URL = "budget:dashboard"
+LOGIN_REDIRECT_URL = "labapps:portal"
 LOGOUT_REDIRECT_URL = "budget:login"
 
 SESSION_COOKIE_SECURE = not DEBUG
@@ -143,6 +152,9 @@ MASTER_SPREADSHEET_ID = os.environ.get("MASTER_SPREADSHEET_ID", "")
 REGISTRY_SPREADSHEET_ID = os.environ.get(
     "REGISTRY_SPREADSHEET_ID", ""
 )
+PROGRESS_SPREADSHEET_ID = os.environ.get(
+    "PROGRESS_SPREADSHEET_ID", REGISTRY_SPREADSHEET_ID
+).strip()
 ENABLE_SHEET_WRITES = os.environ.get("ENABLE_SHEET_WRITES", "false").strip().lower() in {
     "1",
     "true",
