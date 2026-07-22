@@ -5,15 +5,18 @@ from decimal import Decimal
 
 from authlib.integrations.django_client import OAuth
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth import get_user_model, login, logout
 from django.http import HttpResponse, HttpResponseBadRequest
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods, require_POST
 
 from budget.access import current_member, lab_access
-from budget.models import FiscalYear, InvoiceDraft, LabMember, SyncRun, Transaction
-from budget.services.calculations import CATEGORIES, compare_totals, money
+from budget.forms import InvoiceCommitForm
+from budget.models import FiscalYear, InvoiceDraft, LabMember, SyncRun, Team, Transaction
+from budget.services.calculations import CATEGORIES, compare_totals, fiscal_year_for_date, money
 from budget.services.invoices import create_invoice_drafts
 from budget.services.sheets import SheetsGateway, SheetsSourceError
 from budget.services.sync import database_totals, sync_fiscal_year
@@ -136,6 +139,102 @@ def _scoped_transactions(member, fiscal_year):
     return transactions
 
 
+def _allowed_team_names(member, fiscal_year=None):
+    teams = Team.objects.filter(active=True)
+    if fiscal_year is not None:
+        teams = teams.filter(fiscal_year=fiscal_year)
+    if member.highest_role in {"pi", "budget_manager"}:
+        return list(teams.order_by("name").values_list("name", flat=True).distinct())
+    if member.highest_role == "lead":
+        email = member.email.strip().lower()
+        return sorted(
+            {
+                team.name
+                for team in teams
+                if email in {str(value).strip().lower() for value in team.lead_emails}
+            }
+        )
+    return []
+
+
+def _visible_invoice_drafts(request):
+    member = request.lab_member
+    if member.highest_role in {"pi", "budget_manager"}:
+        return InvoiceDraft.objects.all()
+    if member.highest_role == "lead":
+        lead_teams = set(_allowed_team_names(member))
+        visible_emails = [
+            lab_member.email
+            for lab_member in LabMember.objects.filter(active=True)
+            if lead_teams.intersection(lab_member.team_names)
+        ]
+        return InvoiceDraft.objects.filter(uploader_email__in=visible_emails)
+    return InvoiceDraft.objects.filter(uploader_email=request.user.email)
+
+
+def _can_commit_invoices(request):
+    return (
+        settings.ENABLE_SHEET_WRITES
+        and request.lab_member.highest_role in {"pi", "budget_manager", "lead"}
+        and request.user.email.strip().lower() in settings.SHEET_WRITE_ALLOWED_EMAILS
+    )
+
+
+def _draft_initial(draft, year_labels, team_names):
+    parsed = dict(draft.parsed_data or {})
+    invoice_date = str(parsed.get("invoice_date") or timezone.localdate().isoformat())[:10]
+    try:
+        suggested_year = fiscal_year_for_date(invoice_date)
+    except ValueError:
+        invoice_date = timezone.localdate().isoformat()
+        suggested_year = fiscal_year_for_date(invoice_date)
+    if suggested_year not in year_labels and year_labels:
+        suggested_year = year_labels[0]
+    category = str(parsed.get("suggested_category") or "Consumables")
+    if category not in CATEGORIES:
+        category = "Consumables"
+    suggested_team = str(parsed.get("suggested_team") or "")
+    return {
+        "date": invoice_date,
+        "fiscal_year": suggested_year,
+        "category": category,
+        "subcategory": str(parsed.get("suggested_subcategory") or ""),
+        "vendor": str(parsed.get("vendor") or ""),
+        "description": str(
+            parsed.get("suggested_description") or draft.file_name
+        ),
+        "po_number": str(parsed.get("po_number") or ""),
+        "invoice_number": str(parsed.get("invoice_number") or ""),
+        "currency": str(parsed.get("currency") or "USD").upper(),
+        "amount": parsed.get("total_amount") or "",
+        "team": suggested_team if suggested_team in team_names else (team_names[0] if len(team_names) == 1 else ""),
+        "notes": "",
+    }
+
+
+def _imports_context(request, active_draft=None, active_form=None, form_error=None):
+    member = request.lab_member
+    year_labels = list(FiscalYear.objects.order_by("-label").values_list("label", flat=True))
+    team_names = _allowed_team_names(member)
+    rows = []
+    for draft in _visible_invoice_drafts(request):
+        form = active_form if active_draft and draft.id == active_draft.id else None
+        if form is None and draft.status != "imported":
+            form = InvoiceCommitForm(
+                initial=_draft_initial(draft, year_labels, team_names),
+                year_choices=year_labels,
+                team_choices=team_names,
+                prefix=f"draft-{draft.id}",
+            )
+        rows.append({"draft": draft, "form": form})
+    return {
+        "draft_rows": rows,
+        "form_error": form_error,
+        "sheet_writes_enabled": settings.ENABLE_SHEET_WRITES,
+        "can_commit_invoices": _can_commit_invoices(request),
+    }
+
+
 @lab_access("member")
 def dashboard(request):
     years, fiscal_year = _selected_fiscal_year(request)
@@ -185,21 +284,20 @@ def transactions_view(request):
 @lab_access("member")
 @require_http_methods(["GET", "POST"])
 def imports_view(request):
-    drafts = InvoiceDraft.objects.filter(uploader_email=request.user.email)
     if request.method == "POST":
         uploads = request.FILES.getlist("pdfs")
         if not uploads:
             return render(
                 request,
                 "budget/imports.html",
-                {"drafts": drafts, "form_error": "Select at least one PDF file."},
+                _imports_context(request, form_error="Select at least one PDF file."),
                 status=400,
             )
         if len(uploads) > 20:
             return render(
                 request,
                 "budget/imports.html",
-                {"drafts": drafts, "form_error": "Upload at most 20 PDFs at a time."},
+                _imports_context(request, form_error="Upload at most 20 PDFs at a time."),
                 status=400,
             )
         try:
@@ -207,7 +305,125 @@ def imports_view(request):
         except Exception:
             return _error_response(request, "One or more PDFs could not be parsed.", status=422)
         return redirect("budget:imports")
-    return render(request, "budget/imports.html", {"drafts": drafts})
+    return render(request, "budget/imports.html", _imports_context(request))
+
+
+@lab_access("lead")
+@require_POST
+def commit_invoice_draft(request, draft_id):
+    if not settings.ENABLE_SHEET_WRITES:
+        return HttpResponse(status=404)
+    if not _can_commit_invoices(request):
+        return HttpResponse(status=403)
+    draft = get_object_or_404(_visible_invoice_drafts(request), id=draft_id)
+    if draft.status == "imported":
+        messages.info(request, f"{draft.file_name} has already been imported.")
+        return redirect("budget:imports")
+    year_labels = list(FiscalYear.objects.order_by("-label").values_list("label", flat=True))
+    team_names = _allowed_team_names(request.lab_member)
+    form = InvoiceCommitForm(
+        request.POST,
+        year_choices=year_labels,
+        team_choices=team_names,
+        prefix=f"draft-{draft.id}",
+    )
+    if not form.is_valid():
+        return render(
+            request,
+            "budget/imports.html",
+            _imports_context(
+                request,
+                active_draft=draft,
+                active_form=form,
+                form_error="Review the highlighted invoice fields.",
+            ),
+            status=400,
+        )
+    cleaned = form.cleaned_data
+    fiscal_year = get_object_or_404(FiscalYear, label=cleaned["fiscal_year"])
+    allowed_for_year = _allowed_team_names(request.lab_member, fiscal_year)
+    if cleaned["team"] not in allowed_for_year:
+        form.add_error("team", "You cannot import transactions for this team and fiscal year.")
+        return render(
+            request,
+            "budget/imports.html",
+            _imports_context(
+                request,
+                active_draft=draft,
+                active_form=form,
+                form_error="Select a team you can access for this fiscal year.",
+            ),
+            status=403,
+        )
+    payload = {
+        **cleaned,
+        "file_name": draft.file_name,
+        "file_sha256": draft.file_sha256,
+        "entered_by": request.user.email,
+        "notes": "\n".join(
+            part
+            for part in (
+                str(cleaned.get("notes") or "").strip(),
+                f"Uploaded by {draft.uploader_email}",
+            )
+            if part
+        ),
+    }
+    try:
+        gateway = SheetsGateway()
+        result = gateway.write_invoice_transaction(fiscal_year.label, payload)
+        snapshot = gateway.read_fiscal_year(fiscal_year.label)
+        matches = [
+            row
+            for row in snapshot.get("transactions", [])
+            if str(row.get("Transaction ID") or "").strip() == result["transaction_id"]
+        ]
+        if len(matches) != 1 or draft.file_sha256 not in str(matches[0].get("Notes") or ""):
+            raise SheetsSourceError(
+                "The imported transaction was not read back exactly once."
+            )
+    except (SheetsSourceError, ValueError):
+        return _error_response(
+            request,
+            "The invoice could not be verified in Google Sheets. Retrying is safe because PDF imports are idempotent.",
+        )
+    draft.status = "imported"
+    draft.imported_fiscal_year = fiscal_year.label
+    draft.imported_transaction_id = result["transaction_id"]
+    draft.imported_at = timezone.now()
+    draft.save(
+        update_fields=[
+            "status",
+            "imported_fiscal_year",
+            "imported_transaction_id",
+            "imported_at",
+        ]
+    )
+    mirror_warning = ""
+    try:
+        run = sync_fiscal_year(snapshot, actor=request.user.email)
+        if run.status != "matched":
+            mirror_warning = (
+                "The Google Sheet registration is complete, but the web dashboard "
+                "mirror needs to be synchronized again."
+            )
+    except Exception:
+        logger.exception(
+            "Invoice %s was verified in Google Sheets but mirror sync failed.",
+            result["transaction_id"],
+        )
+        mirror_warning = (
+            "The Google Sheet registration is complete, but the web dashboard "
+            "mirror needs to be synchronized again."
+        )
+    verb = "Updated" if result["matched"] else "Imported"
+    messages.success(
+        request,
+        f"{verb} {draft.file_name} as {result['transaction_id']} in {fiscal_year.label}.",
+    )
+    if mirror_warning:
+        messages.warning(request, mirror_warning)
+    return redirect(f"{reverse('budget:transactions')}?fy={fiscal_year.label}")
 
 
 @lab_access("budget_manager")

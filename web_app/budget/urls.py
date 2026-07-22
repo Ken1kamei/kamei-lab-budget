@@ -14,6 +14,11 @@ urlpatterns = [
     path("logout/", views.logout_view, name="logout"),
     path("transactions/", views.transactions_view, name="transactions"),
     path("imports/", views.imports_view, name="imports"),
+    path(
+        "imports/<int:draft_id>/commit/",
+        views.commit_invoice_draft,
+        name="commit_invoice_draft",
+    ),
     path("comparison/", views.comparison_view, name="comparison"),
     path("sync/", views.sync_view, name="sync"),
     path("health/", views.health, name="health"),

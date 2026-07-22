@@ -119,6 +119,16 @@ MASTER_SPREADSHEET_ID = os.environ.get("MASTER_SPREADSHEET_ID", "")
 REGISTRY_SPREADSHEET_ID = os.environ.get(
     "REGISTRY_SPREADSHEET_ID", ""
 )
+ENABLE_SHEET_WRITES = os.environ.get("ENABLE_SHEET_WRITES", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+SHEET_WRITE_ALLOWED_EMAILS = {
+    email.strip().lower()
+    for email in os.environ.get("SHEET_WRITE_ALLOWED_EMAILS", PI_EMAIL).split(",")
+    if email.strip()
+}
 
 LOGGING = {
     "version": 1,

@@ -25,7 +25,7 @@ def create_invoice_drafts(uploaded_files, uploader_email: str):
         digest = hashlib.sha256(payload).hexdigest()
         parsed = parse_pdf_bytes(payload, uploaded_file.name)
         status = "ready" if not parsed.get("_error") and not parsed.get("missing_fields") else "review"
-        draft, _ = InvoiceDraft.objects.update_or_create(
+        draft, created = InvoiceDraft.objects.get_or_create(
             uploader_email=uploader_email.strip().lower(),
             file_sha256=digest,
             defaults={
@@ -34,5 +34,13 @@ def create_invoice_drafts(uploaded_files, uploader_email: str):
                 "status": status,
             },
         )
+        if not created:
+            draft.file_name = uploaded_file.name[:255]
+            draft.parsed_data = parsed
+            update_fields = ["file_name", "parsed_data"]
+            if draft.status != "imported":
+                draft.status = status
+                update_fields.append("status")
+            draft.save(update_fields=update_fields)
         drafts.append(draft)
     return drafts

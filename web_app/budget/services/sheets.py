@@ -1,18 +1,59 @@
+import fcntl
 import json
 import os
+import re
+import secrets
 import tomllib
+from contextlib import contextmanager
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import gspread
 import google.auth
 from django.conf import settings
 from google.oauth2.service_account import Credentials
 
-from budget.services.calculations import DEFAULT_RATES_TO_USD
+from budget.services.calculations import (
+    DEFAULT_RATES_TO_USD,
+    SUPPORTED_CURRENCIES,
+    decimal_value,
+    fiscal_year_for_date,
+    money,
+)
 
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
+READ_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+WRITE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+DUBAI_TZ = ZoneInfo("Asia/Dubai")
+TRANSACTION_COLUMNS = [
+    "Transaction ID",
+    "Date",
+    "Fiscal Year",
+    "Category",
+    "Sub-category",
+    "Vendor / Payee",
+    "Description",
+    "PO Number",
+    "Invoice Number",
+    "Currency",
+    "Amount",
+    "Amount (USD equiv)",
+    "Amount (AED)",
+    "Amount (USD)",
+    "Amount (AED equiv)",
+    "Status",
+    "Receipt Confirmed",
+    "PDF Link",
+    "Email Thread ID",
+    "Entered By",
+    "Entry Method",
+    "Notes",
+    "Last Modified",
+    "Team",
+    "Approved By",
+    "Approved At",
 ]
 SUMMARY_COLUMNS = [
     "Category",
@@ -40,6 +81,17 @@ SUMMARY_CATEGORIES = {
 
 class SheetsSourceError(RuntimeError):
     pass
+
+
+@contextmanager
+def _sheet_write_lock():
+    lock_path = os.environ.get("SHEET_WRITE_LOCK_PATH", "/tmp/kamei-budget-sheet-write.lock")
+    with open(lock_path, "a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _truthy(value) -> bool:
@@ -100,18 +152,19 @@ def _role_people(rows, member_lookup, allowed_roles):
 
 
 class SheetsGateway:
-    """Read-only adapter for the current fiscal-year Google Sheet topology."""
+    """Read and write adapter for the fiscal-year Google Sheet topology."""
 
     def __init__(self, client=None):
         if client is not None:
             self.client = client
             return
         info = _service_account_info()
+        scopes = WRITE_SCOPES if settings.ENABLE_SHEET_WRITES else READ_SCOPES
         if info:
-            credentials = Credentials.from_service_account_info(info, scopes=SCOPES)
+            credentials = Credentials.from_service_account_info(info, scopes=scopes)
         else:
             try:
-                credentials, _ = google.auth.default(scopes=SCOPES)
+                credentials, _ = google.auth.default(scopes=scopes)
             except google.auth.exceptions.DefaultCredentialsError as error:
                 raise SheetsSourceError(
                     "Google Application Default Credentials are not configured."
@@ -307,3 +360,386 @@ class SheetsGateway:
             "aed_per_usd": aed_per_usd,
             "warnings": [registry_warning] if registry_warning else [],
         }
+
+    @staticmethod
+    def _column_label(index):
+        label = ""
+        while index:
+            index, remainder = divmod(index - 1, 26)
+            label = chr(65 + remainder) + label
+        return label
+
+    @staticmethod
+    def _normalize_key(value):
+        return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+    @staticmethod
+    def _row_mapping(headers, row):
+        return {
+            header: row[index] if index < len(row) else ""
+            for index, header in enumerate(headers)
+        }
+
+    def _transaction_sheet(self, fiscal_year):
+        workbook, spreadsheet_id, _, base_year = self._workbook_for_year(fiscal_year)
+        worksheet_name = self._worksheet_name(
+            "Transactions",
+            fiscal_year,
+            spreadsheet_id,
+            _master_spreadsheet_id(),
+            base_year,
+        )
+        try:
+            return workbook.worksheet(worksheet_name), workbook, spreadsheet_id, base_year
+        except Exception as error:
+            raise SheetsSourceError(
+                f"The {fiscal_year} workbook is missing its Transactions worksheet."
+            ) from error
+
+    @staticmethod
+    def _configured_rates(workbook, master, fiscal_year, spreadsheet_id, base_year):
+        worksheet_name = SheetsGateway._worksheet_name(
+            "Config", fiscal_year, spreadsheet_id, _master_spreadsheet_id(), base_year
+        )
+        try:
+            values = workbook.worksheet(worksheet_name).get_all_values()
+        except Exception:
+            values = master.worksheet("Config").get_all_values()
+        config = {
+            str(row[0]).strip(): str(row[1]).strip() if len(row) > 1 else ""
+            for row in values
+            if row and str(row[0]).strip()
+        }
+        rates = dict(DEFAULT_RATES_TO_USD)
+        aed_per_usd = decimal_value(config.get("AED/USD Exchange Rate"), "3.6725")
+        if aed_per_usd > 0:
+            rates["AED"] = Decimal("1") / aed_per_usd
+        else:
+            aed_per_usd = Decimal("3.6725")
+        for code in ("EUR", "JPY", "GBP"):
+            configured = decimal_value(config.get(f"{code}/USD Exchange Rate"), "0")
+            if configured > 0:
+                rates[code] = configured
+        return rates, aed_per_usd
+
+    def _ensure_transaction_headers(self, worksheet, values):
+        headers = list(values[0]) if values else []
+        missing = [header for header in TRANSACTION_COLUMNS if header not in headers]
+        if not headers:
+            headers = list(TRANSACTION_COLUMNS)
+        else:
+            headers.extend(missing)
+        if not values or missing:
+            current_columns = getattr(worksheet, "col_count", len(headers))
+            if current_columns < len(headers):
+                worksheet.add_cols(len(headers) - current_columns)
+            end_column = self._column_label(len(headers))
+            worksheet.update(
+                values=[headers],
+                range_name=f"A1:{end_column}1",
+                value_input_option="USER_ENTERED",
+            )
+        return headers
+
+    def _new_transaction_id(self, existing_ids, pdf_hash=""):
+        date_part = datetime.now(DUBAI_TZ).strftime("%Y%m%d")
+        if pdf_hash:
+            candidate = f"TXN-{date_part}-W{pdf_hash[:12].upper()}"
+            if candidate not in existing_ids:
+                return candidate
+        for _ in range(10):
+            candidate = f"TXN-{date_part}-W{secrets.token_hex(4).upper()}"
+            if candidate not in existing_ids:
+                return candidate
+        raise SheetsSourceError("A unique transaction ID could not be generated.")
+
+    def write_invoice_transaction(self, fiscal_year, candidate):
+        if not settings.ENABLE_SHEET_WRITES:
+            raise SheetsSourceError("Google Sheet writes are disabled in this environment.")
+        with _sheet_write_lock():
+            return self._write_invoice_transaction_locked(fiscal_year, candidate)
+
+    def _write_invoice_transaction_locked(self, fiscal_year, candidate):
+        """Upsert one reviewed PDF transaction and verify the written Sheet row."""
+        fiscal_year = str(fiscal_year or "").strip()
+        if not re.fullmatch(r"FY\d{4}-\d{2}", fiscal_year):
+            raise ValueError("Fiscal year must look like FY2026-27.")
+        transaction_date = candidate.get("date")
+        if isinstance(transaction_date, date):
+            transaction_date = transaction_date.isoformat()
+        else:
+            transaction_date = str(transaction_date or "").strip()
+        if not transaction_date:
+            raise ValueError("Transaction date is required.")
+        currency = str(candidate.get("currency") or "").strip().upper()
+        if currency not in SUPPORTED_CURRENCIES:
+            raise ValueError("Unsupported currency.")
+        amount = money(candidate.get("amount"))
+        if amount <= 0:
+            raise ValueError("Amount must be greater than zero.")
+        team = str(candidate.get("team") or "").strip()
+        if not team:
+            raise ValueError("Team is required.")
+
+        worksheet, workbook, spreadsheet_id, base_year = self._transaction_sheet(fiscal_year)
+        master = self._open(_master_spreadsheet_id())
+        try:
+            values = worksheet.get_all_values()
+            original_row_count = len(values)
+            headers = self._ensure_transaction_headers(worksheet, values)
+            if not values:
+                values = [headers]
+            rates, aed_per_usd = self._configured_rates(
+                workbook, master, fiscal_year, spreadsheet_id, base_year
+            )
+        except SheetsSourceError:
+            raise
+        except Exception as error:
+            raise SheetsSourceError("The transaction worksheet could not be prepared.") from error
+
+        pdf_hash = str(candidate.get("file_sha256") or "").strip().lower()
+        marker = f"[PDF SHA256:{pdf_hash}]" if pdf_hash else ""
+        if marker:
+            for other_year in self.fiscal_year_options():
+                if other_year == fiscal_year:
+                    continue
+                other_worksheet, _, _, _ = self._transaction_sheet(other_year)
+                other_values = other_worksheet.get_all_values()
+                if not other_values:
+                    continue
+                other_headers = other_values[0]
+                if any(
+                    marker
+                    in str(self._row_mapping(other_headers, raw_row).get("Notes") or "")
+                    for raw_row in other_values[1:]
+                ):
+                    raise SheetsSourceError(
+                        f"This PDF is already registered in {other_year}."
+                    )
+        normalized_team = self._normalize_key(team)
+        normalized_vendor = self._normalize_key(candidate.get("vendor"))
+        normalized_invoice = self._normalize_key(candidate.get("invoice_number"))
+        matched_index = None
+        matched_current = None
+        existing_ids = set()
+        for row_index, raw_row in enumerate(values[1:], start=2):
+            current = self._row_mapping(headers, raw_row)
+            transaction_id = str(current.get("Transaction ID") or "").strip()
+            if transaction_id:
+                existing_ids.add(transaction_id)
+            same_team = self._normalize_key(current.get("Team")) == normalized_team
+            same_hash = bool(marker and marker in str(current.get("Notes") or ""))
+            if same_hash and not same_team:
+                raise SheetsSourceError(
+                    "This PDF is already registered to another team."
+                )
+            same_invoice_identity = bool(
+                normalized_invoice
+                and normalized_vendor
+                and self._normalize_key(current.get("Vendor / Payee")) == normalized_vendor
+                and self._normalize_key(current.get("Invoice Number")) == normalized_invoice
+            )
+            if same_hash or (same_team and same_invoice_identity):
+                matched_index = row_index
+                matched_current = current
+                break
+
+        if matched_current and str(matched_current.get("Status") or "").strip() == "Cancelled":
+            raise SheetsSourceError(
+                "This invoice is Cancelled. Restore it explicitly from Transactions instead of re-importing it."
+            )
+
+        transaction_id = (
+            str(matched_current.get("Transaction ID") or "").strip()
+            if matched_current
+            else self._new_transaction_id(existing_ids, pdf_hash)
+        )
+        amount_usd = money(amount * decimal_value(rates[currency]))
+        amount_aed_equiv = money(amount_usd * aed_per_usd)
+        current_notes = str((matched_current or {}).get("Notes") or "").strip()
+        user_notes = str(candidate.get("notes") or "").strip()
+        source_note = f"Imported from {candidate.get('file_name', 'PDF invoice')}"
+        inferred_fiscal_year = fiscal_year_for_date(transaction_date)
+        override_note = (
+            f"[FY OVERRIDE: date implies {inferred_fiscal_year}]"
+            if inferred_fiscal_year != fiscal_year
+            else ""
+        )
+        notes = "\n".join(
+            dict.fromkeys(
+                part
+                for part in (current_notes, user_notes, source_note, marker, override_note)
+                if part
+            )
+        )
+        now_text = datetime.now(DUBAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        current = matched_current or {}
+        row = {header: current.get(header, "") for header in headers}
+        row.update(
+            {
+                "Transaction ID": transaction_id,
+                "Date": transaction_date,
+                "Fiscal Year": fiscal_year,
+                "Category": str(candidate.get("category") or "").strip(),
+                "Sub-category": str(candidate.get("subcategory") or "").strip(),
+                "Vendor / Payee": str(candidate.get("vendor") or "").strip(),
+                "Description": str(candidate.get("description") or "").strip(),
+                "PO Number": str(candidate.get("po_number") or "").strip(),
+                "Invoice Number": str(candidate.get("invoice_number") or "").strip(),
+                "Currency": currency,
+                "Amount": str(amount),
+                "Amount (USD equiv)": str(amount_usd),
+                "Amount (AED)": str(amount if currency == "AED" else Decimal("0")),
+                "Amount (USD)": str(amount if currency == "USD" else Decimal("0")),
+                "Amount (AED equiv)": str(amount_aed_equiv),
+                "Status": "Allocated",
+                "Receipt Confirmed": current.get("Receipt Confirmed") or "FALSE",
+                "Entered By": current.get("Entered By")
+                or str(candidate.get("entered_by") or "").strip(),
+                "Entry Method": "Auto-PDF",
+                "Notes": notes,
+                "Last Modified": now_text,
+                "Team": team,
+            }
+        )
+        output = [row.get(header, "") for header in headers]
+        try:
+            if matched_index:
+                end_column = self._column_label(len(headers))
+                worksheet.update(
+                    values=[output],
+                    range_name=f"A{matched_index}:{end_column}{matched_index}",
+                    value_input_option="USER_ENTERED",
+                )
+                written_index = matched_index
+            else:
+                worksheet.append_row(output, value_input_option="USER_ENTERED")
+                written_index = max(original_row_count + 1, 2)
+            if marker:
+                refreshed = worksheet.get_all_values()
+                matching_rows = [
+                    row_number
+                    for row_number, raw_row in enumerate(refreshed[1:], start=2)
+                    if marker in str(self._row_mapping(headers, raw_row).get("Notes") or "")
+                ]
+                if len(matching_rows) != 1:
+                    raise SheetsSourceError(
+                        "The PDF identity did not resolve to exactly one Sheet row."
+                    )
+                written_index = matching_rows[0]
+            end_column = self._column_label(len(headers))
+            written_values = worksheet.get(f"A{written_index}:{end_column}{written_index}")
+        except Exception as error:
+            raise SheetsSourceError("The transaction could not be written to Google Sheets.") from error
+        if not written_values:
+            raise SheetsSourceError("Google Sheets did not return the written transaction row.")
+        written = self._row_mapping(headers, written_values[0])
+        money_columns = {
+            "Amount",
+            "Amount (USD equiv)",
+            "Amount (AED)",
+            "Amount (USD)",
+            "Amount (AED equiv)",
+        }
+        for column in TRANSACTION_COLUMNS:
+            expected = row.get(column, "")
+            actual = written.get(column, "")
+            if column in money_columns:
+                if money(actual) != money(expected):
+                    raise SheetsSourceError(
+                        f"The written Google Sheet {column} value did not verify."
+                    )
+            elif str(actual).strip() != str(expected).strip():
+                raise SheetsSourceError(
+                    f"The written Google Sheet {column} value did not verify."
+                )
+        if marker not in str(written.get("Notes") or ""):
+            raise SheetsSourceError("The written Google Sheet PDF identity did not verify.")
+        return {
+            "transaction_id": transaction_id,
+            "matched": bool(matched_index),
+            "row": written,
+            "spreadsheet_id": spreadsheet_id,
+        }
+
+    def delete_transaction(self, fiscal_year, transaction_id, expected_pdf_hash=""):
+        """Delete one exact transaction and verify removal.
+
+        This is intentionally not exposed as a web action. It supports reversible
+        deployment verification where leaving a Cancelled dummy row is undesirable.
+        """
+        if not settings.ENABLE_SHEET_WRITES:
+            raise SheetsSourceError("Google Sheet writes are disabled in this environment.")
+        with _sheet_write_lock():
+            return self._delete_transaction_locked(
+                fiscal_year, transaction_id, expected_pdf_hash
+            )
+
+    def _delete_transaction_locked(self, fiscal_year, transaction_id, expected_pdf_hash=""):
+        worksheet, _, _, _ = self._transaction_sheet(fiscal_year)
+        try:
+            values = worksheet.get_all_values()
+            if not values:
+                return False
+            headers = values[0]
+            marker = (
+                f"[PDF SHA256:{str(expected_pdf_hash).strip().lower()}]"
+                if expected_pdf_hash
+                else ""
+            )
+            target_index = None
+            for row_index, raw_row in enumerate(values[1:], start=2):
+                row = self._row_mapping(headers, raw_row)
+                if str(row.get("Transaction ID") or "").strip() != transaction_id:
+                    continue
+                if marker and marker not in str(row.get("Notes") or ""):
+                    raise SheetsSourceError(
+                        "The verification transaction PDF identity did not match."
+                    )
+                target_index = row_index
+                break
+            if target_index is None:
+                return False
+            worksheet.delete_rows(target_index)
+            remaining = worksheet.get_all_values()
+        except SheetsSourceError:
+            raise
+        except Exception as error:
+            raise SheetsSourceError("The transaction could not be deleted safely.") from error
+        for raw_row in remaining[1:]:
+            row = self._row_mapping(headers, raw_row)
+            if str(row.get("Transaction ID") or "").strip() == transaction_id:
+                raise SheetsSourceError("The transaction still exists after deletion.")
+        return True
+
+    def delete_transactions_by_pdf_hash(self, fiscal_year, pdf_hash):
+        """Remove all rows for one exact verification hash and confirm cleanup."""
+        if not settings.ENABLE_SHEET_WRITES:
+            raise SheetsSourceError("Google Sheet writes are disabled in this environment.")
+        with _sheet_write_lock():
+            return self._delete_transactions_by_pdf_hash_locked(fiscal_year, pdf_hash)
+
+    def _delete_transactions_by_pdf_hash_locked(self, fiscal_year, pdf_hash):
+        marker = f"[PDF SHA256:{str(pdf_hash).strip().lower()}]"
+        worksheet, _, _, _ = self._transaction_sheet(fiscal_year)
+        try:
+            values = worksheet.get_all_values()
+            if not values:
+                return 0
+            headers = values[0]
+            matches = [
+                row_index
+                for row_index, raw_row in enumerate(values[1:], start=2)
+                if marker in str(self._row_mapping(headers, raw_row).get("Notes") or "")
+            ]
+            for row_index in reversed(matches):
+                worksheet.delete_rows(row_index)
+            remaining = worksheet.get_all_values()
+        except Exception as error:
+            raise SheetsSourceError("Verification rows could not be cleaned up.") from error
+        if any(
+            marker in str(self._row_mapping(headers, raw_row).get("Notes") or "")
+            for raw_row in remaining[1:]
+        ):
+            raise SheetsSourceError("A verification row still exists after cleanup.")
+        return len(matches)

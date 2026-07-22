@@ -117,12 +117,20 @@ class SyncRun(models.Model):
 
 
 class InvoiceDraft(models.Model):
-    STATUS_CHOICES = [("review", "Needs review"), ("ready", "Ready"), ("dismissed", "Dismissed")]
+    STATUS_CHOICES = [
+        ("review", "Needs review"),
+        ("ready", "Ready"),
+        ("imported", "Imported"),
+        ("dismissed", "Dismissed"),
+    ]
     uploader_email = models.EmailField()
     file_name = models.CharField(max_length=255)
     file_sha256 = models.CharField(max_length=64)
     parsed_data = models.JSONField(default=dict)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="review")
+    imported_fiscal_year = models.CharField(max_length=9, blank=True)
+    imported_transaction_id = models.CharField(max_length=64, blank=True)
+    imported_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

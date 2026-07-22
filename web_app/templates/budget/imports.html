@@ -1,7 +1,69 @@
 {% extends 'budget/base.html' %}
 {% block content %}
-<header class="page-head"><div><div class="eyebrow">DRAFT ONLY</div><h1>Import invoices</h1><p>Upload up to 20 PDFs. Parsed records remain local review drafts and do not write to Google Sheets.</p></div></header>
+<header class="page-head">
+  <div>
+    <div class="eyebrow">PDF REVIEW</div>
+    <h1>Import invoices</h1>
+    {% if sheet_writes_enabled %}
+    <p>Upload PDFs, review the extracted fields, then allocate each transaction to its fiscal year and team.</p>
+    {% else %}
+    <p>Upload PDFs and review the extracted fields. Google Sheet registration is disabled in this environment.</p>
+    {% endif %}
+  </div>
+</header>
 {% if form_error %}<div class="notice error">{{ form_error }}</div>{% endif %}
-<section class="panel upload-panel"><form method="post" enctype="multipart/form-data">{% csrf_token %}<label class="dropzone" for="pdfs"><strong>Select PDF invoices</strong><span>Multiple files supported</span><input id="pdfs" name="pdfs" type="file" accept="application/pdf" multiple required></label><button class="button primary" type="submit">Parse files</button></form></section>
-<section class="draft-grid">{% for draft in drafts %}<article class="draft-card"><span class="status {{ draft.status }}">{{ draft.get_status_display }}</span><h2>{{ draft.file_name }}</h2><dl><dt>Vendor</dt><dd>{{ draft.parsed_data.vendor|default:'Review needed' }}</dd><dt>Invoice</dt><dd>{{ draft.parsed_data.invoice_number|default:'Review needed' }}</dd><dt>Amount</dt><dd>{{ draft.parsed_data.currency }} {{ draft.parsed_data.total_amount|default:'Review needed' }}</dd></dl></article>{% empty %}<p class="empty">No invoice drafts yet.</p>{% endfor %}</section>
+<section class="panel upload-panel">
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <label class="dropzone" for="pdfs">
+      <strong>Select PDF invoices</strong>
+      <span>Multiple files supported</span>
+      <input id="pdfs" name="pdfs" type="file" accept="application/pdf" multiple required>
+    </label>
+    <button class="button primary" type="submit">Parse files</button>
+  </form>
+</section>
+<section class="draft-grid">
+  {% for item in draft_rows %}
+  {% with draft=item.draft form=item.form %}
+  <article class="draft-card {% if draft.status == 'imported' %}is-imported{% endif %}">
+    <span class="status {{ draft.status }}">{{ draft.get_status_display }}</span>
+    <h2>{{ draft.file_name }}</h2>
+    <dl class="draft-summary">
+      <dt>Vendor</dt><dd>{{ draft.parsed_data.vendor|default:'Review needed' }}</dd>
+      <dt>Invoice</dt><dd>{{ draft.parsed_data.invoice_number|default:'Review needed' }}</dd>
+      <dt>Amount</dt><dd>{{ draft.parsed_data.currency }} {{ draft.parsed_data.total_amount|default:'Review needed' }}</dd>
+    </dl>
+    {% if draft.status == 'imported' %}
+    <div class="import-result">
+      <span>{{ draft.imported_fiscal_year }}</span>
+      <strong>{{ draft.imported_transaction_id }}</strong>
+    </div>
+    {% elif sheet_writes_enabled and can_commit_invoices %}
+    <details class="review-panel" {% if form.errors %}open{% endif %}>
+      <summary>Review and import</summary>
+      <form method="post" action="{% url 'budget:commit_invoice_draft' draft.id %}" class="review-form">
+        {% csrf_token %}
+        {% for field in form %}
+        <label>
+          <span>{{ field.label }}</span>
+          {{ field }}
+          {% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}
+        </label>
+        {% endfor %}
+        {% for error in form.non_field_errors %}<div class="field-error">{{ error }}</div>{% endfor %}
+        <button class="button primary" type="submit">Import transaction</button>
+      </form>
+    </details>
+    {% elif sheet_writes_enabled %}
+    <div class="import-result"><span>Awaiting review</span><strong>An authorized budget reviewer will register this invoice.</strong></div>
+    {% else %}
+    <div class="import-result"><span>Review draft</span><strong>Not registered in Google Sheets</strong></div>
+    {% endif %}
+  </article>
+  {% endwith %}
+  {% empty %}
+  <p class="empty">No invoice drafts yet.</p>
+  {% endfor %}
+</section>
 {% endblock %}
