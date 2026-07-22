@@ -9,11 +9,16 @@
   <link rel="stylesheet" href="{% static 'budget/app.css' %}">
 </head>
 <body>
-  <div class="shell">
-    {% if request.user.is_authenticated %}
+  <div class="shell shell-{{ lab_nav_section }}">
+    {% if request.user.is_authenticated and lab_nav_section == 'portal' %}
+    <header class="portal-topbar">
+      <a class="brand" href="{% url 'labapps:portal' %}">Kamei Lab</a>
+      <div class="portal-session"><span>{{ request.user.email }}</span><a href="{% url 'budget:logout' %}">Sign out</a></div>
+    </header>
+    {% elif request.user.is_authenticated %}
     <aside class="sidebar">
       <a class="brand" href="{% url 'labapps:portal' %}">Kamei Lab</a>
-      <div class="brand-subtitle">Private lab portal</div>
+      <div class="brand-subtitle"><strong>{{ lab_nav_title }}</strong><span>{{ lab_nav_subtitle }}</span></div>
       <nav class="desktop-navigation" aria-label="Main navigation">{% include "budget/_navigation.html" %}</nav>
       <details class="mobile-navigation">
         <summary>Menu</summary>
@@ -26,7 +31,7 @@
       </div>
     </aside>
     {% endif %}
-    <main class="content {% if not request.user.is_authenticated %}content-auth{% endif %}">
+    <main class="content {% if not request.user.is_authenticated %}content-auth{% elif lab_nav_section == 'portal' %}content-portal{% endif %}">
       {% if messages %}
       <div class="message-stack" aria-live="polite">
         {% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}

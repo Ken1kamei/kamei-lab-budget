@@ -1,4 +1,5 @@
-<a href="{% url 'labapps:portal' %}" class="{% if request.resolver_match.namespace == 'labapps' and request.resolver_match.url_name == 'portal' %}active{% endif %}">App overview</a>
+<a href="{% url 'labapps:portal' %}">All apps</a>
+{% if lab_nav_section == 'budget' %}
 <a href="{% url 'budget:dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Overview</a>
 <a href="{% url 'budget:transactions' %}" class="{% if request.resolver_match.url_name == 'transactions' %}active{% endif %}">Transactions</a>
 <a href="{% url 'budget:add_transaction' %}" class="{% if request.resolver_match.url_name == 'add_transaction' %}active{% endif %}">Add expense</a>
@@ -8,8 +9,21 @@
 <a href="{% url 'budget:settings' %}" class="{% if request.resolver_match.url_name == 'settings' %}active{% endif %}">Settings</a>
 <a href="{% url 'budget:comparison' %}" class="{% if request.resolver_match.url_name == 'comparison' %}active{% endif %}">Parity checks</a>
 {% endif %}
-<a href="{% url 'labapps:tracker' %}" class="{% if request.resolver_match.namespace == 'labapps' and 'tracker' in request.resolver_match.url_name %}active{% endif %}">Project tracker</a>
-<a href="{% url 'labapps:knowledge' %}" class="{% if request.resolver_match.namespace == 'labapps' and 'knowledge' in request.resolver_match.url_name %}active{% endif %}">Notebooks / protocols</a>
-{% if lab_apps_admin %}
-<a href="{% url 'labapps:portal_admin' %}" class="{% if request.resolver_match.url_name == 'portal_admin' %}active{% endif %}">Lab registry</a>
+{% elif lab_nav_section == 'tracker' %}
+<a href="{% url 'labapps:tracker' %}" class="active">Overview</a>
+<a href="{% url 'labapps:tracker' %}#projects">Projects</a>
+<a href="{% url 'labapps:tracker' %}#milestones">Milestones</a>
+<a href="{% url 'labapps:tracker' %}#experiments">Experiments</a>
+<a href="{% url 'labapps:tracker' %}#review">Review</a>
+{% if lab_nav_can_write %}<a href="{% url 'labapps:tracker' %}#new">Add records</a>{% endif %}
+{% elif lab_nav_section == 'knowledge' %}
+<a href="{% url 'labapps:knowledge' %}" class="{% if request.resolver_match.url_name == 'knowledge' %}active{% endif %}">Overview</a>
+<a href="{% url 'labapps:knowledge' %}#protocols">Protocols</a>
+<a href="{% url 'labapps:knowledge' %}#notebooks">Notebooks</a>
+{% if lab_nav_can_write %}<a href="{% url 'labapps:knowledge_upload' %}" class="{% if request.resolver_match.url_name == 'knowledge_upload' %}active{% endif %}">Upload record</a>{% endif %}
+{% elif lab_nav_section == 'registry' %}
+<a href="{% url 'labapps:portal_admin' %}" class="active">Overview</a>
+<a href="{% url 'labapps:portal_admin' %}#members">Members</a>
+<a href="{% url 'labapps:portal_admin' %}#teams">Teams</a>
+<a href="{% url 'labapps:portal_admin' %}#roles">App access</a>
 {% endif %}

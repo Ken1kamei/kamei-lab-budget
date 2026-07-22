@@ -58,8 +58,15 @@ def test_portal_tracker_and_knowledge_pages_render():
     knowledge = client.get("/knowledge/")
     assert portal.status_code == tracker.status_code == knowledge.status_code == 200
     assert b"Kamei Lab Apps" in portal.content
+    assert b'class="sidebar"' not in portal.content
     assert b"Chip study" in tracker.content
+    assert b'href="/tracker/#projects"' in tracker.content
+    assert b">Transactions<" not in tracker.content
+    assert b">Notebooks / protocols<" not in tracker.content
     assert b"Prepare buffer" in knowledge.content
+    assert b'href="/knowledge/#protocols"' in knowledge.content
+    assert b'href="/knowledge/upload/"' in knowledge.content
+    assert b">Transactions<" not in knowledge.content
 
 
 def test_scoped_tracker_role_cannot_switch_to_another_team():

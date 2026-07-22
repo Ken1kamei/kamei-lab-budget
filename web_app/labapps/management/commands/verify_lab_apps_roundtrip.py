@@ -24,8 +24,10 @@ class Command(BaseCommand):
             "project": "Temporary Web verification",
             "aim": "Reversible Sheet write/read/restore test",
             "owner_member_id": "",
-            "start_date": "2099-01-01",
-            "target_date": "2099-01-02",
+            # Keep date cells empty so locale-specific Sheet formatting cannot
+            # turn a verification value into a different display string.
+            "start_date": "",
+            "target_date": "",
             "notes": token,
         }
         audits_before = set(LabAppAudit.objects.values_list("id", flat=True))
