@@ -45,6 +45,13 @@ conversion, team allocations, and `Cancelled` exclusion.
 - Browser console: no JavaScript errors.
 - IAP: anonymous requests redirect to Google sign-in; direct public Cloud Run
   invocation is disabled.
+- IAP user flow: `kk4801@nyu.edu` authenticated successfully and the dashboard,
+  transactions, imports, and parity routes returned HTTP 200.
+- Cloud fiscal-year switch: FY2025-26 and FY2026-27 changed the URL, selected
+  option, metrics, and transaction counts correctly.
+- Cloud live parity refresh: run `#3` at `2026-07-22 12:44:17 +04` reported
+  `Matched`, 27 source rows, 27 mirror rows, and `Exact match`.
+- Cloud browser console: no errors or warnings after the authenticated flow.
 - Cloud startup: migrations, both sheet syncs, both parity comparisons, and
   Gunicorn startup completed successfully.
 
