@@ -18,8 +18,8 @@
 {% if lab_nav_can_write %}<a href="{% url 'labapps:tracker' %}#new">Add records</a>{% endif %}
 {% elif lab_nav_section == 'knowledge' %}
 <a href="{% url 'labapps:knowledge' %}" class="{% if request.resolver_match.url_name == 'knowledge' %}active{% endif %}">Overview</a>
+<a href="{% url 'labapps:knowledge' %}#search">Search</a>
 <a href="{% url 'labapps:knowledge' %}#protocols">Protocols</a>
-<a href="{% url 'labapps:knowledge' %}#notebooks">Notebooks</a>
 {% if lab_nav_can_write %}<a href="{% url 'labapps:knowledge_upload' %}" class="{% if request.resolver_match.url_name == 'knowledge_upload' %}active{% endif %}">Upload record</a>{% endif %}
 {% elif lab_nav_section == 'registry' %}
 <a href="{% url 'labapps:portal_admin' %}" class="active">Overview</a>

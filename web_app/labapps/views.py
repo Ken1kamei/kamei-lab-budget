@@ -1,3 +1,4 @@
+import json
 import mimetypes
 import secrets
 from datetime import date
@@ -410,17 +411,42 @@ def tracker(request):
 @lab_app_access("notebooks_protocols")
 def knowledge(request):
     member = current_registry_member(request)
-    protocols = KnowledgeRecord.objects.filter(record_type="protocol")
-    notebooks = KnowledgeRecord.objects.filter(record_type="notebook")
+    records = list(KnowledgeRecord.objects.all())
+    protocols = [row for row in records if row.record_type == "protocol"]
+    notebooks = [row for row in records if row.record_type == "notebook"]
+    search_query = request.GET.get("q", "").strip()[:120]
+    search_terms = search_query.casefold().split()
+    matches = []
+    if search_terms:
+        for row in records:
+            haystack = " ".join(
+                [
+                    row.record_id,
+                    row.title,
+                    row.team,
+                    row.owner,
+                    row.category,
+                    row.original_filename,
+                    json.dumps(row.metadata, ensure_ascii=False, default=str),
+                ]
+            ).casefold()
+            if all(term in haystack for term in search_terms):
+                matches.append(row)
     selected_id = request.GET.get("protocol", "")
-    selected_protocol = protocols.filter(record_id=selected_id).first() if selected_id else protocols.first()
+    selected_protocol = next(
+        (row for row in protocols if row.record_id == selected_id),
+        protocols[0] if protocols else None,
+    )
     return render(
         request,
         "labapps/knowledge.html",
         {
             "protocols": protocols, "notebooks": notebooks, "selected_protocol": selected_protocol,
             "can_edit": can_write(member, "notebooks_protocols"),
-            "counts": {"protocols": protocols.count(), "notebooks": notebooks.count()},
+            "counts": {"protocols": len(protocols), "notebooks": len(notebooks)},
+            "search_query": search_query,
+            "search_results": matches[:24],
+            "search_total": len(matches),
         },
     )
 

@@ -64,9 +64,38 @@ def test_portal_tracker_and_knowledge_pages_render():
     assert b">Transactions<" not in tracker.content
     assert b">Notebooks / protocols<" not in tracker.content
     assert b"Prepare buffer" in knowledge.content
+    assert b"Notebook registry" not in knowledge.content
+    assert b"Find notebooks and protocols" in knowledge.content
     assert b'href="/knowledge/#protocols"' in knowledge.content
+    assert b'href="/knowledge/#search"' in knowledge.content
     assert b'href="/knowledge/upload/"' in knowledge.content
     assert b">Transactions<" not in knowledge.content
+
+
+def test_knowledge_keyword_search_matches_notebooks_and_protocol_content():
+    seed_pi()
+    KnowledgeRecord.objects.create(
+        record_id="P-0001", record_type="protocol", title="GSIS workflow",
+        team="Diabetes", metadata={"overview": ["Prepare assay buffer"]},
+    )
+    KnowledgeRecord.objects.create(
+        record_id="N-0001", record_type="notebook", title="Buffer optimization",
+        owner="Satoshi", team="IoC", original_filename="buffer-notes.pdf",
+    )
+    KnowledgeRecord.objects.create(
+        record_id="N-0002", record_type="notebook", title="Unrelated imaging log",
+        owner="Maab", team="IoC",
+    )
+
+    client = signed_in_client()
+    response = client.get("/knowledge/?q=buffer")
+
+    assert response.status_code == 200
+    assert response.context["search_total"] == 2
+    assert b"GSIS workflow" in response.content
+    assert b"Buffer optimization" in response.content
+    assert b"Unrelated imaging log" not in response.content
+    assert b"Notebook registry" not in response.content
 
 
 def test_scoped_tracker_role_cannot_switch_to_another_team():
