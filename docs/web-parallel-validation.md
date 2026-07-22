@@ -14,6 +14,7 @@ Last verified: 2026-07-22 (Asia/Dubai)
 ## Staging
 
 - Service: `kamei-lab-budget-web-staging`
+- Revision: `kamei-lab-budget-web-staging-00008-wzv`
 - Region: `me-central1`
 - URL: <https://kamei-lab-budget-web-staging-678641983168.me-central1.run.app>
 - Access: Google Cloud IAP plus the application lab-member allowlist
@@ -37,8 +38,9 @@ lock are required before production cutover or scale-out.
 - The PDF SHA-256 marker is checked across all registered fiscal years.
 - Same-Team duplicate identity requires the same Vendor and Invoice Number;
   PO-only matching never overwrites a row.
-- Sheet writes are serialized, read back field-by-field, then synchronized to
-  the Django mirror before success is shown.
+- Sheet writes are serialized and read back field-by-field before the draft is
+  marked imported. A later mirror-sync failure is shown as a retryable warning;
+  it never makes a verified Sheet transaction appear unregistered.
 
 ## Verified parity
 
@@ -61,6 +63,9 @@ conversion, team allocations, and `Cancelled` exclusion.
 - Invoice import: two real PDFs uploaded together and retained as separate
   review drafts; the review form renders parsed date, FY, category, vendor,
   description, PO, invoice, currency, amount, and team.
+- Deployed parser: `INS6000_9216658.PDF` produced PeopleSoft Inventory,
+  invoice `INS6000_9216658`, USD 151.95, date 2026-03-26, description, fiscal
+  year, category, and team controls through the authenticated staging UI.
 - Reversible Sheet write: a temporary USD 0.01 row was written to FY2025-26,
   read back exactly once, mirrored with `Matched`, and removed. The complete
   27-row transaction set and totals matched the original after restoration.
