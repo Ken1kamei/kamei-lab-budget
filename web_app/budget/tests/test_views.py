@@ -36,6 +36,7 @@ def test_dashboard_renders_selected_fiscal_year_totals(pi_client):
     assert b"$10,000.00" in response.content
     assert b"$2,500.00" in response.content
     assert b"$7,500.00" in response.content
+    assert b"budget/favicon.svg" in response.content
 
 
 @pytest.mark.django_db
