@@ -78,6 +78,9 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
+INVOICE_BUCKET = os.environ.get("INVOICE_BUCKET", "").strip()
+INVOICE_STORAGE_PREFIX = os.environ.get("INVOICE_STORAGE_PREFIX", "invoices").strip("/")
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {

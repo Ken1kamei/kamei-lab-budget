@@ -82,6 +82,13 @@ class Transaction(models.Model):
     entry_method = models.CharField(max_length=64, blank=True)
     notes = models.TextField(blank=True)
     pdf_link = models.URLField(max_length=1000, blank=True)
+    receipt_confirmed = models.BooleanField(default=False)
+    email_thread_id = models.CharField(max_length=255, blank=True)
+    approved_by = models.EmailField(blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    sheet_last_modified_at = models.DateTimeField(null=True, blank=True)
+    version = models.PositiveBigIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
     source_payload = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -120,12 +127,24 @@ class InvoiceDraft(models.Model):
     STATUS_CHOICES = [
         ("review", "Needs review"),
         ("ready", "Ready"),
+        ("processing", "Processing"),
         ("imported", "Imported"),
         ("dismissed", "Dismissed"),
     ]
     uploader_email = models.EmailField()
     file_name = models.CharField(max_length=255)
     file_sha256 = models.CharField(max_length=64)
+    object_key = models.CharField(max_length=1024, blank=True)
+    content_type = models.CharField(max_length=255, default="application/pdf")
+    size = models.PositiveBigIntegerField(default=0)
+    team = models.CharField(max_length=120, blank=True)
+    fiscal_year = models.ForeignKey(
+        FiscalYear,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="invoice_drafts",
+    )
     parsed_data = models.JSONField(default=dict)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="review")
     imported_fiscal_year = models.CharField(max_length=9, blank=True)
@@ -138,3 +157,60 @@ class InvoiceDraft(models.Model):
             models.UniqueConstraint(fields=["uploader_email", "file_sha256"], name="unique_user_pdf")
         ]
         ordering = ["-created_at"]
+
+
+class TransactionAudit(models.Model):
+    transaction = models.ForeignKey(
+        Transaction,
+        on_delete=models.PROTECT,
+        related_name="audit_entries",
+    )
+    actor = models.EmailField(blank=True)
+    action = models.CharField(max_length=64)
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-timestamp", "-id"]
+        indexes = [models.Index(fields=["transaction", "-timestamp"])]
+
+
+class SheetOperation(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("succeeded", "Succeeded"),
+        ("failed", "Failed"),
+    ]
+
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    operation_type = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
+    actor = models.EmailField(blank=True)
+    fiscal_year = models.ForeignKey(
+        FiscalYear,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sheet_operations",
+    )
+    transaction = models.ForeignKey(
+        Transaction,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sheet_operations",
+    )
+    request = models.JSONField(default=dict, blank=True)
+    result = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["operation_type", "created_at"]),
+        ]
