@@ -1,32 +1,32 @@
 # Web parallel validation
 
-Last verified: 2026-07-22 (Asia/Dubai)
+Last verified: 2026-07-23 (Asia/Dubai)
 
 ## Scope
 
-- Existing Streamlit remains the production application.
-- Django staging currently mirrors Google Sheets and retains its controlled
-  invoice pilot until the Cloud SQL/GCS promotion below is approved.
-- The completed local candidate adds the full Budget workflow: manual
-  transactions, edit/cancel, reports, ERB import, Settings, roles, audit and
-  durable storage models.
+- Django/Cloud Run is the production application.
+- Existing Streamlit remains available as a rollback and parity reference.
+- The Web application includes the full Budget workflow: manual transactions,
+  edit/cancel, receipt attachment, reports, PDF and ERB import, Settings,
+  multi-team roles, audit, fiscal-year creation, notification settings, and
+  durable Cloud SQL/GCS storage.
+- The same Web service also provides the private portal, Project Tracker, and
+  Notebooks/Protocols application.
 - Uploaded invoices remain temporary review drafts until a Team Lead, Budget
   Manager, or PI confirms the extracted fields.
-- Existing Streamlit remains the production application and is unchanged.
 
 ## Staging
 
 - Service: `kamei-lab-budget-web-staging`
-- Revision: `kamei-lab-budget-web-staging-00008-wzv`
+- Revision: `kamei-lab-budget-web-staging-00036-kuw`
 - Region: `me-central1`
-- URL: <https://kamei-lab-budget-web-staging-678641983168.me-central1.run.app>
+- URL: <https://kamei-lab-budget-web-staging-7id3bdyliq-ww.a.run.app>
 - Access: Google Cloud IAP plus the application lab-member allowlist
 - Scaling: zero idle instances, maximum one instance
 
-The currently deployed one-instance staging revision still uses temporary
-SQLite. The new candidate refuses to start in production without a configured
-`DATABASE_URL`; it must be deployed with Cloud SQL PostgreSQL and a private GCS
-invoice bucket.
+The production revision uses Cloud SQL PostgreSQL, a private invoice bucket,
+and a private knowledge bucket. It scales to zero when idle and keeps a maximum
+of one Cloud Run instance.
 
 ## Controlled staging write path
 
@@ -59,7 +59,19 @@ conversion, team allocations, and `Cancelled` exclusion.
 
 ## Candidate verification completed
 
-- Django test suite: 67 passed.
+- Django test suite: 122 passed.
+- Independent QA review: no remaining P0, P1, or P2 findings.
+- Main authenticated production routes returned normal pages for Budget
+  overview, transactions, imports, reports, Settings, portal, Project Tracker,
+  and Notebooks/Protocols.
+- Streamlit-to-Web parity remained exact after the release for FY2025-26 and
+  FY2026-27.
+- The completed parity work adds team/category/recent/pending dashboard views,
+  filtered CSV, multi-currency previews, member receipt attachment, safer
+  invoice and ERB identity matching, partial batch recovery, per-team roles,
+  fiscal-year creator status, notification settings, lifecycle/status controls
+  for knowledge records, broader Office/CSV extraction, and tracker blocker,
+  help, data-link, and Gantt controls.
 - Django production deployment check: no issues with production settings.
 - Production Docker image: built successfully; migrations completed and the
   Gunicorn login endpoint returned HTTP 200 from the running container.
@@ -95,15 +107,22 @@ conversion, team allocations, and `Cancelled` exclusion.
 - Summary formulas: all eight category/TOTAL formula ranges were repaired and
   read back successfully in both FY2025-26 and FY2026-27 without changing their
   category budget inputs.
+- The final reversible budget probe reached the Google Sheets per-user read
+  limit during immediate post-write verification and therefore reported a
+  failed verification. Both attempts restored FY2025-26 Consumables to
+  $109,500.00. A subsequent complete parity read confirmed 27 rows, $169,500.00
+  total budget, $10,698.03 allocated, and $158,801.97 available, with no dummy
+  data remaining.
 
 ## Rollback
 
-Set `ENABLE_SHEET_WRITES=false` to disable new registrations immediately. The
-existing Streamlit application remains available. The reversible verification
-row has been removed and no dummy transaction remains.
+Set `ENABLE_SHEET_WRITES=false` to disable new registrations immediately.
+Traffic can be returned to revision `00034-hev`, and the existing Streamlit
+application remains available. No dummy transaction or budget value remains.
 
 ## Promotion gate
 
-Do not replace Streamlit until Cloud SQL PostgreSQL and the private GCS bucket
-are provisioned, migrations/sync run as release jobs, authenticated role smoke
-tests pass in Cloud Run, and daily Streamlit-vs-Web totals match for one week.
+Continue daily read-only Streamlit-vs-Web parity checks while Streamlit remains
+available as a rollback reference. Run production write probes only when Google
+Sheets quota is healthy, and always verify restoration before closing the
+maintenance task.
