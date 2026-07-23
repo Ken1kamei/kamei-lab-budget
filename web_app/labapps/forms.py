@@ -1,5 +1,7 @@
 from django import forms
 
+from .services.knowledge import MAX_KNOWLEDGE_FILE_BYTES
+
 
 STATUS_CHOICES = [
     ("Not started", "Not started"),
@@ -177,6 +179,36 @@ class KnowledgeUploadForm(forms.Form):
     category = forms.CharField(max_length=120, required=False)
     notes = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), required=False)
     files = forms.FileField(
-        widget=forms.ClearableFileInput(attrs={"multiple": False}),
-        help_text="Upload a lab notebook or protocol document.",
+        widget=forms.ClearableFileInput(
+            attrs={
+                "multiple": False,
+                "accept": ".docx,.pdf,.txt,.md,.xlsx,.pptx,.csv,.png,.jpg,.jpeg,.tif,.tiff",
+            }
+        ),
+        help_text="Upload a lab document (25 MB maximum). DOCX, PDF, MD, and TXT content is extracted automatically.",
     )
+
+    def clean_files(self):
+        uploaded = self.cleaned_data["files"]
+        allowed = {
+            ".docx",
+            ".pdf",
+            ".txt",
+            ".md",
+            ".xlsx",
+            ".pptx",
+            ".csv",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".tif",
+            ".tiff",
+        }
+        suffix = "." + uploaded.name.rsplit(".", 1)[-1].casefold() if "." in uploaded.name else ""
+        if suffix not in allowed:
+            raise forms.ValidationError(
+                "Upload a supported document, spreadsheet, presentation, text, or image file."
+            )
+        if uploaded.size > MAX_KNOWLEDGE_FILE_BYTES:
+            raise forms.ValidationError("The uploaded file must be 25 MB or smaller.")
+        return uploaded

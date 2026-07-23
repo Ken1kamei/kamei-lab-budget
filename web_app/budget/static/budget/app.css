@@ -164,6 +164,15 @@ details summary { color: var(--cyan); cursor: pointer; margin-top: 6px; }
 .protocol-detail h2 { font-size: 32px; margin: 28px 0 18px; }
 .protocol-detail h3 { color: var(--cyan); margin: 28px 0 12px; }
 .protocol-detail li { margin-bottom: 9px; line-height: 1.55; }
+.protocol-detail p { line-height: 1.65; }
+.protocol-document-title { color: var(--muted); font-size: 18px; }
+.protocol-section { border-top: 1px solid var(--border); margin-top: 28px; padding-top: 2px; }
+.protocol-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+.protocol-actions form { margin: 0; }
+.protocol-table-scroll { max-width: 100%; overflow-x: auto; margin: 14px 0 22px; }
+.protocol-table { width: 100%; min-width: 620px; border-collapse: collapse; background: var(--surface); }
+.protocol-table td { border: 1px solid var(--border); padding: 10px 12px; vertical-align: top; line-height: 1.45; }
+.protocol-table tr:first-child td { color: var(--text); font-weight: 800; background: var(--surface-2); }
 .protocol-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .protocol-meta span { display: grid; gap: 5px; padding: 12px; background: var(--surface); border: 1px solid var(--border); overflow-wrap: anywhere; }
 .protocol-meta small { color: var(--muted); text-transform: uppercase; font-weight: 800; }

@@ -11,5 +11,10 @@ urlpatterns = [
     path("tracker/", views.tracker, name="tracker"),
     path("knowledge/", views.knowledge, name="knowledge"),
     path("knowledge/upload/", views.knowledge_upload, name="knowledge_upload"),
+    path(
+        "knowledge/<str:record_id>/reprocess/",
+        views.knowledge_reprocess,
+        name="knowledge_reprocess",
+    ),
     path("knowledge/<str:record_id>/download/", views.knowledge_download, name="knowledge_download"),
 ]

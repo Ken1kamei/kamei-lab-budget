@@ -1,3 +1,4 @@
+import hashlib
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +10,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from openpyxl import Workbook
 
-from labapps.models import KnowledgeRecord, SheetRecord
+from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord
+from labapps.tests.test_knowledge import protocol_docx_bytes
 
 
 pytestmark = pytest.mark.django_db
@@ -463,4 +465,228 @@ def test_private_knowledge_upload_creates_record(mock_store):
     record = KnowledgeRecord.objects.get(title="New protocol")
     assert record.object_name == "knowledge/N1/file.pdf"
     assert record.metadata["sha256"] == "abc123"
+    assert record.metadata["parse_status"] == "failed"
     mock_store.assert_called_once()
+
+
+@patch(
+    "labapps.views.store_knowledge_file",
+    return_value=("knowledge/P1/mef.docx", "docx-sha"),
+)
+def test_protocol_upload_extracts_and_displays_structured_content(mock_store):
+    seed_pi()
+    client = signed_in_client()
+    content = protocol_docx_bytes()
+
+    response = client.post(
+        "/knowledge/upload/",
+        {
+            "record_type": "protocol",
+            "title": "MEF preparation protocol",
+            "team": "Common",
+            "owner": "Ken",
+            "category": "Cell culture",
+            "notes": "Uploaded from the lab template",
+            "files": SimpleUploadedFile(
+                "MEF_protocol.docx",
+                content,
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        },
+    )
+
+    assert response.status_code == 302
+    record = KnowledgeRecord.objects.get(title="MEF preparation protocol")
+    assert record.metadata["parse_status"] == "parsed"
+    assert record.metadata["section_count"] == 3
+    assert record.metadata["procedure"] == [
+        "Collect each embryo separately.",
+        "Plate cells in complete medium.",
+    ]
+    assert mock_store.call_args.args[2] == content
+
+    detail = client.get(f"/knowledge/?protocol={record.record_id}")
+    assert b"Prepare primary MEFs from individual embryos." in detail.content
+    assert b"DMEM" in detail.content
+    assert b"Collect each embryo separately." in detail.content
+    assert f"/knowledge/{record.record_id}/reprocess/".encode() in detail.content
+
+
+def test_upload_deletes_new_object_when_database_persistence_fails():
+    seed_pi()
+    client = signed_in_client()
+    with (
+        patch(
+            "labapps.views.store_knowledge_file",
+            return_value=("knowledge/P-ORPHAN/protocol.docx", "stored-sha"),
+        ),
+        patch(
+            "labapps.views.KnowledgeRecord.objects.create",
+            side_effect=RuntimeError("database unavailable"),
+        ),
+        patch("labapps.views.delete_knowledge_file") as mock_delete,
+    ):
+        response = client.post(
+            "/knowledge/upload/",
+            {
+                "record_type": "protocol",
+                "title": "Atomic protocol",
+                "team": "Common",
+                "owner": "Ken",
+                "category": "Cell culture",
+                "notes": "",
+                "files": SimpleUploadedFile(
+                    "protocol.docx",
+                    protocol_docx_bytes(),
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            },
+        )
+
+    assert response.status_code == 200
+    assert b"database unavailable" in response.content
+    mock_delete.assert_called_once_with(
+        "knowledge/P-ORPHAN/protocol.docx"
+    )
+
+
+@patch("labapps.views.read_knowledge_file", return_value=protocol_docx_bytes())
+def test_existing_protocol_can_be_reprocessed_without_losing_metadata(mock_read):
+    seed_pi()
+    record = KnowledgeRecord.objects.create(
+        record_id="P-MEF",
+        record_type="protocol",
+        title="MEF preparation protocol",
+        team="Common",
+        owner="Ken",
+        status="active",
+        object_name="knowledge/P-MEF/mef.docx",
+        original_filename="MEF_protocol.docx",
+        metadata={
+            "notes": "Keep this note",
+            "sha256": hashlib.sha256(mock_read.return_value).hexdigest(),
+            "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+    )
+    client = signed_in_client()
+
+    response = client.post(f"/knowledge/{record.record_id}/reprocess/")
+
+    assert response.status_code == 302
+    record.refresh_from_db()
+    assert record.metadata["notes"] == "Keep this note"
+    assert record.metadata["sha256"] == hashlib.sha256(
+        mock_read.return_value
+    ).hexdigest()
+    assert record.metadata["parse_status"] == "parsed"
+    assert record.metadata["section_count"] == 3
+    mock_read.assert_called_once_with("knowledge/P-MEF/mef.docx")
+    assert LabAppAudit.objects.filter(
+        target="P-MEF",
+        action="reprocess_content",
+    ).exists()
+
+
+@patch("labapps.views.read_knowledge_file", return_value=b"changed")
+def test_reprocess_stops_when_original_checksum_changed(mock_read):
+    seed_pi()
+    record = KnowledgeRecord.objects.create(
+        record_id="P-CHECKSUM",
+        record_type="protocol",
+        title="Checksum protocol",
+        object_name="knowledge/P-CHECKSUM/protocol.docx",
+        original_filename="protocol.docx",
+        metadata={"sha256": hashlib.sha256(b"original").hexdigest()},
+    )
+
+    response = signed_in_client().post(
+        f"/knowledge/{record.record_id}/reprocess/"
+    )
+
+    assert response.status_code == 302
+    record.refresh_from_db()
+    assert "sections" not in record.metadata
+    assert LabAppAudit.objects.filter(
+        target="P-CHECKSUM",
+        action="reprocess_checksum_mismatch",
+    ).exists()
+    mock_read.assert_called_once()
+
+
+@patch("labapps.views.read_knowledge_file", return_value=b"broken-docx")
+def test_failed_reprocess_preserves_old_content_and_shows_stale_warning(mock_read):
+    seed_pi()
+    record = KnowledgeRecord.objects.create(
+        record_id="P-STALE",
+        record_type="protocol",
+        title="Previously parsed protocol",
+        object_name="knowledge/P-STALE/protocol.docx",
+        original_filename="protocol.docx",
+        metadata={
+            "sha256": hashlib.sha256(b"broken-docx").hexdigest(),
+            "parse_status": "parsed",
+            "section_count": 1,
+            "sections": [
+                {
+                    "heading": "Procedure",
+                    "blocks": [
+                        {"kind": "paragraph", "text": "Previously extracted step"}
+                    ],
+                }
+            ],
+        },
+    )
+    client = signed_in_client()
+
+    response = client.post(f"/knowledge/{record.record_id}/reprocess/")
+
+    assert response.status_code == 302
+    record.refresh_from_db()
+    assert record.metadata["parse_status"] == "parsed"
+    assert record.metadata["last_reprocess_status"] == "failed"
+    assert record.metadata["sections"][0]["heading"] == "Procedure"
+
+    detail = client.get(f"/knowledge/?protocol={record.record_id}")
+    assert b"Previously extracted step" in detail.content
+    assert b"latest reprocessing attempt failed" in detail.content
+    mock_read.assert_called_once()
+
+
+@patch("labapps.views.read_knowledge_file")
+def test_read_only_member_cannot_reprocess_protocol(mock_read):
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "member@nyu.edu",
+            "display_name": "Lab member",
+            "global_role": "member",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "App_Roles",
+        "AR-notebooks-reader",
+        {
+            "member_id": "M002",
+            "app_id": "notebooks_protocols",
+            "app_role": "viewer",
+            "scope_team_id": "",
+            "active": "TRUE",
+        },
+    )
+    KnowledgeRecord.objects.create(
+        record_id="P-LOCKED",
+        record_type="protocol",
+        title="Locked protocol",
+        object_name="knowledge/P-LOCKED/protocol.docx",
+        original_filename="protocol.docx",
+    )
+
+    response = client_for("member@nyu.edu").post(
+        "/knowledge/P-LOCKED/reprocess/"
+    )
+
+    assert response.status_code == 403
+    mock_read.assert_not_called()

@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from google.cloud import storage
 
 from labapps.models import KnowledgeRecord
+from labapps.services.knowledge import EXTRACTED_METADATA_KEYS
 from labapps.services.sheets import sync_all
 
 
@@ -41,20 +42,51 @@ class Command(BaseCommand):
             record_id = str(raw.get("protocol_id") or raw.get("notebook_id") or raw.get("record_id") or "").strip()
             if not record_id:
                 continue
-            record_type = "protocol" if raw.get("protocol_id") or raw.get("record_type") == "protocol" else "notebook"
-            title = str(raw.get("title") or raw.get("original_filename") or record_id).strip()
-            metadata = dict(raw)
+            existing = KnowledgeRecord.objects.filter(record_id=record_id).first()
+            record_type = (
+                "protocol"
+                if raw.get("protocol_id") or raw.get("record_type") == "protocol"
+                else existing.record_type if existing else "notebook"
+            )
+            title = str(
+                raw.get("title")
+                or raw.get("original_filename")
+                or (existing.title if existing else "")
+                or record_id
+            ).strip()
+            metadata = dict(existing.metadata) if existing else {}
+            metadata.update(raw)
+            if existing and existing.metadata.get("parse_status") == "parsed":
+                for key in EXTRACTED_METADATA_KEYS:
+                    if key in existing.metadata:
+                        metadata[key] = existing.metadata[key]
+
+            def value(key):
+                incoming = raw.get(key)
+                if incoming not in (None, ""):
+                    return str(incoming)
+                return str(getattr(existing, key, "") if existing else "")
+
             KnowledgeRecord.objects.update_or_create(
                 record_id=record_id,
                 defaults={
                     "record_type": record_type,
                     "title": title,
-                    "team": str(raw.get("team", "")),
-                    "owner": str(raw.get("owner") or raw.get("researcher") or ""),
-                    "category": str(raw.get("category", "")),
-                    "status": str(raw.get("protocol_status") or raw.get("status") or "active"),
-                    "source_path": str(raw.get("source_path", "")),
-                    "original_filename": str(raw.get("original_filename", "")),
+                    "team": value("team"),
+                    "owner": str(
+                        raw.get("owner")
+                        or raw.get("researcher")
+                        or (existing.owner if existing else "")
+                    ),
+                    "category": value("category"),
+                    "status": str(
+                        raw.get("protocol_status")
+                        or raw.get("status")
+                        or (existing.status if existing else "")
+                        or "active"
+                    ),
+                    "source_path": value("source_path"),
+                    "original_filename": value("original_filename"),
                     "metadata": metadata,
                 },
             )

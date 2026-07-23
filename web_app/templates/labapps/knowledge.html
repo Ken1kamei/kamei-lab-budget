@@ -38,6 +38,43 @@
 <section id="protocols" class="panel panel-wide settings-section">
   <div class="panel-heading"><div><span>Protocol library</span><h2>Protocol detail</h2></div></div>
   <form method="get" class="protocol-picker">{% if search_query %}<input type="hidden" name="q" value="{{ search_query }}">{% endif %}<label for="protocol">Protocol</label><select id="protocol" name="protocol" onchange="this.form.submit()">{% for row in protocols %}<option value="{{ row.record_id }}" {% if selected_protocol.record_id == row.record_id %}selected{% endif %}>{{ row.record_id }} · {{ row.title }}</option>{% endfor %}</select></form>
-  {% if selected_protocol %}<article class="protocol-detail"><div class="protocol-meta"><span><small>Team</small>{{ selected_protocol.team }}</span><span><small>Owner</small>{{ selected_protocol.owner|default:"Not specified" }}</span><span><small>Category</small>{{ selected_protocol.category }}</span><span><small>Status</small>{{ selected_protocol.status }}</span></div><h2>{{ selected_protocol.title }}</h2>{% with overview=selected_protocol|metadata:"overview" %}{% if overview %}<h3>Overview</h3><ul>{% for line in overview %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}{% endwith %}{% with materials=selected_protocol|metadata:"materials" %}{% if materials %}<h3>Materials</h3><ul>{% for line in materials %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}{% endwith %}{% with procedure=selected_protocol|metadata:"procedure" %}{% if procedure %}<h3>Procedure</h3><ol>{% for line in procedure %}<li>{{ line }}</li>{% endfor %}</ol>{% endif %}{% endwith %}{% if selected_protocol.object_name %}<a class="button secondary" href="{% url 'labapps:knowledge_download' selected_protocol.record_id %}">Download original</a>{% else %}<p class="muted">Structured content is available. The original Dropbox file has not yet been copied to private Cloud Storage.</p>{% endif %}</article>{% else %}<p class="empty">No protocol records are available.</p>{% endif %}
+  {% if selected_protocol %}
+  <article class="protocol-detail">
+    <div class="protocol-meta"><span><small>Team</small>{{ selected_protocol.team }}</span><span><small>Owner</small>{{ selected_protocol.owner|default:"Not specified" }}</span><span><small>Category</small>{{ selected_protocol.category|default:"Not specified" }}</span><span><small>Status</small>{{ selected_protocol.status }}</span></div>
+    <h2>{{ selected_protocol.title }}</h2>
+    {% with document_title=selected_protocol|metadata:"document_title" summary=selected_protocol|metadata:"summary" sections=selected_protocol|metadata:"sections" parse_status=selected_protocol|metadata:"parse_status" parse_message=selected_protocol|metadata:"parse_message" last_reprocess_status=selected_protocol|metadata:"last_reprocess_status" last_reprocess_error=selected_protocol|metadata:"last_reprocess_error" %}
+      {% if document_title and document_title != selected_protocol.title %}<p class="protocol-document-title">{{ document_title }}</p>{% endif %}
+      {% for line in summary %}<p>{{ line }}</p>{% endfor %}
+      {% if last_reprocess_status == "failed" %}<p class="message warning">The latest reprocessing attempt failed, so the structured content below may be from an earlier version. {{ last_reprocess_error }}</p>{% endif %}
+      {% if sections %}
+        {% for section in sections %}
+        <section class="protocol-section">
+          <h3>{{ section.heading }}</h3>
+          {% for block in section.blocks %}
+            {% if block.kind == "paragraph" %}
+              <p>{{ block.text }}</p>
+            {% elif block.kind == "bullets" %}
+              <ul>{% for item in block.items %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% elif block.kind == "numbered" %}
+              <ol>{% for item in block.items %}<li>{{ item }}</li>{% endfor %}</ol>
+            {% elif block.kind == "table" %}
+              <div class="protocol-table-scroll"><table class="protocol-table"><tbody>{% for row in block.rows %}<tr>{% for cell in row %}<td>{{ cell|linebreaksbr }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+            {% endif %}
+          {% endfor %}
+        </section>
+        {% endfor %}
+      {% else %}
+        {% with overview=selected_protocol|metadata:"overview" %}{% if overview %}<h3>Overview</h3><ul>{% for line in overview %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}{% endwith %}
+        {% with materials=selected_protocol|metadata:"materials" %}{% if materials %}<h3>Materials</h3><ul>{% for line in materials %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}{% endwith %}
+        {% with procedure=selected_protocol|metadata:"procedure" %}{% if procedure %}<h3>Procedure</h3><ol>{% for line in procedure %}<li>{{ line }}</li>{% endfor %}</ol>{% endif %}{% endwith %}
+        {% if parse_status == "failed" and last_reprocess_status != "failed" %}<p class="message error">The original file is available, but its text could not be extracted. {{ parse_message }}</p>{% elif parse_status == "unsupported" %}<p class="message warning">{{ parse_message }}</p>{% elif selected_protocol.object_name and not parse_status %}<p class="message warning">This record was uploaded before automatic extraction was added. Reprocess it to display the document content.</p>{% endif %}
+      {% endif %}
+    {% endwith %}
+    <div class="protocol-actions">
+      {% if selected_protocol.object_name %}<a class="button secondary" href="{% url 'labapps:knowledge_download' selected_protocol.record_id %}">Download original</a>{% else %}<p class="muted">Structured content is available. The original Dropbox file has not yet been copied to private Cloud Storage.</p>{% endif %}
+      {% if can_edit and selected_protocol.object_name %}<form method="post" action="{% url 'labapps:knowledge_reprocess' selected_protocol.record_id %}">{% csrf_token %}<button class="button primary" type="submit">Reprocess content</button></form>{% endif %}
+    </div>
+  </article>
+  {% else %}<p class="empty">No protocol records are available.</p>{% endif %}
 </section>
 {% endblock %}

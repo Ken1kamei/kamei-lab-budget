@@ -1,13 +1,16 @@
+import hashlib
 import json
 import mimetypes
 import secrets
 from datetime import date
 
 from django.contrib import messages
+from django.db import transaction
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from .forms import (
     AppRoleForm,
@@ -35,6 +38,10 @@ from .services.gantt import (
     parse_gantt_workbook,
     resolve_gantt_rows,
 )
+from .services.knowledge import (
+    EXTRACTED_METADATA_KEYS,
+    extract_knowledge_metadata,
+)
 from .services.sheets import (
     append_history,
     append_registry_audit,
@@ -44,7 +51,11 @@ from .services.sheets import (
     snapshot_rows,
     upsert_record,
 )
-from .services.storage import read_knowledge_file, store_knowledge_file
+from .services.storage import (
+    delete_knowledge_file,
+    read_knowledge_file,
+    store_knowledge_file,
+)
 
 
 def _email(request):
@@ -602,25 +613,164 @@ def knowledge_upload(request):
         prefix = "P" if record_type == "protocol" else "N"
         record_id = f"{prefix}-{timezone.localtime().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2).upper()}"
         try:
+            content = upload.read()
+            parsed = extract_knowledge_metadata(
+                upload.name,
+                content,
+                upload.content_type or "",
+            )
+            metadata = {
+                "notes": form.cleaned_data["notes"],
+                "content_type": upload.content_type or "",
+            }
+            metadata.update(parsed)
             key, digest = store_knowledge_file(
-                record_id, upload.name, upload.read(), upload.content_type or "application/octet-stream"
+                record_id,
+                upload.name,
+                content,
+                upload.content_type or "application/octet-stream",
             )
-            record = KnowledgeRecord.objects.create(
-                record_id=record_id, record_type=record_type, title=form.cleaned_data["title"],
-                team=form.cleaned_data["team"], owner=form.cleaned_data["owner"],
-                category=form.cleaned_data["category"], status="active", object_name=key,
-                original_filename=upload.name, uploaded_by=_email(request),
-                metadata={"notes": form.cleaned_data["notes"], "sha256": digest, "content_type": upload.content_type or ""},
+            metadata["sha256"] = digest
+            try:
+                with transaction.atomic():
+                    record = KnowledgeRecord.objects.create(
+                        record_id=record_id, record_type=record_type, title=form.cleaned_data["title"],
+                        team=form.cleaned_data["team"], owner=form.cleaned_data["owner"],
+                        category=form.cleaned_data["category"], status="active", object_name=key,
+                        original_filename=upload.name, uploaded_by=_email(request),
+                        metadata=metadata,
+                    )
+                    LabAppAudit.objects.create(
+                        actor=_email(request), app_id="notebooks_protocols", action="upload",
+                        target=record.record_id,
+                        after={
+                            "record_id": record.record_id,
+                            "sha256": digest,
+                            "parse_status": parsed.get("parse_status"),
+                            "section_count": parsed.get("section_count", 0),
+                        },
+                    )
+            except Exception:
+                try:
+                    delete_knowledge_file(key)
+                except Exception:
+                    pass
+                raise
+            if parsed.get("parse_status") == "parsed":
+                messages.success(
+                    request,
+                    f"Private file uploaded and parsed into {parsed.get('section_count', 0)} sections.",
+                )
+            else:
+                messages.warning(
+                    request,
+                    "Private file uploaded, but automatic text extraction was not completed. "
+                    + parsed.get("parse_message", ""),
+                )
+            return redirect(
+                f"{reverse('labapps:knowledge')}?protocol={record.record_id}#protocols"
             )
-            LabAppAudit.objects.create(
-                actor=_email(request), app_id="notebooks_protocols", action="upload",
-                target=record.record_id, after={"record_id": record.record_id, "sha256": digest},
-            )
-            messages.success(request, "Private file uploaded and registered.")
-            return redirect("labapps:knowledge")
         except Exception as error:
             messages.error(request, str(error))
     return render(request, "labapps/knowledge_upload.html", {"form": form})
+
+
+@require_POST
+@lab_app_access("notebooks_protocols", write=True)
+def knowledge_reprocess(request, record_id):
+    try:
+        record = KnowledgeRecord.objects.get(record_id=record_id)
+    except KnowledgeRecord.DoesNotExist as error:
+        raise Http404 from error
+    if not record.object_name:
+        raise Http404("The original file has not been migrated to private storage yet.")
+
+    content = read_knowledge_file(record.object_name)
+    expected_digest = str(record.metadata.get("sha256") or "")
+    actual_digest = hashlib.sha256(content).hexdigest()
+    if expected_digest and not secrets.compare_digest(expected_digest, actual_digest):
+        LabAppAudit.objects.create(
+            actor=_email(request),
+            app_id="notebooks_protocols",
+            action="reprocess_checksum_mismatch",
+            target=record.record_id,
+            before={"sha256": expected_digest},
+            after={"sha256": actual_digest},
+        )
+        messages.error(
+            request,
+            "Reprocessing stopped because the stored original does not match its recorded checksum.",
+        )
+        return redirect(
+            f"{reverse('labapps:knowledge')}?protocol={record.record_id}#protocols"
+        )
+
+    parsed = extract_knowledge_metadata(
+        record.original_filename,
+        content,
+        record.metadata.get("content_type", ""),
+    )
+    before = {
+        "parse_status": record.metadata.get("parse_status", ""),
+        "section_count": record.metadata.get("section_count", 0),
+    }
+    metadata = dict(record.metadata)
+    reprocessed_at = timezone.now().isoformat()
+    if parsed.get("parse_status") == "parsed":
+        for key in EXTRACTED_METADATA_KEYS:
+            metadata.pop(key, None)
+        metadata.update(parsed)
+        metadata.update(
+            {
+                "last_reprocess_status": "success",
+                "last_reprocess_error": "",
+                "last_reprocess_at": reprocessed_at,
+            }
+        )
+    else:
+        error_message = parsed.get("parse_message", "")
+        metadata.update(
+            {
+                "last_reprocess_status": "failed",
+                "last_reprocess_error": error_message,
+                "last_reprocess_at": reprocessed_at,
+            }
+        )
+        if not metadata.get("sections"):
+            metadata.update(
+                {
+                    "parse_status": parsed.get("parse_status"),
+                    "parser": parsed.get("parser"),
+                    "parse_message": error_message,
+                }
+            )
+    with transaction.atomic():
+        record.metadata = metadata
+        record.save(update_fields=["metadata", "updated_at"])
+        LabAppAudit.objects.create(
+            actor=_email(request),
+            app_id="notebooks_protocols",
+            action="reprocess_content",
+            target=record.record_id,
+            before=before,
+            after={
+                "parse_status": metadata.get("parse_status"),
+                "section_count": metadata.get("section_count", 0),
+            },
+        )
+    if parsed.get("parse_status") == "parsed":
+        messages.success(
+            request,
+            f"Document content reprocessed into {parsed.get('section_count', 0)} sections.",
+        )
+    else:
+        messages.error(
+            request,
+            "Automatic text extraction failed. " + parsed.get("parse_message", ""),
+        )
+    return redirect(
+        f"{reverse('labapps:knowledge')}?protocol={record.record_id}#protocols"
+    )
 
 
 @lab_app_access("notebooks_protocols")
