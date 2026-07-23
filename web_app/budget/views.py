@@ -1,6 +1,7 @@
 import logging
 import secrets
 from collections import defaultdict
+from datetime import timedelta
 from decimal import Decimal
 
 from authlib.integrations.django_client import OAuth
@@ -202,6 +203,20 @@ def _lead_team_names(member, fiscal_year=None):
     return sorted(set(member.team_names or [])) if member.highest_role == "lead" else []
 
 
+def _can_full_edit_transaction(member, fiscal_year, transaction):
+    return member.highest_role in {"pi", "budget_manager"} or transaction.team in set(
+        _lead_team_names(member, fiscal_year)
+    )
+
+
+def _can_attach_receipt(member, fiscal_year, transaction):
+    return (
+        not _can_full_edit_transaction(member, fiscal_year, transaction)
+        and transaction.team in set(_visible_team_names(member, fiscal_year))
+        and transaction.entered_by.strip().lower() == member.email.strip().lower()
+    )
+
+
 def _scoped_totals(member, fiscal_year):
     if member.highest_role in {"pi", "budget_manager"}:
         return database_totals(fiscal_year)
@@ -294,15 +309,14 @@ def _draft_initial(draft, year_labels, team_names):
     except ValueError:
         invoice_date = timezone.localdate().isoformat()
         suggested_year = fiscal_year_for_date(invoice_date)
-    if suggested_year not in year_labels and year_labels:
-        suggested_year = year_labels[0]
+    fiscal_year_ready = suggested_year in year_labels
     category = str(parsed.get("suggested_category") or "Consumables")
     if category not in CATEGORIES:
         category = "Consumables"
     suggested_team = str(parsed.get("suggested_team") or "")
     return {
         "date": invoice_date,
-        "fiscal_year": suggested_year,
+        "fiscal_year": suggested_year if fiscal_year_ready else "",
         "category": category,
         "subcategory": str(parsed.get("suggested_subcategory") or ""),
         "vendor": str(parsed.get("vendor") or ""),
@@ -315,6 +329,48 @@ def _draft_initial(draft, year_labels, team_names):
         "amount": parsed.get("total_amount") or "",
         "team": suggested_team if suggested_team in team_names else (team_names[0] if len(team_names) == 1 else ""),
         "notes": "",
+    }
+
+
+def _invoice_review_details(draft):
+    parsed = dict(draft.parsed_data or {})
+    labels = {
+        "vendor": "Vendor",
+        "invoice_number": "Invoice number",
+        "po_number": "PO number",
+        "invoice_date": "Invoice date",
+        "total_amount": "Total amount",
+        "currency": "Currency",
+        "suggested_description": "Description",
+        "suggested_category": "Category",
+    }
+    confidence = parsed.get("confidence") or {}
+    invoice_date = str(parsed.get("invoice_date") or "")[:10]
+    try:
+        implied_fiscal_year = fiscal_year_for_date(invoice_date) if invoice_date else ""
+    except ValueError:
+        implied_fiscal_year = ""
+    return {
+        "due_date": parsed.get("due_date") or "",
+        "amount_source": parsed.get("amount_source") or "",
+        "missing_fields": [
+            labels.get(str(field), str(field).replace("_", " ").title())
+            for field in (parsed.get("missing_fields") or [])
+        ],
+        "confidence_rows": [
+            {
+                "field": labels.get(str(field), str(field).replace("_", " ").title()),
+                "level": str(level).lower(),
+            }
+            for field, level in confidence.items()
+        ],
+        "line_items": list(parsed.get("line_items") or [])[:20],
+        "history_hints": list(parsed.get("history_hints") or [])[:10],
+        "implied_fiscal_year": implied_fiscal_year,
+        "fiscal_year_ready": bool(
+            implied_fiscal_year
+            and FiscalYear.objects.filter(label=implied_fiscal_year).exists()
+        ),
     }
 
 
@@ -332,7 +388,13 @@ def _imports_context(request, active_draft=None, active_form=None, form_error=No
                 team_choices=team_names,
                 prefix=f"draft-{draft.id}",
             )
-        rows.append({"draft": draft, "form": form})
+        rows.append(
+            {
+                "draft": draft,
+                "form": form,
+                "details": _invoice_review_details(draft),
+            }
+        )
     return {
         "draft_rows": rows,
         "form_error": form_error,
@@ -366,10 +428,52 @@ def dashboard(request):
         y = round(220 - float(amount / max_month * Decimal("190")), 2)
         chart_points.append(f"{x},{y}")
     category_rows = [
-        {"name": category, **totals["categories"][category]}
+        {
+            "name": category,
+            **totals["categories"][category],
+            "used_percent": min(
+                100,
+                round(
+                    float(
+                        totals["categories"][category]["allocated"]
+                        / totals["categories"][category]["budget"]
+                        * 100
+                    ),
+                    1,
+                ),
+            )
+            if totals["categories"][category]["budget"]
+            else 0,
+            "share_percent": round(
+                float(
+                    totals["categories"][category]["allocated"]
+                    / totals["total_allocated"]
+                    * 100
+                ),
+                1,
+            )
+            if totals["total_allocated"]
+            else 0,
+        }
         for category in CATEGORIES
         if totals["categories"][category]["budget"] or totals["categories"][category]["allocated"]
     ]
+    team_rows = [
+        {
+            "name": name,
+            **values,
+            "used_percent": min(
+                100,
+                round(float(values["allocated"] / values["budget"] * 100), 1),
+            )
+            if values["budget"]
+            else 0,
+        }
+        for name, values in sorted(totals["teams"].items())
+    ]
+    pending_review_count = _visible_invoice_drafts(request).filter(
+        status__in=["ready", "review", "processing"]
+    ).count()
     return render(
         request,
         "budget/dashboard.html",
@@ -378,6 +482,9 @@ def dashboard(request):
             "fiscal_year": fiscal_year,
             "totals": totals,
             "category_rows": category_rows,
+            "team_rows": team_rows,
+            "recent_transactions": scoped.order_by("-date", "-id")[:7],
+            "pending_review_count": pending_review_count,
             "monthly_rows": [
                 {"month": month, "amount": amount}
                 for month, amount in zip(month_keys, monthly_values, strict=True)
@@ -415,6 +522,17 @@ def transactions_view(request):
                 | Q(po_number__icontains=query)
                 | Q(invoice_number__icontains=query)
             )
+        transactions = list(transactions)
+        for transaction in transactions:
+            if _can_full_edit_transaction(request.lab_member, fiscal_year, transaction):
+                transaction.web_action = "edit"
+            elif _can_attach_receipt(request.lab_member, fiscal_year, transaction):
+                transaction.web_action = "receipt"
+            else:
+                transaction.web_action = ""
+    export_params = request.GET.copy()
+    if fiscal_year:
+        export_params["fy"] = fiscal_year.label
     return render(
         request,
         "budget/transactions.html",
@@ -424,8 +542,11 @@ def transactions_view(request):
             "transactions": transactions,
             "categories": CATEGORIES,
             "statuses": ["Allocated", "Cancelled"],
-            "team_names": _allowed_team_names(request.lab_member, fiscal_year) if fiscal_year else [],
+            "team_names": _visible_team_names(request.lab_member, fiscal_year)
+            if fiscal_year
+            else [],
             "filters": request.GET,
+            "export_query": export_params.urlencode(),
         },
     )
 
@@ -457,13 +578,41 @@ def imports_view(request):
                 _imports_context(request, form_error="Upload at most 20 PDFs at a time."),
                 status=400,
             )
-        try:
-            drafts = create_invoice_drafts(uploads, request.user.email)
-            InvoiceDraft.objects.filter(
-                id__in=[draft.id for draft in drafts]
-            ).exclude(status="imported").update(team=upload_team)
-        except Exception:
-            return _error_response(request, "One or more PDFs could not be parsed.", status=422)
+        drafts = []
+        failures = []
+        for upload in uploads:
+            try:
+                drafts.extend(
+                    create_invoice_drafts(
+                        [upload],
+                        request.user.email,
+                        team=upload_team,
+                    )
+                )
+            except (OSError, ValueError) as error:
+                logger.warning("Invoice upload failed for %s: %s", upload.name, error)
+                failures.append(f"{upload.name}: {error}")
+            except Exception:
+                logger.exception("Invoice upload failed for %s", upload.name)
+                failures.append(f"{upload.name}: could not be parsed")
+        if not drafts:
+            return render(
+                request,
+                "budget/imports.html",
+                _imports_context(
+                    request,
+                    form_error="No PDFs were accepted. " + " ".join(failures),
+                ),
+                status=422,
+            )
+        if failures:
+            messages.warning(
+                request,
+                f"Parsed {len(drafts)} PDF(s). {len(failures)} file(s) need attention: "
+                + " ".join(failures),
+            )
+        else:
+            messages.success(request, f"Parsed {len(drafts)} PDF(s). Review the extracted fields.")
         return redirect("budget:imports")
     return render(request, "budget/imports.html", _imports_context(request))
 
@@ -583,8 +732,9 @@ def commit_invoice_draft(request, draft_id):
             messages.info(request, f"{draft.file_name} has already been imported.")
             return redirect("budget:imports")
         if not created and operation.status == "pending":
-            messages.warning(request, f"{draft.file_name} is already being processed.")
-            return redirect("budget:imports")
+            if operation.updated_at >= timezone.now() - timedelta(minutes=5):
+                messages.warning(request, f"{draft.file_name} is already being processed.")
+                return redirect("budget:imports")
         operation.status = "pending"
         operation.error = ""
         operation.save(update_fields=["status", "error", "updated_at"])

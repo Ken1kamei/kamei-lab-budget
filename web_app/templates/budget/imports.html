@@ -35,7 +35,7 @@
 </section>
 <section class="draft-grid">
   {% for item in draft_rows %}
-  {% with draft=item.draft form=item.form %}
+  {% with draft=item.draft form=item.form details=item.details %}
   <article class="draft-card {% if draft.status == 'imported' %}is-imported{% endif %}">
     <span class="status {{ draft.status }}">{{ draft.get_status_display }}</span>
     <h2>{{ draft.file_name }}</h2>
@@ -44,8 +44,26 @@
     <dl class="draft-summary">
       <dt>Vendor</dt><dd>{{ draft.parsed_data.vendor|default:'Review needed' }}</dd>
       <dt>Invoice</dt><dd>{{ draft.parsed_data.invoice_number|default:'Review needed' }}</dd>
+      <dt>PO</dt><dd>{{ draft.parsed_data.po_number|default:'Not detected' }}</dd>
+      <dt>Invoice date</dt><dd>{{ draft.parsed_data.invoice_date|default:'Review needed' }}</dd>
+      <dt>Due date</dt><dd>{{ details.due_date|default:'Not detected' }}</dd>
       <dt>Amount</dt><dd>{{ draft.parsed_data.currency }} {{ draft.parsed_data.total_amount|default:'Review needed' }}</dd>
+      <dt>Amount source</dt><dd>{{ details.amount_source|default:'Not available' }}</dd>
     </dl>
+    {% if details.missing_fields %}<div class="notice compact-notice"><strong>Review needed:</strong> {{ details.missing_fields|join:', ' }}</div>{% endif %}
+    {% if details.implied_fiscal_year and not details.fiscal_year_ready %}<div class="notice error compact-notice"><strong>{{ details.implied_fiscal_year }} is not prepared.</strong> Create and synchronize that fiscal year before this invoice can be imported.</div>{% endif %}
+    <details class="extraction-details">
+      <summary>Extraction details</summary>
+      {% if details.confidence_rows %}
+      <div class="confidence-grid">
+        {% for row in details.confidence_rows %}<span><small>{{ row.field }}</small><strong class="confidence-{{ row.level }}">{{ row.level|title }}</strong></span>{% endfor %}
+      </div>
+      {% endif %}
+      {% if details.history_hints %}<div class="history-hints"><strong>Prior-ledger hints</strong><ul>{% for hint in details.history_hints %}<li>{{ hint }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if details.line_items %}
+      <div class="table-panel compact-table"><table><thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Unit price</th><th class="number">Total</th></tr></thead><tbody>{% for line in details.line_items %}<tr><td>{{ line.description }}</td><td class="number">{{ line.quantity }}</td><td class="number">{{ line.unit_price }}</td><td class="number">{{ line.total }}</td></tr>{% endfor %}</tbody></table></div>
+      {% else %}<p class="muted">No line items were detected.</p>{% endif %}
+    </details>
     {% if draft.status == 'imported' %}
     <div class="import-result">
       <span>{{ draft.imported_fiscal_year }}</span>

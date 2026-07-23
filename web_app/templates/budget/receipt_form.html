@@ -1,0 +1,34 @@
+{% extends 'budget/base.html' %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow">RECEIPT</div>
+    <h1>Attach receipt</h1>
+    <p>Add receipt evidence or notes to {{ transaction.transaction_id }}. Budget fields cannot be changed here.</p>
+  </div>
+</header>
+{% if not sheet_write_allowed %}<div class="notice">Google Sheet writes are not enabled for this account.</div>{% endif %}
+<section class="panel">
+  <dl class="transaction-summary">
+    <dt>Team</dt><dd>{{ transaction.team }}</dd>
+    <dt>Vendor</dt><dd>{{ transaction.vendor }}</dd>
+    <dt>Description</dt><dd>{{ transaction.description }}</dd>
+    <dt>Amount</dt><dd>{{ transaction.currency }} {{ transaction.amount }}</dd>
+  </dl>
+  <form method="post" class="form-grid single">
+    {% csrf_token %}
+    {% for field in form %}
+    <label>
+      <span>{{ field.label }}</span>
+      {{ field }}
+      {% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}
+    </label>
+    {% endfor %}
+    {% for error in form.non_field_errors %}<div class="field-error">{{ error }}</div>{% endfor %}
+    <div class="form-actions">
+      <button class="button primary" type="submit" {% if not sheet_write_allowed %}disabled{% endif %}>Save receipt details</button>
+      <a class="button secondary" href="{% url 'budget:transactions' %}?fy={{ transaction.fiscal_year.label }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

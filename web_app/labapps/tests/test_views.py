@@ -10,6 +10,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from openpyxl import Workbook
 
+from budget.models import LabMember
 from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord
 from labapps.tests.test_knowledge import protocol_docx_bytes
 
@@ -374,6 +375,137 @@ def test_knowledge_keyword_search_matches_notebooks_and_protocol_content():
     assert b"Notebook registry" not in response.content
 
 
+def test_knowledge_record_can_be_archived_and_restored():
+    seed_pi()
+    record = KnowledgeRecord.objects.create(
+        record_id="P-LIFECYCLE",
+        record_type="protocol",
+        title="Lifecycle protocol",
+        status="active",
+    )
+    client = signed_in_client()
+
+    archived = client.post(
+        f"/knowledge/{record.record_id}/status/",
+        {"status": "archived"},
+    )
+
+    assert archived.status_code == 302
+    record.refresh_from_db()
+    assert record.status == "archived"
+    active_page = client.get("/knowledge/")
+    archived_page = client.get("/knowledge/?status=archived")
+    assert list(active_page.context["protocols"]) == []
+    assert [row.record_id for row in archived_page.context["protocols"]] == [
+        "P-LIFECYCLE"
+    ]
+    audit = LabAppAudit.objects.get(
+        target=record.record_id,
+        action="status_updated",
+    )
+    assert audit.before == {"status": "active"}
+    assert audit.after == {"status": "archived"}
+
+
+def test_portal_member_save_updates_budget_iap_allowlist(
+    monkeypatch,
+    settings,
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    seed_pi()
+
+    def fake_upsert(table_name, payload, **kwargs):
+        key = {
+            "Members": "member_id",
+            "Teams": "team_id",
+            "App_Roles": "app_role_id",
+            "Member_Teams": "member_team_id",
+        }[table_name]
+        add_record(table_name, payload[key], payload)
+        return payload
+
+    monkeypatch.setattr("labapps.views.upsert_record", fake_upsert)
+    monkeypatch.setattr("labapps.views.append_registry_audit", lambda **kwargs: None)
+    client = signed_in_client()
+
+    response = client.post(
+        "/portal/admin/",
+        {
+            "action": "member",
+            "member-email": "new.member@nyu.edu",
+            "member-name": "New Member",
+            "member-display_name": "New Member",
+            "member-global_role": "member",
+            "member-active": "on",
+            "member-notes": "",
+        },
+    )
+
+    assert response.status_code == 302
+    allowlisted = LabMember.objects.get(email="new.member@nyu.edu")
+    assert allowlisted.display_name == "New Member"
+    assert allowlisted.highest_role == "member"
+    assert allowlisted.active is True
+
+
+def test_portal_member_demotion_revokes_budget_pi_role(
+    monkeypatch,
+    settings,
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    seed_pi()
+    LabMember.objects.create(
+        email="former.pi@nyu.edu",
+        display_name="Former PI",
+        highest_role="pi",
+        active=True,
+    )
+    add_record(
+        "Members",
+        "M009",
+        {
+            "member_id": "M009",
+            "email": "former.pi@nyu.edu",
+            "name": "Former PI",
+            "display_name": "Former PI",
+            "global_role": "pi",
+            "active": "TRUE",
+        },
+    )
+
+    def fake_upsert(table_name, payload, **kwargs):
+        SheetRecord.objects.update_or_create(
+            source="registry",
+            table_name=table_name,
+            record_id=payload["member_id"],
+            defaults={"payload": payload},
+        )
+        return payload
+
+    monkeypatch.setattr("labapps.views.upsert_record", fake_upsert)
+    monkeypatch.setattr("labapps.views.append_registry_audit", lambda **kwargs: None)
+
+    response = signed_in_client().post(
+        "/portal/admin/",
+        {
+            "action": "member",
+            "member-email": "former.pi@nyu.edu",
+            "member-name": "Former PI",
+            "member-display_name": "Former PI",
+            "member-global_role": "member",
+            "member-active": "on",
+            "member-notes": "",
+        },
+    )
+
+    assert response.status_code == 302
+    assert LabMember.objects.get(
+        email="former.pi@nyu.edu"
+    ).highest_role == "member"
+
+
 def test_scoped_tracker_role_cannot_switch_to_another_team():
     add_record(
         "Members", "M002",
@@ -447,6 +579,181 @@ def test_scoped_tracker_role_cannot_switch_to_another_team():
     milestone = SheetRecord.objects.get(table_name="Milestones", record_id="MS001")
     assert milestone.payload["status"] == "In progress"
     assert milestone.payload["review_status"] == "Pending"
+
+
+def test_tracker_member_with_two_scoped_roles_can_switch_between_both_teams():
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "multiteam@nyu.edu",
+            "display_name": "Multi Team",
+            "active": "TRUE",
+        },
+    )
+    for team_id, team_name in (("T001", "IoC"), ("T002", "Diabetes")):
+        add_record(
+            "Teams",
+            team_id,
+            {"team_id": team_id, "team_name": team_name, "active": "TRUE"},
+        )
+        add_record(
+            "Member_Teams",
+            f"MT-{team_id}",
+            {
+                "member_team_id": f"MT-{team_id}",
+                "member_id": "M002",
+                "team_id": team_id,
+                "active": "TRUE",
+            },
+        )
+        add_record(
+            "App_Roles",
+            f"AR-{team_id}",
+            {
+                "member_id": "M002",
+                "app_id": "project_tracker",
+                "app_role": "lead",
+                "scope_team_id": team_id,
+                "active": "TRUE",
+            },
+        )
+        add_record(
+            "Projects",
+            f"P-{team_id}",
+            {
+                "project_id": f"P-{team_id}",
+                "project": f"{team_name} project",
+                "owner_member_id": "M002",
+            },
+            source="tracker",
+        )
+
+    client = client_for("multiteam@nyu.edu")
+    ioc = client.get("/tracker/?team=T001")
+    diabetes = client.get("/tracker/?team=T002")
+
+    assert ioc.status_code == diabetes.status_code == 200
+    assert b"IoC project" in ioc.content
+    assert b"Diabetes project" in diabetes.content
+
+
+def test_tracker_viewer_scope_stays_read_only_when_another_scope_is_lead():
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "mixed@nyu.edu",
+            "display_name": "Mixed Role",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Members",
+        "M003",
+        {
+            "member_id": "M003",
+            "email": "owner@nyu.edu",
+            "display_name": "Owner",
+            "active": "TRUE",
+        },
+    )
+    for team_id, team_name, role in (
+        ("T001", "IoC", "viewer"),
+        ("T002", "Diabetes", "lead"),
+    ):
+        add_record(
+            "Teams",
+            team_id,
+            {"team_id": team_id, "team_name": team_name, "active": "TRUE"},
+        )
+        add_record(
+            "App_Roles",
+            f"AR-{team_id}",
+            {
+                "member_id": "M002",
+                "app_id": "project_tracker",
+                "app_role": role,
+                "scope_team_id": team_id,
+                "active": "TRUE",
+            },
+        )
+    add_record(
+        "Member_Teams",
+        "MT-OWNER",
+        {
+            "member_team_id": "MT-OWNER",
+            "member_id": "M003",
+            "team_id": "T001",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Milestones",
+        "MS-VIEW",
+        {
+            "milestone_id": "MS-VIEW",
+            "milestone": "Viewer-only milestone",
+            "owner_member_id": "M003",
+            "status": "In progress",
+            "review_status": "Pending",
+        },
+        source="tracker",
+    )
+
+    response = client_for("mixed@nyu.edu").post(
+        "/tracker/?team=T001",
+        {
+            "action": "update",
+            "table_name": "Milestones",
+            "record_id": "MS-VIEW",
+            "status": "Completed",
+            "next_action": "Tampered",
+        },
+    )
+
+    assert response.status_code == 403
+    assert SheetRecord.objects.get(
+        table_name="Milestones",
+        record_id="MS-VIEW",
+    ).payload["status"] == "In progress"
+
+
+def test_tracker_rejects_unsafe_experiment_data_url():
+    seed_pi()
+    add_record(
+        "Experiments",
+        "EXP-URL",
+        {
+            "experiment_id": "EXP-URL",
+            "experiment_title": "URL validation",
+            "member_id": "M001",
+            "status": "In progress",
+            "review_status": "Pending",
+            "experiment_data_link": "https://example.com/data",
+        },
+        source="tracker",
+    )
+
+    response = signed_in_client().post(
+        "/tracker/",
+        {
+            "action": "update",
+            "table_name": "Experiments",
+            "record_id": "EXP-URL",
+            "status": "In progress",
+            "next_action": "Keep safe",
+            "experiment_data_link": "javascript:alert(1)",
+        },
+    )
+
+    assert response.status_code == 200
+    assert SheetRecord.objects.get(
+        table_name="Experiments",
+        record_id="EXP-URL",
+    ).payload["experiment_data_link"] == "https://example.com/data"
 
 
 @patch("labapps.views.store_knowledge_file", return_value=("knowledge/N1/file.pdf", "abc123"))

@@ -1,4 +1,6 @@
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.core.management import call_command
@@ -223,6 +225,173 @@ def test_invoice_write_is_verified_and_idempotent_by_pdf_hash(settings, monkeypa
     assert saved["Status"] == "Allocated"
     assert saved["Team"] == "Diabetes"
     assert "[PDF SHA256:abc123]" in saved["Notes"]
+
+
+def test_invoice_reuses_existing_team_vendor_po_row(settings, monkeypatch):
+    gateway, _, annual = _mutation_gateway(settings, monkeypatch)
+    existing = gateway.write_transaction(
+        "FY2026-27",
+        _manual_candidate(
+            vendor="Shared vendor",
+            po_number="PO-7788",
+            invoice_number="",
+        ),
+        transaction_id="TXN-LEGACY-PO",
+    )
+
+    imported = gateway.write_invoice_transaction(
+        "FY2026-27",
+        {
+            "date": "2026-10-01",
+            "category": "Consumables",
+            "vendor": "Shared vendor",
+            "description": "Corrected from PDF",
+            "po_number": "PO-7788",
+            "invoice_number": "INV-NEW",
+            "currency": "USD",
+            "amount": "50",
+            "team": "Diabetes",
+            "file_name": "invoice.pdf",
+            "file_sha256": "po-match-hash",
+        },
+    )
+
+    assert imported["transaction_id"] == existing["transaction_id"]
+    assert imported["matched"] is True
+    assert len(annual.sheets["Transactions"].values) == 2
+    saved = dict(
+        zip(
+            annual.sheets["Transactions"].values[0],
+            annual.sheets["Transactions"].values[1],
+            strict=False,
+        )
+    )
+    assert saved["Invoice Number"] == "INV-NEW"
+    assert saved["Description"] == "Corrected from PDF"
+
+
+def test_identity_upsert_reuses_legacy_erb_row(settings, monkeypatch):
+    gateway, _, annual = _mutation_gateway(settings, monkeypatch)
+    gateway.write_transaction(
+        "FY2026-27",
+        _manual_candidate(
+            vendor="NYUAD ERB (Stores)",
+            po_number="1001",
+            invoice_number="1001",
+            currency="AED",
+            amount="36.725",
+            entry_method="Excel Import",
+        ),
+        transaction_id="TXN-OLD-ERB",
+    )
+
+    result = gateway.write_transaction(
+        "FY2026-27",
+        _manual_candidate(
+            vendor="NYUAD ERB (Stores)",
+            po_number="1001",
+            invoice_number="1001",
+            currency="AED",
+            amount="36.725",
+            description="Corrected ERB description",
+            entry_method="Excel Import",
+        ),
+        transaction_id="TXN-ERB-NEW-ID",
+        allow_existing=True,
+        match_identity=True,
+    )
+
+    assert result["transaction_id"] == "TXN-OLD-ERB"
+    assert result["matched"] is True
+    assert len(annual.sheets["Transactions"].values) == 2
+    assert "Corrected ERB description" in annual.sheets["Transactions"].values[1]
+
+
+def test_line_identity_keeps_distinct_erb_rows_for_one_po(settings, monkeypatch):
+    gateway, _, annual = _mutation_gateway(settings, monkeypatch)
+    shared = {
+        "vendor": "NYUAD ERB (Stores)",
+        "po_number": "1001",
+        "invoice_number": "1001",
+        "currency": "AED",
+        "entry_method": "Excel Import",
+    }
+
+    first = gateway.write_transaction(
+        "FY2026-27",
+        _manual_candidate(
+            **shared,
+            description="Tube A",
+            amount="36.725",
+        ),
+        transaction_id="TXN-ERB-LINE-1",
+        allow_existing=True,
+        match_identity="line",
+    )
+    second = gateway.write_transaction(
+        "FY2026-27",
+        _manual_candidate(
+            **shared,
+            description="Tube B",
+            amount="73.45",
+        ),
+        transaction_id="TXN-ERB-LINE-2",
+        allow_existing=True,
+        match_identity="line",
+    )
+    retried = gateway.write_transaction(
+        "FY2026-27",
+        _manual_candidate(
+            **shared,
+            description="Tube B",
+            amount="73.45",
+            notes="Reviewed",
+        ),
+        transaction_id="TXN-ERB-NEW-ID",
+        allow_existing=True,
+        match_identity="line",
+    )
+
+    assert first["transaction_id"] == "TXN-ERB-LINE-1"
+    assert second["transaction_id"] == "TXN-ERB-LINE-2"
+    assert retried["transaction_id"] == "TXN-ERB-LINE-2"
+    assert len(annual.sheets["Transactions"].values) == 3
+
+
+def test_invoice_import_rejects_ambiguous_document_identity(settings, monkeypatch):
+    gateway, _, _ = _mutation_gateway(settings, monkeypatch)
+    for transaction_id, description in (
+        ("TXN-PO-1", "First line"),
+        ("TXN-PO-2", "Second line"),
+    ):
+        gateway.write_transaction(
+            "FY2026-27",
+            _manual_candidate(
+                vendor="Blanket Vendor",
+                po_number="PO-SHARED",
+                invoice_number="",
+                description=description,
+            ),
+            transaction_id=transaction_id,
+        )
+
+    with pytest.raises(SheetsSourceError, match="More than one Google Sheet row"):
+        gateway.write_invoice_transaction(
+            "FY2026-27",
+            {
+                "date": "2026-10-01",
+                "category": "Consumables",
+                "vendor": "Blanket Vendor",
+                "description": "Invoice correction",
+                "po_number": "PO-SHARED",
+                "invoice_number": "INV-NEW",
+                "currency": "USD",
+                "amount": "50",
+                "team": "Diabetes",
+                "file_name": "invoice.pdf",
+                "file_sha256": "ambiguous-hash",
+            },
+        )
 
 
 def test_invoice_hash_cannot_move_a_transaction_to_another_team(settings, monkeypatch):
@@ -809,6 +978,15 @@ def test_queue_fiscal_year_creation_writes_verified_master_config_token(
     settings, monkeypatch
 ):
     gateway, master, _ = _mutation_gateway(settings, monkeypatch)
+    master.sheets["Config"].values.extend(
+        [
+            ["Fiscal Year Creator Trigger Status", "Enabled"],
+            [
+                "Fiscal Year Creator Trigger Heartbeat",
+                f"Success {datetime.now(ZoneInfo('Asia/Dubai')).isoformat()}",
+            ],
+        ]
+    )
 
     result = gateway.queue_fiscal_year_creation("FY2027-28")
 
@@ -817,6 +995,68 @@ def test_queue_fiscal_year_creation_writes_verified_master_config_token(
     assert master.sheets["Config"].values[-1] == [result["key"], result["token"]]
     with pytest.raises(SheetsSourceError, match="already registered"):
         gateway.queue_fiscal_year_creation("FY2026-27")
+
+
+def test_creator_status_reports_requests_and_workspace_config(settings, monkeypatch):
+    gateway, master, _ = _mutation_gateway(settings, monkeypatch)
+    master.sheets["Config"].values.extend(
+        [
+            ["Fiscal Year Creator Trigger Status", "Enabled"],
+            [
+                "Fiscal Year Creator Trigger Heartbeat",
+                f"Success {datetime.now(ZoneInfo('Asia/Dubai')).isoformat()}",
+            ],
+            ["Fiscal Year Template Spreadsheet ID", "template-id"],
+            ["Fiscal Year Creation Request FY2027-28", "Queued 2026-07-23"],
+            ["Notification Threshold %", "75"],
+            ["Gmail Label", "Lab/Invoices"],
+        ]
+    )
+
+    state = gateway.fiscal_year_creator_status()
+
+    assert state["ready"] is True
+    assert state["template_id"] == "template-id"
+    assert state["notification_threshold"] == "75"
+    assert state["gmail_label"] == "Lab/Invoices"
+    assert state["requests"] == [
+        {
+            "fiscal_year": "FY2027-28",
+            "status": "Queued 2026-07-23",
+            "spreadsheet_id": "",
+            "url": "",
+        }
+    ]
+
+
+def test_creator_queue_rejects_stale_heartbeat(settings, monkeypatch):
+    gateway, master, _ = _mutation_gateway(settings, monkeypatch)
+    master.sheets["Config"].values.extend(
+        [
+            ["Fiscal Year Creator Trigger Status", "Enabled"],
+            [
+                "Fiscal Year Creator Trigger Heartbeat",
+                "Success 2020-01-01T00:00:00+04:00",
+            ],
+        ]
+    )
+
+    with pytest.raises(SheetsSourceError, match="has not reported recently"):
+        gateway.queue_fiscal_year_creation("FY2027-28")
+
+
+def test_workspace_config_is_written_and_read_back(settings, monkeypatch):
+    gateway, master, _ = _mutation_gateway(settings, monkeypatch)
+
+    threshold = gateway.set_workspace_config("Notification Threshold %", "85")
+    gmail_label = gateway.set_workspace_config("Gmail Label", "Budget/New")
+
+    assert threshold["value"] == "85"
+    assert gmail_label["value"] == "Budget/New"
+    assert ["Notification Threshold %", "85"] in master.sheets["Config"].values
+    assert ["Gmail Label", "Budget/New"] in master.sheets["Config"].values
+    with pytest.raises(ValueError, match="supported workspace"):
+        gateway.set_workspace_config("Unknown", "value")
 
 
 def test_upsert_registry_member_preserves_id_and_reconciles_teams_and_roles(

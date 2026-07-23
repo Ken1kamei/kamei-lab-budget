@@ -16,11 +16,36 @@ def reports(request):
     rows = _scoped_transactions(request.lab_member, fiscal_year).exclude(status="Cancelled")
     totals = _scoped_totals(request.lab_member, fiscal_year)
     category_rows = [
-        {"name": category, **totals["categories"][category]}
+        {
+            "name": category,
+            **totals["categories"][category],
+            "used_percent": min(
+                100,
+                round(
+                    float(
+                        totals["categories"][category]["allocated"]
+                        / totals["categories"][category]["budget"]
+                        * 100
+                    ),
+                    1,
+                ),
+            )
+            if totals["categories"][category]["budget"]
+            else 0,
+        }
         for category in CATEGORIES
     ]
     team_rows = [
-        {"name": name, **values}
+        {
+            "name": name,
+            **values,
+            "used_percent": min(
+                100,
+                round(float(values["allocated"] / values["budget"] * 100), 1),
+            )
+            if values["budget"]
+            else 0,
+        }
         for name, values in sorted(totals["teams"].items())
         if request.lab_member.highest_role in {"pi", "budget_manager"}
         or name in request.lab_member.team_names
@@ -40,6 +65,12 @@ def reports(request):
                 ],
             }
         )
+    max_month = max(
+        (row["total"] for row in monthly_rows),
+        default=Decimal("1"),
+    ) or Decimal("1")
+    for row in monthly_rows:
+        row["width_percent"] = round(float(row["total"] / max_month * 100), 1)
     return render(
         request,
         "budget/reports.html",

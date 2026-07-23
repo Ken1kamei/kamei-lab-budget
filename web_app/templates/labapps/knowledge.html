@@ -16,7 +16,13 @@
   <div class="panel-heading"><div><span>Knowledge search</span><h2>Find notebooks and protocols</h2></div>{% if search_query %}<span>{{ search_total }} result{{ search_total|pluralize }}</span>{% endif %}</div>
   <form method="get" class="knowledge-search-form" role="search">
     <label for="knowledge-query">Keywords</label>
-    <div class="knowledge-search-controls"><input id="knowledge-query" type="search" name="q" value="{{ search_query }}" placeholder="Title, researcher, team, method, reagent..."><button class="button primary" type="submit">Search</button>{% if search_query %}<a class="button secondary" href="{% url 'labapps:knowledge' %}#search">Clear</a>{% endif %}</div>
+    <div class="knowledge-filter-grid">
+      <input id="knowledge-query" type="search" name="q" value="{{ search_query }}" placeholder="Title, researcher, team, method, reagent...">
+      <select name="status" aria-label="Status"><option value="all" {% if status_filter == 'all' %}selected{% endif %}>All statuses</option><option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option><option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option><option value="archived" {% if status_filter == 'archived' %}selected{% endif %}>Archived</option></select>
+      <select name="team" aria-label="Team"><option value="">All teams</option>{% for value in team_choices %}<option value="{{ value }}" {% if team_filter == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+      <select name="category" aria-label="Category"><option value="">All categories</option>{% for value in category_choices %}<option value="{{ value }}" {% if category_filter == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    </div>
+    <div class="form-actions"><button class="button primary" type="submit">Search</button>{% if search_query or team_filter or category_filter or status_filter != 'active' %}<a class="button secondary" href="{% url 'labapps:knowledge' %}#search">Clear</a>{% endif %}</div>
   </form>
   {% if search_query %}
     {% if search_results %}
@@ -73,6 +79,7 @@
     <div class="protocol-actions">
       {% if selected_protocol.object_name %}<a class="button secondary" href="{% url 'labapps:knowledge_download' selected_protocol.record_id %}">Download original</a>{% else %}<p class="muted">Structured content is available. The original Dropbox file has not yet been copied to private Cloud Storage.</p>{% endif %}
       {% if can_edit and selected_protocol.object_name %}<form method="post" action="{% url 'labapps:knowledge_reprocess' selected_protocol.record_id %}">{% csrf_token %}<button class="button primary" type="submit">Reprocess content</button></form>{% endif %}
+      {% if can_edit %}<form method="post" action="{% url 'labapps:knowledge_status' selected_protocol.record_id %}">{% csrf_token %}<select name="status" aria-label="Record status"><option value="active" {% if selected_protocol.status == 'active' %}selected{% endif %}>Active</option><option value="draft" {% if selected_protocol.status == 'draft' %}selected{% endif %}>Draft</option><option value="archived" {% if selected_protocol.status == 'archived' %}selected{% endif %}>Archived</option></select><button class="button secondary" type="submit">Update status</button></form>{% endif %}
     </div>
   </article>
   {% else %}<p class="empty">No protocol records are available.</p>{% endif %}

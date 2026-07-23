@@ -1,5 +1,7 @@
 import hashlib
 import json
+from collections import Counter
+from decimal import Decimal
 
 from django.contrib import messages
 from django.shortcuts import redirect, render
@@ -26,7 +28,7 @@ from budget.views import _error_response
 SESSION_KEY = "erb_import_preview"
 
 
-def _transaction_id(row):
+def _transaction_id(row, source_row=0):
     identity = {
         key: row.get(key)
         for key in (
@@ -39,11 +41,27 @@ def _transaction_id(row):
             "Notes",
         )
     }
+    identity["Source Row"] = int(source_row or row.get("Source Row") or 0)
     identity = json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
     return f"TXN-ERB-{hashlib.sha256(identity).hexdigest()[:16].upper()}"
 
 
-@lab_access("lead")
+def _line_signature(row):
+    return tuple(
+        str(row.get(key) or "").strip().casefold()
+        for key in (
+            "Date",
+            "Team",
+            "Vendor / Payee",
+            "PO Number",
+            "Invoice Number",
+            "Description",
+            "Amount (AED)",
+        )
+    )
+
+
+@lab_access("member")
 @require_http_methods(["GET", "POST"])
 def erb_import(request):
     team_names = _entry_team_names(request.lab_member)
@@ -58,8 +76,9 @@ def erb_import(request):
             form.add_error("excel_file", "No ERB transaction rows were found.")
         else:
             preview = []
-            for row in rows:
-                row["Transaction ID"] = _transaction_id(row)
+            for source_row, row in enumerate(rows, start=1):
+                row["Source Row"] = source_row
+                row["Transaction ID"] = _transaction_id(row, source_row)
                 row["Category"] = form.cleaned_data["category"]
                 row["Sub-category"] = form.cleaned_data["subcategory"]
                 row["Team"] = form.cleaned_data["team"]
@@ -70,6 +89,12 @@ def erb_import(request):
             messages.success(request, f"Parsed {len(preview)} ERB rows. Review before import.")
             return redirect("budget:erb_import")
     if request.method == "POST" and request.POST.get("action") == "commit":
+        if request.lab_member.highest_role not in {"pi", "budget_manager", "lead"}:
+            return _error_response(
+                request,
+                "An authorized budget reviewer must register ERB transactions.",
+                403,
+            )
         if not preview:
             messages.error(request, "Parse an ERB Excel file first.")
             return redirect("budget:erb_import")
@@ -111,6 +136,8 @@ def erb_import(request):
             )
         gateway = SheetsGateway()
         touched = set()
+        resolved_transaction_ids = {}
+        line_counts = Counter(_line_signature(row) for row in preview)
         try:
             for row in preview:
                 fy = row["Fiscal Year"]
@@ -138,6 +165,10 @@ def erb_import(request):
                     {key: str(value) for key, value in payload.items()},
                 )
                 if not claimed and operation.status == "succeeded":
+                    resolved_transaction_ids[row["Transaction ID"]] = str(
+                        (operation.result or {}).get("transaction_id")
+                        or row["Transaction ID"]
+                    )
                     touched.add(fy)
                     continue
                 result = gateway.write_transaction(
@@ -145,15 +176,26 @@ def erb_import(request):
                     payload,
                     transaction_id=row["Transaction ID"],
                     allow_existing=True,
+                    match_identity=(
+                        "line"
+                        if line_counts[_line_signature(row)] == 1
+                        else False
+                    ),
                 )
                 _finish_operation(operation, result=result)
+                resolved_transaction_ids[row["Transaction ID"]] = str(
+                    result.get("transaction_id") or row["Transaction ID"]
+                )
                 touched.add(fy)
             for fy in sorted(touched):
                 _refresh_mirror(gateway, fy, request.user.email)
             for row in preview:
                 transaction = Transaction.objects.get(
                     fiscal_year=fiscal_years[row["Fiscal Year"]],
-                    transaction_id=row["Transaction ID"],
+                    transaction_id=resolved_transaction_ids.get(
+                        row["Transaction ID"],
+                        row["Transaction ID"],
+                    ),
                 )
                 TransactionAudit.objects.get_or_create(
                     transaction=transaction,
@@ -173,23 +215,35 @@ def erb_import(request):
         request.session.pop(SESSION_KEY, None)
         messages.success(request, f"Imported and verified {len(preview)} ERB transactions.")
         return redirect(f"{reverse('budget:transactions')}?fy={sorted(touched)[-1]}")
+    preview_rows = []
+    preview_total_usd = Decimal("0")
+    for row in preview:
+        fiscal_year = FiscalYear.objects.filter(label=row.get("Fiscal Year")).first()
+        aed_per_usd = fiscal_year.aed_per_usd if fiscal_year else Decimal("3.6725")
+        amount_aed = Decimal(str(row.get("Amount (AED)") or "0"))
+        amount_usd = amount_aed / aed_per_usd if aed_per_usd else Decimal("0")
+        preview_total_usd += amount_usd
+        preview_rows.append(
+            {
+                "date": row.get("Date"),
+                "fiscal_year": row.get("Fiscal Year"),
+                "description": row.get("Description"),
+                "team": row.get("Team"),
+                "invoice_number": row.get("Invoice Number"),
+                "amount_aed": amount_aed,
+                "amount_usd": amount_usd,
+            }
+        )
     return render(
         request,
         "budget/erb_import.html",
         {
             "form": form,
             "preview": preview,
-            "preview_rows": [
-                {
-                    "date": row.get("Date"),
-                    "fiscal_year": row.get("Fiscal Year"),
-                    "description": row.get("Description"),
-                    "team": row.get("Team"),
-                    "invoice_number": row.get("Invoice Number"),
-                    "amount_aed": row.get("Amount (AED)"),
-                }
-                for row in preview
-            ],
+            "preview_rows": preview_rows,
+            "preview_total_usd": preview_total_usd,
             "sheet_write_allowed": _sheet_write_allowed(request),
+            "can_commit": request.lab_member.highest_role
+            in {"pi", "budget_manager", "lead"},
         },
     )

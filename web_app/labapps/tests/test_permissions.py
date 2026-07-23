@@ -3,7 +3,13 @@ from django.contrib.auth import get_user_model
 from django.test import RequestFactory
 
 from labapps.models import SheetRecord
-from labapps.permissions import app_role, can_write, current_registry_member
+from labapps.permissions import (
+    app_role,
+    app_roles,
+    can_write,
+    can_write_scope,
+    current_registry_member,
+)
 
 
 pytestmark = pytest.mark.django_db
@@ -50,3 +56,54 @@ def test_inactive_registry_member_is_rejected():
         username="inactive@nyu.edu", email="inactive@nyu.edu"
     )
     assert current_registry_member(request) is None
+
+
+def test_all_active_team_scopes_are_preserved():
+    member = {"member_id": "M009", "global_role": "member"}
+    for index, team_id in enumerate(("T001", "T002"), start=1):
+        record(
+            "App_Roles",
+            f"AR{index:03d}",
+            {
+                "member_id": "M009",
+                "app_id": "project_tracker",
+                "app_role": "lead",
+                "scope_team_id": team_id,
+                "active": "TRUE",
+            },
+        )
+
+    assert app_roles(member, "project_tracker") == [
+        {"role": "lead", "scope_team_id": "T001"},
+        {"role": "lead", "scope_team_id": "T002"},
+    ]
+
+
+def test_write_permission_is_checked_for_selected_team_scope():
+    member = {"member_id": "M009", "global_role": "member"}
+    record(
+        "App_Roles",
+        "AR001",
+        {
+            "member_id": "M009",
+            "app_id": "project_tracker",
+            "app_role": "viewer",
+            "scope_team_id": "T001",
+            "active": "TRUE",
+        },
+    )
+    record(
+        "App_Roles",
+        "AR002",
+        {
+            "member_id": "M009",
+            "app_id": "project_tracker",
+            "app_role": "lead",
+            "scope_team_id": "T002",
+            "active": "TRUE",
+        },
+    )
+
+    assert can_write(member, "project_tracker") is True
+    assert can_write_scope(member, "project_tracker", "T001") is False
+    assert can_write_scope(member, "project_tracker", "T002") is True

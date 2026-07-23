@@ -173,6 +173,11 @@ class ReviewForm(forms.Form):
 
 class KnowledgeUploadForm(forms.Form):
     record_type = forms.ChoiceField(choices=[("notebook", "Notebook"), ("protocol", "Protocol")])
+    status = forms.ChoiceField(
+        choices=[("draft", "Draft"), ("active", "Active")],
+        initial="active",
+        required=False,
+    )
     title = forms.CharField(max_length=500)
     team = forms.CharField(max_length=240)
     owner = forms.CharField(max_length=240)
@@ -212,3 +217,16 @@ class KnowledgeUploadForm(forms.Form):
         if uploaded.size > MAX_KNOWLEDGE_FILE_BYTES:
             raise forms.ValidationError("The uploaded file must be 25 MB or smaller.")
         return uploaded
+
+    def clean_status(self):
+        return self.cleaned_data.get("status") or "active"
+
+
+class KnowledgeStatusForm(forms.Form):
+    status = forms.ChoiceField(
+        choices=[
+            ("draft", "Draft"),
+            ("active", "Active"),
+            ("archived", "Archived"),
+        ]
+    )

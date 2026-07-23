@@ -4,19 +4,23 @@ import mimetypes
 import secrets
 from datetime import date
 
+from django import forms as django_forms
 from django.contrib import messages
 from django.db import transaction
+from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+from budget.models import LabMember
 
 from .forms import (
     AppRoleForm,
     ExperimentForm,
     GanttImportForm,
     KnowledgeUploadForm,
+    KnowledgeStatusForm,
     MemberForm,
     MilestoneForm,
     ProjectForm,
@@ -26,7 +30,9 @@ from .forms import (
 from .models import KnowledgeRecord, LabAppAudit, SheetRecord
 from .permissions import (
     app_role,
+    app_roles,
     can_write,
+    can_write_scope,
     current_registry_member,
     is_portal_admin,
     lab_app_access,
@@ -79,6 +85,29 @@ def _display_member(member_id, members):
     return row.get("display_name") or row.get("name") or member_id
 
 
+def _sync_iap_allowlist_member(payload):
+    email = str(payload.get("email") or "").strip().lower()
+    if not email:
+        return
+    global_role = str(payload.get("global_role") or "").strip().lower()
+    highest_role = {
+        "pi": "pi",
+        "admin": "budget_manager",
+        "lead": "lead",
+        "member": "member",
+    }.get(global_role, "member")
+    LabMember.objects.update_or_create(
+        email=email,
+        defaults={
+            "display_name": str(
+                payload.get("display_name") or payload.get("name") or email
+            ).strip(),
+            "highest_role": highest_role,
+            "active": truthy(payload.get("active", "TRUE")),
+        },
+    )
+
+
 @registry_access
 def portal(request):
     member = current_registry_member(request)
@@ -88,21 +117,27 @@ def portal(request):
         {
             "app_id": "budget",
             "name": "Budget Manager",
-            "url": f"{base}/",
+            "url": configured.get("budget", {}).get("url")
+            or configured.get("budget", {}).get("app_url")
+            or f"{base}/",
             "description": configured.get("budget", {}).get("description", "Lab budget and invoice management"),
             "role": (app_role(member, "budget") or {}).get("role", "No access"),
         },
         {
             "app_id": "project_tracker",
             "name": "Project Tracker",
-            "url": f"{base}/tracker/",
+            "url": configured.get("project_tracker", {}).get("url")
+            or configured.get("project_tracker", {}).get("app_url")
+            or f"{base}/tracker/",
             "description": configured.get("project_tracker", {}).get("description", "Milestones, experiments, and reviews"),
             "role": (app_role(member, "project_tracker") or {}).get("role", "No access"),
         },
         {
             "app_id": "notebooks_protocols",
             "name": "Notebooks / Protocols",
-            "url": f"{base}/knowledge/",
+            "url": configured.get("notebooks_protocols", {}).get("url")
+            or configured.get("notebooks_protocols", {}).get("app_url")
+            or f"{base}/knowledge/",
             "description": configured.get("notebooks_protocols", {}).get("description", "Private lab knowledge library"),
             "role": (app_role(member, "notebooks_protocols") or {}).get("role", "No access"),
         },
@@ -154,6 +189,7 @@ def portal_admin(request):
                         "notes": cleaned["notes"],
                     }
                     upsert_record("Members", payload, actor=_email(request), action="upsert_member")
+                    _sync_iap_allowlist_member(payload)
                     append_registry_audit(
                         actor=_email(request), action="upsert_member", target_type="Member",
                         target_id=member_id, before=existing or {}, after=payload,
@@ -209,6 +245,47 @@ def portal_admin(request):
                         "end_date": (existing or {}).get("end_date", ""),
                     }
                     upsert_record("App_Roles", payload, actor=_email(request), action="upsert_app_role")
+                    if cleaned["scope_team_id"]:
+                        memberships = snapshot_rows("Member_Teams")
+                        existing_membership = next(
+                            (
+                                row
+                                for row in memberships
+                                if row.get("member_id") == cleaned["member_id"]
+                                and row.get("team_id") == cleaned["scope_team_id"]
+                            ),
+                            None,
+                        )
+                        membership_payload = {
+                            "member_team_id": (
+                                existing_membership.get("member_team_id")
+                                if existing_membership
+                                else next_identifier("Member_Teams", "MT")
+                            ),
+                            "member_id": cleaned["member_id"],
+                            "team_id": cleaned["scope_team_id"],
+                            "team_role": (
+                                "lead"
+                                if cleaned["app_role"] in {"lead", "manager", "owner"}
+                                else "member"
+                            ),
+                            "active": "TRUE" if cleaned["active"] else "FALSE",
+                            "start_date": (
+                                existing_membership or {}
+                            ).get("start_date")
+                            or date.today().isoformat(),
+                            "end_date": (
+                                (existing_membership or {}).get("end_date", "")
+                                if cleaned["active"]
+                                else date.today().isoformat()
+                            ),
+                        }
+                        upsert_record(
+                            "Member_Teams",
+                            membership_payload,
+                            actor=_email(request),
+                            action="upsert_member_team",
+                        )
                     append_registry_audit(
                         actor=_email(request), action="upsert_app_role", target_type="AppRole",
                         target_id=role_id, before=existing or {}, after=payload,
@@ -236,9 +313,20 @@ def portal_admin(request):
 
 def _scope_tracker_rows(request, projects, milestones, experiments):
     member = current_registry_member(request)
-    resolved = app_role(member, "project_tracker") or {}
-    team_id = resolved.get("scope_team_id", "")
-    selected = team_id or request.GET.get("team", "")
+    resolved_roles = app_roles(member, "project_tracker")
+    allowed_team_ids = {
+        role["scope_team_id"]
+        for role in resolved_roles
+        if role.get("scope_team_id")
+    }
+    unrestricted = any(not role.get("scope_team_id") for role in resolved_roles)
+    requested = request.GET.get("team", "")
+    if unrestricted:
+        selected = requested
+    elif requested in allowed_team_ids:
+        selected = requested
+    else:
+        selected = sorted(allowed_team_ids)[0] if allowed_team_ids else ""
     member_ids = None
     if selected:
         member_ids = {
@@ -264,7 +352,6 @@ def _scope_tracker_rows(request, projects, milestones, experiments):
 def tracker(request):
     actor = _email(request)
     member = current_registry_member(request)
-    can_edit = can_write(member, "project_tracker")
     members = _active(snapshot_rows("Members"))
     teams = _active(snapshot_rows("Teams"))
     projects = snapshot_rows("Projects")
@@ -273,7 +360,16 @@ def tracker(request):
     projects, milestones, experiments, selected_team = _scope_tracker_rows(
         request, projects, milestones, experiments
     )
-    scope_locked = bool((app_role(member, "project_tracker") or {}).get("scope_team_id"))
+    can_edit = can_write_scope(member, "project_tracker", selected_team)
+    resolved_roles = app_roles(member, "project_tracker")
+    allowed_team_ids = {
+        role["scope_team_id"]
+        for role in resolved_roles
+        if role.get("scope_team_id")
+    }
+    scope_locked = bool(allowed_team_ids) and not any(
+        not role.get("scope_team_id") for role in resolved_roles
+    )
     if selected_team:
         scoped_member_ids = {
             row.get("member_id")
@@ -282,7 +378,7 @@ def tracker(request):
         }
         members = [row for row in members if row.get("member_id") in scoped_member_ids]
     if scope_locked:
-        teams = [row for row in teams if row.get("team_id") == selected_team]
+        teams = [row for row in teams if row.get("team_id") in allowed_team_ids]
 
     project_form = ProjectForm(prefix="project", members=members)
     milestone_form = MilestoneForm(prefix="milestone", projects=projects, members=members)
@@ -468,6 +564,14 @@ def tracker(request):
                     "status": request.POST.get("status", current.get("status", "")),
                     "next_action": request.POST.get("next_action", current.get("next_action", "")),
                     "review_status": "Pending",
+                    "blocker_reason": request.POST.get(
+                        "blocker_reason",
+                        current.get("blocker_reason", ""),
+                    ),
+                    "help_needed_from": request.POST.get(
+                        "help_needed_from",
+                        current.get("help_needed_from", ""),
+                    ),
                     "updated_at": timezone.now().isoformat(timespec="seconds"),
                 }
                 if table_name == "Milestones":
@@ -483,6 +587,16 @@ def tracker(request):
                     if not 0 <= progress <= 100:
                         raise ValueError("Progress must be a number from 0 to 100.")
                     updated["progress_percent"] = str(progress)
+                else:
+                    updated["experiment_data_link"] = django_forms.URLField(
+                        required=False,
+                        assume_scheme="https",
+                    ).clean(
+                        request.POST.get(
+                            "experiment_data_link",
+                            current.get("experiment_data_link", ""),
+                        )
+                    )
                 upsert_record(table_name, updated, actor=actor, action="update_progress")
                 append_history(
                     record_type=table_name[:-1], record_id=record_id, actor=actor,
@@ -564,7 +678,19 @@ def tracker(request):
 @lab_app_access("notebooks_protocols")
 def knowledge(request):
     member = current_registry_member(request)
-    records = list(KnowledgeRecord.objects.all())
+    status_filter = request.GET.get("status", "active").strip().lower()
+    team_filter = request.GET.get("team", "").strip()
+    category_filter = request.GET.get("category", "").strip()
+    records_queryset = KnowledgeRecord.objects.all()
+    if status_filter == "active":
+        records_queryset = records_queryset.filter(Q(status="active") | Q(status=""))
+    elif status_filter in {"draft", "archived"}:
+        records_queryset = records_queryset.filter(status=status_filter)
+    if team_filter:
+        records_queryset = records_queryset.filter(team=team_filter)
+    if category_filter:
+        records_queryset = records_queryset.filter(category=category_filter)
+    records = list(records_queryset)
     protocols = [row for row in records if row.record_type == "protocol"]
     notebooks = [row for row in records if row.record_type == "notebook"]
     search_query = request.GET.get("q", "").strip()[:120]
@@ -600,6 +726,21 @@ def knowledge(request):
             "search_query": search_query,
             "search_results": matches[:24],
             "search_total": len(matches),
+            "status_filter": status_filter,
+            "team_filter": team_filter,
+            "category_filter": category_filter,
+            "team_choices": list(
+                KnowledgeRecord.objects.exclude(team="")
+                .order_by("team")
+                .values_list("team", flat=True)
+                .distinct()
+            ),
+            "category_choices": list(
+                KnowledgeRecord.objects.exclude(category="")
+                .order_by("category")
+                .values_list("category", flat=True)
+                .distinct()
+            ),
         },
     )
 
@@ -636,7 +777,9 @@ def knowledge_upload(request):
                     record = KnowledgeRecord.objects.create(
                         record_id=record_id, record_type=record_type, title=form.cleaned_data["title"],
                         team=form.cleaned_data["team"], owner=form.cleaned_data["owner"],
-                        category=form.cleaned_data["category"], status="active", object_name=key,
+                        category=form.cleaned_data["category"],
+                        status=form.cleaned_data["status"],
+                        object_name=key,
                         original_filename=upload.name, uploaded_by=_email(request),
                         metadata=metadata,
                     )
@@ -786,3 +929,30 @@ def knowledge_download(request, record_id):
     response = HttpResponse(content, content_type=content_type)
     response["Content-Disposition"] = f'attachment; filename="{record.original_filename}"'
     return response
+
+
+@require_POST
+@lab_app_access("notebooks_protocols", write=True)
+def knowledge_status(request, record_id):
+    try:
+        record = KnowledgeRecord.objects.get(record_id=record_id)
+    except KnowledgeRecord.DoesNotExist as error:
+        raise Http404 from error
+    form = KnowledgeStatusForm(request.POST)
+    if not form.is_valid():
+        return HttpResponse("Select a valid knowledge-record status.", status=400)
+    before = {"status": record.status}
+    record.status = form.cleaned_data["status"]
+    record.save(update_fields=["status", "updated_at"])
+    LabAppAudit.objects.create(
+        actor=_email(request),
+        app_id="notebooks_protocols",
+        action="status_updated",
+        target=record.record_id,
+        before=before,
+        after={"status": record.status},
+    )
+    messages.success(request, f"{record.title} is now {record.status}.")
+    return redirect(
+        f"{reverse('labapps:knowledge')}?status={record.status}&protocol={record.record_id}#protocols"
+    )

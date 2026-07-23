@@ -9,6 +9,35 @@
 <section id="rates" class="panel settings-section"><div class="panel-heading"><div><span class="eyebrow">CONVERSION</span><h2>Exchange rates to USD</h2></div></div><form method="post" class="form-grid">{% csrf_token %}<input type="hidden" name="action" value="rates">{% for field in rate_form %}<label><span>{{ field.label }}</span>{{ field }}{% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}</label>{% endfor %}<button class="button primary span-2" type="submit">Save and verify rates</button></form></section>
 {% if lab_role == 'pi' %}
 <section id="members" class="panel settings-section"><div class="panel-heading"><div><span class="eyebrow">LAB ROSTER</span><h2>Members and roles</h2></div></div><div class="two-column"><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="member">{% for field in member_form %}<label><span>{{ field.label }}</span>{{ field }}{% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}</label>{% endfor %}<button class="button primary" type="submit">Save and verify member</button></form><div class="data-list">{% for member in members %}<div class="data-row"><div><strong>{{ member.display_name|default:member.email }}</strong><small>{{ member.email }} · {{ member.get_highest_role_display }} · {{ member.team_names|join:', ' }}</small></div><span>{% if member.active %}Active{% else %}Inactive{% endif %}</span></div>{% endfor %}</div></div></section>
-<section id="fiscal-year" class="panel settings-section"><div class="panel-heading"><div><span class="eyebrow">PI ONLY</span><h2>Create fiscal year</h2></div></div><p class="muted">Queues the existing PI-owned Google Apps Script to create a dedicated workbook from the approved template.</p><form method="post" class="inline-form">{% csrf_token %}<input type="hidden" name="action" value="fiscal_year"><label><span>New fiscal year</span><input type="text" name="new_fiscal_year" pattern="FY[0-9]{4}-[0-9]{2}" placeholder="FY2027-28" required></label><button class="button primary" type="submit">Create dedicated Google Sheet</button></form></section>
+<section id="fiscal-year" class="panel settings-section">
+  <div class="panel-heading"><div><span class="eyebrow">PI ONLY</span><h2>Create fiscal year</h2></div></div>
+  <p class="muted">Queues the existing PI-owned Google Apps Script to create a dedicated workbook from the approved template.</p>
+  {% if creator_error %}<div class="notice warning">{{ creator_error }}</div>{% else %}<div class="notice {% if creator_state.ready %}success{% else %}warning{% endif %}">{{ creator_state.message }}</div>{% endif %}
+  {% if creator_state.template_id %}<p><a class="button secondary" href="https://docs.google.com/spreadsheets/d/{{ creator_state.template_id }}/edit" target="_blank" rel="noopener">Open fiscal-year template</a></p>{% endif %}
+  <form method="post" class="inline-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="fiscal_year">
+    <label><span>New fiscal year</span><input type="text" name="new_fiscal_year" pattern="FY[0-9]{4}-[0-9]{2}" placeholder="FY2027-28" required></label>
+    <button class="button primary" type="submit" {% if not creator_state.ready %}disabled{% endif %}>Create dedicated Google Sheet</button>
+  </form>
+  {% if creator_state.requests %}
+  <div class="data-list">
+    {% for item in creator_state.requests %}
+    <div class="data-row">
+      <div><strong>{{ item.fiscal_year }}</strong><small>{{ item.status|default:"Queued" }}</small></div>
+      {% if item.url %}<a class="button secondary" href="{{ item.url }}" target="_blank" rel="noopener">Open Sheet</a>{% else %}<span>Pending</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <hr>
+  <div class="panel-heading"><div><span class="eyebrow">AUTOMATION</span><h2>Notifications</h2></div></div>
+  <form method="post" class="form-grid">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="workspace">
+    {% for field in workspace_form %}<label><span>{{ field.label }}</span>{{ field }}{% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}</label>{% endfor %}
+    <button class="button primary span-2" type="submit">Save and verify notification settings</button>
+  </form>
+</section>
 {% endif %}
 {% endblock %}

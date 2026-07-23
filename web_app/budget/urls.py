@@ -19,6 +19,11 @@ urlpatterns = [
         operation_views.edit_transaction,
         name="edit_transaction",
     ),
+    path(
+        "transactions/<str:fiscal_year>/<str:transaction_id>/receipt/",
+        operation_views.attach_receipt,
+        name="attach_receipt",
+    ),
     path("transactions/export/", operation_views.export_transactions, name="export_transactions"),
     path("imports/", views.imports_view, name="imports"),
     path("imports/<int:draft_id>/file/", views.invoice_file, name="invoice_file"),

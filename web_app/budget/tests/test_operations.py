@@ -16,6 +16,7 @@ from budget.models import (
     TransactionAudit,
 )
 from budget.forms import TeamForm
+from budget.erb_views import _transaction_id
 from budget.services.sheets import SheetsSourceError
 
 
@@ -103,6 +104,30 @@ def test_member_add_expense_is_idempotent_and_audited(client, monkeypatch, setti
     assert operation.transaction.transaction_id.startswith("TXN-WEB-")
     assert calls[0][3] is True
     assert TransactionAudit.objects.get().action == "created"
+
+
+@pytest.mark.django_db
+def test_add_expense_shows_date_driven_year_and_usd_preview(client):
+    _login(client, "member@nyu.edu", teams=["Diabetes"])
+    fy = FiscalYear.objects.create(
+        label="FY2026-27",
+        spreadsheet_id="sheet-2026",
+        exchange_rates={"EUR": "1.1", "JPY": "0.0065", "GBP": "1.3"},
+        aed_per_usd=Decimal("3.6725"),
+    )
+    Team.objects.create(fiscal_year=fy, name="Diabetes", active=True)
+
+    response = client.get(
+        reverse("budget:add_transaction"),
+        {"fy": "FY2026-27"},
+    )
+
+    assert response.status_code == 200
+    assert b'id="amount-preview"' in response.content
+    assert b"FY2026-27" in response.content
+    assert b"sheet-2026" not in response.content
+    assert b'"ready": true' in response.content
+    assert b'"EUR": "1.1"' in response.content
 
 
 @pytest.mark.django_db
@@ -259,7 +284,78 @@ def test_mixed_team_roles_only_allow_lead_edits_in_led_team(client):
     ).status_code == 404
     assert client.get(
         reverse("budget:edit_transaction", args=[fy.label, "TXN-I-OWN"])
+    ).status_code == 404
+    assert client.get(
+        reverse("budget:attach_receipt", args=[fy.label, "TXN-I-OWN"])
     ).status_code == 200
+
+
+@pytest.mark.django_db
+def test_member_can_only_update_receipt_fields_on_own_transaction(
+    client, monkeypatch, settings
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    _login(client, "member@nyu.edu", teams=["Diabetes"])
+    fy = FiscalYear.objects.create(label="FY2025-26", spreadsheet_id="sheet")
+    Team.objects.create(fiscal_year=fy, name="Diabetes", active=True)
+    transaction = Transaction.objects.create(
+        fiscal_year=fy,
+        transaction_id="TXN-OWN",
+        date="2026-02-01",
+        category="Consumables",
+        vendor="Original vendor",
+        description="Original description",
+        currency="USD",
+        amount=Decimal("25"),
+        amount_usd_equiv=Decimal("25"),
+        status="Allocated",
+        team="Diabetes",
+        entered_by="member@nyu.edu",
+    )
+    captured = {}
+
+    class Gateway:
+        def update_transaction(
+            self, source, transaction_id, payload, target_fiscal_year=None
+        ):
+            captured.update(payload)
+            return {"transaction_id": transaction_id, "row": {}, "moved": False}
+
+    def refresh(gateway, label, actor):
+        transaction.notes = captured["notes"]
+        transaction.pdf_link = captured["pdf_link"]
+        transaction.source_payload = {
+            "Receipt Confirmed": str(captured["receipt_confirmed"]).upper()
+        }
+        transaction.save(update_fields=["notes", "pdf_link", "source_payload"])
+
+    monkeypatch.setattr("budget.operation_views.SheetsGateway", Gateway)
+    monkeypatch.setattr("budget.operation_views._refresh_mirror", refresh)
+
+    assert client.get(
+        reverse("budget:edit_transaction", args=[fy.label, transaction.transaction_id])
+    ).status_code == 404
+    response = client.post(
+        reverse("budget:attach_receipt", args=[fy.label, transaction.transaction_id]),
+        {
+            "idempotency_key": "receipt-once",
+            "receipt_confirmed": "on",
+            "pdf_link": "https://example.test/receipt.pdf",
+            "notes": "Receipt checked",
+            "amount": "999999",
+            "status": "Cancelled",
+        },
+    )
+
+    assert response.status_code == 302
+    assert captured["amount"] == Decimal("25")
+    assert captured["status"] == "Allocated"
+    assert captured["vendor"] == "Original vendor"
+    transaction.refresh_from_db()
+    assert transaction.notes == "Receipt checked"
+    assert transaction.pdf_link == "https://example.test/receipt.pdf"
+    assert TransactionAudit.objects.get().action == "receipt_attached"
 
 
 @pytest.mark.django_db
@@ -337,6 +433,40 @@ def test_member_dashboard_is_scoped_to_own_team(client):
     assert b"$1,000.00" in response.content
     assert b"$100.00" in response.content
     assert b"$8,000.00" not in response.content
+
+
+@pytest.mark.django_db
+def test_export_transactions_preserves_visible_filters(client):
+    _login(client, "member@nyu.edu", teams=["Diabetes"])
+    fy = FiscalYear.objects.create(label="FY2025-26", spreadsheet_id="sheet")
+    Team.objects.create(fiscal_year=fy, name="Diabetes", active=True)
+    for transaction_id, category, vendor in (
+        ("TXN-KEEP", "Consumables", "Matched Vendor"),
+        ("TXN-DROP", "Travel", "Other Vendor"),
+    ):
+        Transaction.objects.create(
+            fiscal_year=fy,
+            transaction_id=transaction_id,
+            team="Diabetes",
+            category=category,
+            vendor=vendor,
+            amount=Decimal("10"),
+            amount_usd_equiv=Decimal("10"),
+            status="Allocated",
+        )
+
+    response = client.get(
+        reverse("budget:export_transactions"),
+        {
+            "fy": fy.label,
+            "category": "Consumables",
+            "q": "Matched",
+        },
+    )
+
+    assert response.status_code == 200
+    assert b"TXN-KEEP" in response.content
+    assert b"TXN-DROP" not in response.content
 
 
 @pytest.mark.django_db
@@ -478,28 +608,33 @@ def test_erb_preview_and_commit_use_stable_ids(client, monkeypatch, settings):
 
     class Gateway:
         def write_transaction(
-            self, label, payload, transaction_id="", allow_existing=False
+            self,
+            label,
+            payload,
+            transaction_id="",
+            allow_existing=False,
+            match_identity=False,
         ):
+            assert match_identity == "line"
             saved_ids.append(transaction_id)
-            return {"transaction_id": transaction_id, "row": {}}
+            return {"transaction_id": "TXN-LEGACY-ERB", "row": {}}
 
     monkeypatch.setattr("budget.erb_views.SheetsGateway", Gateway)
 
     def refresh(*args):
-        for transaction_id in saved_ids:
-            Transaction.objects.update_or_create(
-                fiscal_year=fy,
-                transaction_id=transaction_id,
-                defaults={
-                    "date": "2026-02-01",
-                    "category": "Consumables",
-                    "currency": "AED",
-                    "amount": Decimal("36.725"),
-                    "amount_usd_equiv": Decimal("10"),
-                    "status": "Allocated",
-                    "team": "Diabetes",
-                },
-            )
+        Transaction.objects.update_or_create(
+            fiscal_year=fy,
+            transaction_id="TXN-LEGACY-ERB",
+            defaults={
+                "date": "2026-02-01",
+                "category": "Consumables",
+                "currency": "AED",
+                "amount": Decimal("36.725"),
+                "amount_usd_equiv": Decimal("10"),
+                "status": "Allocated",
+                "team": "Diabetes",
+            },
+        )
 
     monkeypatch.setattr("budget.erb_views._refresh_mirror", refresh)
     parsed = client.post(
@@ -522,3 +657,131 @@ def test_erb_preview_and_commit_use_stable_ids(client, monkeypatch, settings):
     assert committed.status_code == 302
     assert len(saved_ids) == 1
     assert saved_ids[0].startswith("TXN-ERB-")
+    assert TransactionAudit.objects.filter(
+        transaction__transaction_id="TXN-LEGACY-ERB",
+        action="imported_erb",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_member_transaction_filter_lists_visible_team(client):
+    _login(client, "member@nyu.edu", role="member", teams=["Diabetes"])
+    fy = FiscalYear.objects.create(label="FY2025-26", spreadsheet_id="sheet")
+    Team.objects.create(fiscal_year=fy, name="Diabetes", active=True)
+
+    response = client.get(
+        reverse("budget:transactions"),
+        {"fy": "FY2025-26"},
+    )
+
+    assert response.status_code == 200
+    assert b'<option value="Diabetes"' in response.content
+    assert b">Diabetes</option>" in response.content
+
+
+def test_identical_erb_lines_receive_distinct_stable_ids():
+    row = {
+        "Date": "2026-02-01",
+        "Vendor / Payee": "NYUAD ERB (Stores)",
+        "Description": "Identical tube",
+        "PO Number": "1001",
+        "Invoice Number": "1001",
+        "Amount (AED)": "36.725",
+        "Notes": "SKU: TUBE",
+    }
+
+    first = _transaction_id(row, 1)
+    second = _transaction_id(row, 2)
+
+    assert first != second
+    assert first == _transaction_id(row, 1)
+    assert second == _transaction_id(row, 2)
+
+
+@pytest.mark.django_db
+def test_identical_erb_batch_rows_are_committed_separately(
+    client,
+    monkeypatch,
+    settings,
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    _login(client, "lead@nyu.edu", role="lead", teams=["Diabetes"])
+    fy = FiscalYear.objects.create(label="FY2025-26", spreadsheet_id="sheet")
+    Team.objects.create(
+        fiscal_year=fy,
+        name="Diabetes",
+        lead_emails=["lead@nyu.edu"],
+        active=True,
+    )
+    row = {
+        "Date": "2026-02-01",
+        "Vendor / Payee": "NYUAD ERB (Stores)",
+        "Description": "Identical tube",
+        "Amount (AED)": 36.725,
+        "Invoice Number": "1001",
+        "PO Number": "1001",
+        "Notes": "SKU: TUBE",
+    }
+    monkeypatch.setattr(
+        "budget.erb_views.parse_erb_excel_bytes",
+        lambda payload: [dict(row), dict(row)],
+    )
+    writes = []
+
+    class Gateway:
+        def write_transaction(
+            self,
+            label,
+            payload,
+            transaction_id="",
+            allow_existing=False,
+            match_identity=False,
+        ):
+            writes.append((transaction_id, match_identity))
+            return {"transaction_id": transaction_id, "row": {}}
+
+    monkeypatch.setattr("budget.erb_views.SheetsGateway", Gateway)
+
+    def refresh(*args):
+        for transaction_id, _ in writes:
+            Transaction.objects.update_or_create(
+                fiscal_year=fy,
+                transaction_id=transaction_id,
+                defaults={
+                    "date": "2026-02-01",
+                    "category": "Consumables",
+                    "currency": "AED",
+                    "amount": Decimal("36.725"),
+                    "amount_usd_equiv": Decimal("10"),
+                    "status": "Allocated",
+                    "team": "Diabetes",
+                },
+            )
+
+    monkeypatch.setattr("budget.erb_views._refresh_mirror", refresh)
+    client.post(
+        reverse("budget:erb_import"),
+        {
+            "action": "parse",
+            "category": "Consumables",
+            "subcategory": "NYUAD Stores",
+            "team": "Diabetes",
+            "excel_file": SimpleUploadedFile(
+                "erb.xlsx",
+                b"fake",
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+            ),
+        },
+    )
+
+    response = client.post(reverse("budget:erb_import"), {"action": "commit"})
+
+    assert response.status_code == 302
+    assert len(writes) == 2
+    assert writes[0][0] != writes[1][0]
+    assert [match_identity for _, match_identity in writes] == [False, False]
+    assert Transaction.objects.filter(fiscal_year=fy).count() == 2

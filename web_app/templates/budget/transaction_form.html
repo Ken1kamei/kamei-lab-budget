@@ -6,6 +6,50 @@
 <form method="post" class="panel form-grid">{% csrf_token %}
   {% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<label class="{% if field.name == 'description' or field.name == 'notes' %}span-2{% endif %}"><span>{{ field.label }}</span>{{ field }}{% for error in field.errors %}<small class="field-error">{{ error }}</small>{% endfor %}</label>{% endif %}{% endfor %}
   {% for error in form.non_field_errors %}<div class="notice error span-2">{{ error }}</div>{% endfor %}
+  <div class="notice span-2" id="amount-preview" aria-live="polite">Enter a date, currency, and amount to preview the fiscal year and USD equivalent.</div>
   <div class="form-actions span-2"><button class="button primary" type="submit">{% if mode == 'edit' %}Save verified changes{% else %}Save expense{% endif %}</button><a class="button secondary" href="{% url 'budget:transactions' %}">Cancel</a></div>
 </form>
+{{ year_details|json_script:"fiscal-year-details" }}
+<script>
+(() => {
+  const details = JSON.parse(document.getElementById("fiscal-year-details").textContent || "{}");
+  const dateInput = document.getElementById("id_date");
+  const yearInput = document.getElementById("id_fiscal_year");
+  const currencyInput = document.getElementById("id_currency");
+  const amountInput = document.getElementById("id_amount");
+  const preview = document.getElementById("amount-preview");
+  if (!dateInput || !yearInput || !currencyInput || !amountInput || !preview) return;
+
+  const inferredYear = (value) => {
+    if (!value) return "";
+    const parts = value.split("-").map(Number);
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return "";
+    const start = parts[1] >= 9 ? parts[0] : parts[0] - 1;
+    return `FY${start}-${String(start + 1).slice(-2)}`;
+  };
+  const update = () => {
+    const inferred = inferredYear(dateInput.value);
+    if (inferred && [...yearInput.options].some((option) => option.value === inferred)) {
+      yearInput.value = inferred;
+    }
+    const year = yearInput.value || inferred;
+    const yearInfo = details[year];
+    const amount = Number(amountInput.value);
+    const rate = Number(yearInfo?.rates?.[currencyInput.value]);
+    const readiness = yearInfo?.ready ? "Google Sheet ready" : "Google Sheet not prepared";
+    if (!yearInfo) {
+      preview.textContent = `${inferred || "Fiscal year unavailable"} · prepare this fiscal year in Settings before saving.`;
+    } else if (Number.isFinite(amount) && Number.isFinite(rate)) {
+      preview.textContent = `${year} · ${readiness} · ${currencyInput.value} ${amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} = USD ${(amount * rate).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    } else {
+      preview.textContent = `${year} · ${readiness} · enter an amount to preview the USD equivalent.`;
+    }
+  };
+  [dateInput, yearInput, currencyInput, amountInput].forEach((element) => {
+    element.addEventListener("change", update);
+    element.addEventListener("input", update);
+  });
+  update();
+})();
+</script>
 {% endblock %}

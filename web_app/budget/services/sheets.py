@@ -98,6 +98,15 @@ EXCHANGE_RATE_CONFIG_KEYS = {
     "JPY/USD Exchange Rate",
     "GBP/USD Exchange Rate",
 }
+WORKSPACE_CONFIG_KEYS = {
+    "Notification Threshold %",
+    "Gmail Label",
+}
+FISCAL_YEAR_CREATOR_TRIGGER_STATUS_KEY = "Fiscal Year Creator Trigger Status"
+FISCAL_YEAR_CREATOR_HEARTBEAT_KEY = "Fiscal Year Creator Trigger Heartbeat"
+FISCAL_YEAR_CREATION_REQUEST_PREFIX = "Fiscal Year Creation Request "
+FISCAL_YEAR_TEMPLATE_CONFIG_KEY = "Fiscal Year Template Spreadsheet ID"
+FISCAL_YEAR_CREATOR_HEARTBEAT_MAX_AGE_SECONDS = 180
 TRANSACTION_MONEY_COLUMNS = {
     "Amount",
     "Amount (USD equiv)",
@@ -278,6 +287,92 @@ class SheetsGateway:
             if config.get(key, "").startswith("FY"):
                 years.add(config[key])
         return sorted(years, reverse=True)
+
+    @staticmethod
+    def _creator_state(config):
+        enabled = str(
+            config.get(FISCAL_YEAR_CREATOR_TRIGGER_STATUS_KEY, "")
+        ).strip()
+        heartbeat = str(config.get(FISCAL_YEAR_CREATOR_HEARTBEAT_KEY, "")).strip()
+        heartbeat_at = None
+        age_seconds = float("inf")
+        if heartbeat:
+            timestamp = heartbeat.removeprefix("Success ").replace("Z", "+00:00")
+            try:
+                heartbeat_at = datetime.fromisoformat(timestamp)
+                if heartbeat_at.tzinfo is None:
+                    heartbeat_at = heartbeat_at.replace(tzinfo=DUBAI_TZ)
+                age_seconds = (
+                    datetime.now(DUBAI_TZ) - heartbeat_at.astimezone(DUBAI_TZ)
+                ).total_seconds()
+            except ValueError:
+                heartbeat_at = None
+        ready = enabled.startswith("Enabled") and (
+            0 <= age_seconds <= FISCAL_YEAR_CREATOR_HEARTBEAT_MAX_AGE_SECONDS
+        )
+        if not enabled.startswith("Enabled"):
+            message = (
+                "The PI My Drive fiscal-year creator trigger is not enabled. "
+                "Run setupFiscalYearCreatorTrigger in its Apps Script."
+            )
+        elif ready:
+            message = (
+                "The PI My Drive fiscal-year creator is ready. "
+                "New requests are normally processed within about one minute."
+            )
+        else:
+            message = (
+                "The fiscal-year creator has not reported recently. "
+                "Check its Apps Script trigger and executions before creating a year."
+            )
+        requests = []
+        for key, value in config.items():
+            if not key.startswith(FISCAL_YEAR_CREATION_REQUEST_PREFIX):
+                continue
+            fiscal_year = key.removeprefix(FISCAL_YEAR_CREATION_REQUEST_PREFIX)
+            spreadsheet_id = str(
+                config.get(f"Spreadsheet ID {fiscal_year}", "")
+            ).strip()
+            requests.append(
+                {
+                    "fiscal_year": fiscal_year,
+                    "status": str(value).strip(),
+                    "spreadsheet_id": spreadsheet_id,
+                    "url": (
+                        f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
+                        if spreadsheet_id
+                        else ""
+                    ),
+                }
+            )
+        return {
+            "ready": ready,
+            "message": message,
+            "heartbeat": heartbeat,
+            "heartbeat_at": heartbeat_at,
+            "template_id": str(
+                config.get(FISCAL_YEAR_TEMPLATE_CONFIG_KEY, "")
+            ).strip(),
+            "requests": sorted(
+                requests,
+                key=lambda row: row["fiscal_year"],
+                reverse=True,
+            ),
+            "notification_threshold": str(
+                config.get("Notification Threshold %", "80")
+            ).strip()
+            or "80",
+            "gmail_label": str(
+                config.get("Gmail Label", "Budget/Invoices")
+            ).strip()
+            or "Budget/Invoices",
+        }
+
+    def fiscal_year_creator_status(self):
+        master_id = _master_spreadsheet_id()
+        if not master_id:
+            raise SheetsSourceError("MASTER_SPREADSHEET_ID is not configured.")
+        return self._creator_state(self._config_map(self._open(master_id)))
 
     def _workbook_for_year(self, fiscal_year):
         master_id = _master_spreadsheet_id()
@@ -917,6 +1012,7 @@ class SheetsGateway:
         candidate,
         transaction_id="",
         allow_existing=False,
+        match_identity=False,
     ):
         """Create and read back one 26-column transaction row."""
         self._require_writes()
@@ -934,6 +1030,7 @@ class SheetsGateway:
             ).strip()
             existing_index = None
             existing_row = None
+            identity_matched = False
             if transaction_id and transaction_id in existing_ids:
                 existing_index, existing_row = self._transaction_match(
                     context["values"], context["headers"], transaction_id
@@ -942,6 +1039,58 @@ class SheetsGateway:
                     raise SheetsSourceError(
                         f"Transaction {transaction_id} already exists in {context['fiscal_year']}."
                     )
+            if match_identity and existing_index is None:
+                normalized_team = self._normalize_key(candidate.get("team"))
+                normalized_vendor = self._normalize_key(candidate.get("vendor"))
+                normalized_po = self._normalize_key(candidate.get("po_number"))
+                normalized_invoice = self._normalize_key(candidate.get("invoice_number"))
+                normalized_description = self._normalize_key(
+                    candidate.get("description")
+                )
+                candidate_amount = money(candidate.get("amount"))
+                identity_matches = []
+                for row_number, raw_row in enumerate(context["values"][1:], start=2):
+                    current = self._row_mapping(context["headers"], raw_row)
+                    same_team_vendor = bool(
+                        normalized_team
+                        and normalized_vendor
+                        and self._normalize_key(current.get("Team")) == normalized_team
+                        and self._normalize_key(current.get("Vendor / Payee"))
+                        == normalized_vendor
+                    )
+                    same_document = bool(
+                        (
+                            normalized_po
+                            and self._normalize_key(current.get("PO Number"))
+                            == normalized_po
+                        )
+                        or (
+                            normalized_invoice
+                            and self._normalize_key(current.get("Invoice Number"))
+                            == normalized_invoice
+                        )
+                    )
+                    same_line = bool(
+                        self._normalize_key(current.get("Description"))
+                        == normalized_description
+                        and money(current.get("Amount")) == candidate_amount
+                    )
+                    if (
+                        same_team_vendor
+                        and same_document
+                        and (match_identity is True or same_line)
+                    ):
+                        identity_matches.append((row_number, current))
+                if len(identity_matches) > 1:
+                    raise SheetsSourceError(
+                        "More than one Google Sheet row matches this team, vendor, PO, or invoice."
+                    )
+                if identity_matches:
+                    existing_index, existing_row = identity_matches[0]
+                    transaction_id = str(
+                        existing_row.get("Transaction ID") or transaction_id
+                    ).strip()
+                    identity_matched = True
             if not transaction_id:
                 transaction_id = self._new_transaction_id(existing_ids)
             row = self._build_transaction_row(
@@ -952,7 +1101,14 @@ class SheetsGateway:
                 context["rates"],
                 context["aed_per_usd"],
             )
-            if existing_index is not None:
+            if identity_matched:
+                written = self._write_verified_transaction_row(
+                    context["worksheet"],
+                    context["headers"],
+                    row,
+                    row_index=existing_index,
+                )
+            elif existing_index is not None:
                 self._verify_transaction_row(
                     row,
                     existing_row,
@@ -1602,6 +1758,58 @@ class SheetsGateway:
                 "spreadsheet_id": spreadsheet_id,
             }
 
+    def set_workspace_config(self, key, value):
+        """Set and exactly read back one approved master-workbook setting."""
+        self._require_writes()
+        key = str(key or "").strip()
+        if key not in WORKSPACE_CONFIG_KEYS:
+            raise ValueError("Only supported workspace Config keys may be changed.")
+        if key == "Notification Threshold %":
+            numeric_value = decimal_value(value)
+            if not Decimal("1") <= numeric_value <= Decimal("100"):
+                raise ValueError("Notification threshold must be between 1 and 100.")
+            normalized_value = str(numeric_value)
+        else:
+            normalized_value = str(value or "").strip() or "Budget/Invoices"
+        with _sheet_write_lock():
+            master_id = _master_spreadsheet_id()
+            if not master_id:
+                raise SheetsSourceError("MASTER_SPREADSHEET_ID is not configured.")
+            worksheet = self._open(master_id).worksheet("Config")
+            values = worksheet.get_all_values()
+            matches = [
+                index
+                for index, row in enumerate(values, start=1)
+                if row and str(row[0]).strip() == key
+            ]
+            if len(matches) > 1:
+                raise SheetsSourceError(
+                    f"Config key {key} appears more than once in Google Sheets."
+                )
+            if matches:
+                row_index = matches[0]
+                worksheet.update(
+                    values=[[key, normalized_value]],
+                    range_name=f"A{row_index}:B{row_index}",
+                    value_input_option="RAW",
+                )
+            else:
+                worksheet.append_row(
+                    [key, normalized_value],
+                    value_input_option="RAW",
+                )
+                row_index = len(worksheet.get_all_values())
+            written = worksheet.get(f"A{row_index}:B{row_index}")
+            if not written or written[0][:2] != [key, normalized_value]:
+                raise SheetsSourceError(
+                    f"The written Config {key} value did not verify."
+                )
+            return {
+                "key": key,
+                "value": normalized_value,
+                "spreadsheet_id": master_id,
+            }
+
     def queue_fiscal_year_creation(self, fiscal_year):
         """Queue the existing PI-owned GAS workbook creator and verify its token."""
         self._require_writes()
@@ -1618,6 +1826,9 @@ class SheetsGateway:
                 for row in values
                 if row and str(row[0]).strip()
             }
+            creator_state = self._creator_state(config)
+            if not creator_state["ready"]:
+                raise SheetsSourceError(creator_state["message"])
             registered_id = config.get(f"Spreadsheet ID {fiscal_year}", "").strip()
             base_year = config.get("Current Fiscal Year") or config.get("Fiscal Year")
             if registered_id or fiscal_year == base_year:
@@ -1711,6 +1922,21 @@ class SheetsGateway:
         if isinstance(raw_team_names, str):
             raw_team_names = _split_values(raw_team_names)
         team_names = sorted({str(name).strip() for name in raw_team_names if str(name).strip()})
+        raw_team_roles = member_data.get("team_roles") or {}
+        team_roles = {
+            str(name).strip(): str(team_role).strip().lower()
+            for name, team_role in raw_team_roles.items()
+            if str(name).strip() and str(team_role).strip()
+        }
+        if any(team_role not in {"lead", "member"} for team_role in team_roles.values()):
+            raise ValueError("Team roles must be Team Leader or Member.")
+        if team_roles:
+            team_names = sorted(team_roles)
+        else:
+            team_roles = {
+                name: ("lead" if role in {"pi", "budget_manager", "lead"} else "member")
+                for name in team_names
+            }
         raw_active = member_data.get("active", True)
         active = raw_active if isinstance(raw_active, bool) else _truthy(raw_active)
         today = datetime.now(DUBAI_TZ).date().isoformat()
@@ -1778,7 +2004,6 @@ class SheetsGateway:
                     "Unknown active team(s): " + ", ".join(missing_teams)
                 )
             desired_team_ids = {active_teams[name] for name in team_names} if active else set()
-            membership_role = "lead" if role in {"pi", "budget_manager", "lead"} else "member"
             for row in memberships:
                 if str(row.get("member_id") or "") == member_id:
                     row["active"] = "FALSE"
@@ -1806,7 +2031,17 @@ class SheetsGateway:
                     memberships.append(membership)
                 membership.update(
                     {
-                        "team_role": membership_role,
+                        "team_role": team_roles.get(
+                            next(
+                                (
+                                    name
+                                    for name, active_team_id in active_teams.items()
+                                    if active_team_id == team_id
+                                ),
+                                "",
+                            ),
+                            "member",
+                        ),
                         "active": "TRUE",
                         "end_date": "",
                     }
@@ -1826,8 +2061,19 @@ class SheetsGateway:
                 elif role == "budget_manager":
                     desired_roles = [("manager", "")]
                 else:
-                    app_role = "lead" if role == "lead" else "viewer"
-                    desired_roles = [(app_role, team_id) for team_id in sorted(desired_team_ids)]
+                    team_name_by_id = {
+                        team_id: team_name
+                        for team_name, team_id in active_teams.items()
+                    }
+                    desired_roles = [
+                        (
+                            "lead"
+                            if team_roles.get(team_name_by_id.get(team_id)) == "lead"
+                            else "viewer",
+                            team_id,
+                        )
+                        for team_id in sorted(desired_team_ids)
+                    ]
             for app_role, scope_team_id in desired_roles:
                 matches = [
                     row
@@ -1977,9 +2223,9 @@ class SheetsGateway:
                     )
         normalized_team = self._normalize_key(team)
         normalized_vendor = self._normalize_key(candidate.get("vendor"))
+        normalized_po = self._normalize_key(candidate.get("po_number"))
         normalized_invoice = self._normalize_key(candidate.get("invoice_number"))
-        matched_index = None
-        matched_current = None
+        identity_matches = []
         existing_ids = set()
         for row_index, raw_row in enumerate(values[1:], start=2):
             current = self._row_mapping(headers, raw_row)
@@ -1998,10 +2244,22 @@ class SheetsGateway:
                 and self._normalize_key(current.get("Vendor / Payee")) == normalized_vendor
                 and self._normalize_key(current.get("Invoice Number")) == normalized_invoice
             )
-            if same_hash or (same_team and same_invoice_identity):
-                matched_index = row_index
-                matched_current = current
-                break
+            same_po_identity = bool(
+                normalized_po
+                and normalized_vendor
+                and self._normalize_key(current.get("Vendor / Payee")) == normalized_vendor
+                and self._normalize_key(current.get("PO Number")) == normalized_po
+            )
+            if same_hash or (same_team and (same_invoice_identity or same_po_identity)):
+                identity_matches.append((row_index, current))
+
+        if len(identity_matches) > 1:
+            raise SheetsSourceError(
+                "More than one Google Sheet row matches this PDF, team, vendor, PO, or invoice."
+            )
+        matched_index, matched_current = (
+            identity_matches[0] if identity_matches else (None, None)
+        )
 
         if matched_current and str(matched_current.get("Status") or "").strip() == "Cancelled":
             raise SheetsSourceError(

@@ -16,13 +16,18 @@ from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
 from budget.access import lab_access
-from budget.forms import TransactionForm
+from budget.forms import ReceiptAttachmentForm, TransactionForm
 from budget.models import FiscalYear, SheetOperation, Transaction, TransactionAudit
-from budget.services.calculations import fiscal_year_for_date
+from budget.services.calculations import (
+    DEFAULT_RATES_TO_USD,
+    fiscal_year_for_date,
+)
 from budget.services.sheets import SheetsGateway, SheetsSourceError
 from budget.services.sync import sync_fiscal_year
 from budget.views import (
     _error_response,
+    _can_attach_receipt,
+    _can_full_edit_transaction,
     _lead_team_names,
     _scoped_transactions,
     _selected_fiscal_year,
@@ -51,6 +56,8 @@ def _transaction_snapshot(row):
         "amount_usd_equiv": str(row.amount_usd_equiv),
         "status": row.status,
         "team": row.team,
+        "receipt_confirmed": row.receipt_confirmed,
+        "pdf_link": row.pdf_link,
         "notes": row.notes,
     }
 
@@ -117,11 +124,15 @@ def _entry_team_names(member, fiscal_year=None):
 def _editable_transactions(member, fiscal_year):
     if member.highest_role in {"pi", "budget_manager"}:
         return fiscal_year.transactions.all()
-    visible_teams = _visible_team_names(member, fiscal_year)
     lead_teams = _lead_team_names(member, fiscal_year)
+    return fiscal_year.transactions.filter(team__in=lead_teams)
+
+
+def _receiptable_transactions(member, fiscal_year):
+    visible_teams = _visible_team_names(member, fiscal_year)
     return fiscal_year.transactions.filter(
-        Q(team__in=lead_teams)
-        | Q(team__in=visible_teams, entered_by__iexact=member.email)
+        team__in=visible_teams,
+        entered_by__iexact=member.email,
     )
 
 
@@ -143,7 +154,7 @@ def _initial_for_transaction(transaction):
         "amount": transaction.amount,
         "status": transaction.status,
         "team": transaction.team,
-        "receipt_confirmed": bool(
+        "receipt_confirmed": transaction.receipt_confirmed or bool(
             str(transaction.source_payload.get("Receipt Confirmed", "")).upper()
             in {"TRUE", "Y", "YES", "1"}
         ),
@@ -158,6 +169,28 @@ def _refresh_mirror(gateway, fiscal_year_label, actor):
     if run.status != "matched":
         raise SheetsSourceError("Google Sheet saved, but the web mirror did not match it.")
     return run
+
+
+def _year_details():
+    details = {}
+    for fiscal_year in FiscalYear.objects.order_by("-label"):
+        rates = {
+            code: str(value)
+            for code, value in DEFAULT_RATES_TO_USD.items()
+        }
+        rates.update(
+            {
+                str(code).upper(): str(value)
+                for code, value in (fiscal_year.exchange_rates or {}).items()
+            }
+        )
+        if fiscal_year.aed_per_usd:
+            rates["AED"] = str(1 / fiscal_year.aed_per_usd)
+        details[fiscal_year.label] = {
+            "ready": bool(fiscal_year.spreadsheet_id),
+            "rates": rates,
+        }
+    return details
 
 
 @lab_access("member")
@@ -251,7 +284,12 @@ def add_transaction(request):
     return render(
         request,
         "budget/transaction_form.html",
-        {"form": form, "mode": "add", "sheet_write_allowed": _sheet_write_allowed(request)},
+        {
+            "form": form,
+            "mode": "add",
+            "sheet_write_allowed": _sheet_write_allowed(request),
+            "year_details": _year_details(),
+        },
     )
 
 
@@ -346,6 +384,102 @@ def edit_transaction(request, fiscal_year, transaction_id):
             "mode": "edit",
             "transaction": transaction,
             "sheet_write_allowed": _sheet_write_allowed(request),
+            "year_details": _year_details(),
+        },
+    )
+
+
+@lab_access("member")
+@require_http_methods(["GET", "POST"])
+def attach_receipt(request, fiscal_year, transaction_id):
+    source_fy = get_object_or_404(FiscalYear, label=fiscal_year)
+    transaction = get_object_or_404(
+        _receiptable_transactions(request.lab_member, source_fy),
+        transaction_id=transaction_id,
+    )
+    if not _can_attach_receipt(request.lab_member, source_fy, transaction):
+        return HttpResponse(status=403)
+    initial = {
+        "idempotency_key": secrets.token_urlsafe(24),
+        "receipt_confirmed": transaction.receipt_confirmed or bool(
+            str(transaction.source_payload.get("Receipt Confirmed", "")).upper()
+            in {"TRUE", "Y", "YES", "1"}
+        ),
+        "pdf_link": transaction.pdf_link,
+        "notes": transaction.notes,
+    }
+    form = ReceiptAttachmentForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        if not _sheet_write_allowed(request):
+            form.add_error(None, "Google Sheet writes are not enabled for this account yet.")
+        else:
+            cleaned = form.cleaned_data
+            before = _transaction_snapshot(transaction)
+            payload = {
+                **_initial_for_transaction(transaction),
+                **cleaned,
+                "entered_by": transaction.entered_by or request.user.email,
+                "entry_method": transaction.entry_method or "Manual",
+                "last_known_payload": transaction.source_payload,
+            }
+            operation, claimed = _claim_operation(
+                cleaned["idempotency_key"],
+                "attach_receipt",
+                request.user.email,
+                source_fy,
+                {key: str(value) for key, value in payload.items()},
+            )
+            if not claimed:
+                if operation.status == "succeeded":
+                    messages.info(request, "This receipt update was already saved.")
+                    return redirect(
+                        f"{reverse('budget:transactions')}?fy={source_fy.label}"
+                    )
+                messages.warning(request, "This receipt update is already being processed.")
+                return redirect(
+                    "budget:attach_receipt", source_fy.label, transaction.transaction_id
+                )
+            try:
+                gateway = SheetsGateway()
+                result = gateway.update_transaction(
+                    source_fy.label,
+                    transaction.transaction_id,
+                    payload,
+                    target_fiscal_year=source_fy.label,
+                )
+                _refresh_mirror(gateway, source_fy.label, request.user.email)
+                updated = Transaction.objects.get(
+                    fiscal_year=source_fy,
+                    transaction_id=result["transaction_id"],
+                )
+                TransactionAudit.objects.create(
+                    transaction=updated,
+                    actor=request.user.email,
+                    action="receipt_attached",
+                    before=before,
+                    after=_transaction_snapshot(updated),
+                )
+                operation.transaction = updated
+                operation.save(update_fields=["transaction"])
+                _finish_operation(operation, result=result)
+            except (SheetsSourceError, ValueError) as error:
+                _finish_operation(operation, error=str(error))
+                return _error_response(
+                    request,
+                    "The receipt update was not confirmed in Google Sheets. Retrying is safe.",
+                )
+            messages.success(
+                request,
+                f"Updated the receipt details for {result['transaction_id']} and verified the Google Sheet row.",
+            )
+            return redirect(f"{reverse('budget:transactions')}?fy={source_fy.label}")
+    return render(
+        request,
+        "budget/receipt_form.html",
+        {
+            "form": form,
+            "transaction": transaction,
+            "sheet_write_allowed": _sheet_write_allowed(request),
         },
     )
 
@@ -356,6 +490,24 @@ def export_transactions(request):
     if fiscal_year is None:
         return HttpResponse(status=404)
     rows = _scoped_transactions(request.lab_member, fiscal_year)
+    category = request.GET.get("category", "").strip()
+    status = request.GET.get("status", "").strip()
+    team = request.GET.get("team", "").strip()
+    query = request.GET.get("q", "").strip()
+    if category:
+        rows = rows.filter(category=category)
+    if status:
+        rows = rows.filter(status=status)
+    if team:
+        rows = rows.filter(team=team)
+    if query:
+        rows = rows.filter(
+            Q(transaction_id__icontains=query)
+            | Q(vendor__icontains=query)
+            | Q(description__icontains=query)
+            | Q(po_number__icontains=query)
+            | Q(invoice_number__icontains=query)
+        )
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(

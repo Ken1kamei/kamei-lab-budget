@@ -2,6 +2,7 @@ from io import BytesIO
 import zipfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from openpyxl import Workbook
 
 from labapps.forms import KnowledgeUploadForm
 from labapps.services.knowledge import extract_knowledge_metadata
@@ -73,7 +74,44 @@ def test_unsupported_file_remains_downloadable_without_fake_content():
     parsed = extract_knowledge_metadata("image.tiff", b"pixels", "image/tiff")
 
     assert parsed["parse_status"] == "unsupported"
-    assert "DOCX, PDF, MD, and TXT" in parsed["parse_message"]
+    assert "DOCX, PDF, MD, TXT, CSV, XLSX, and PPTX" in parsed["parse_message"]
+
+
+def test_excel_content_is_extracted_for_knowledge_search():
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Differentiation"
+    worksheet.append(["Stage", "Reagent"])
+    worksheet.append(["Definitive endoderm", "Activin A"])
+    payload = BytesIO()
+    workbook.save(payload)
+
+    parsed = extract_knowledge_metadata("protocol.xlsx", payload.getvalue())
+
+    assert parsed["parse_status"] == "parsed"
+    assert parsed["parser"] == "xlsx-v1"
+    assert "Activin A" in str(parsed["sections"])
+
+
+def test_powerpoint_content_is_extracted_for_knowledge_search():
+    payload = BytesIO()
+    slide_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld><p:spTree><p:sp><p:txBody>
+    <a:p><a:r><a:t>MEF preparation</a:t></a:r></a:p>
+    <a:p><a:r><a:t>Digest embryos with trypsin.</a:t></a:r></a:p>
+  </p:txBody></p:sp></p:spTree></p:cSld>
+</p:sld>"""
+    with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("ppt/slides/slide1.xml", slide_xml)
+
+    parsed = extract_knowledge_metadata("protocol.pptx", payload.getvalue())
+
+    assert parsed["parse_status"] == "parsed"
+    assert parsed["parser"] == "pptx-v1"
+    assert "trypsin" in str(parsed["sections"]).lower()
 
 
 def test_upload_form_rejects_unsupported_and_oversized_files():

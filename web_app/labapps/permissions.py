@@ -44,13 +44,18 @@ def is_portal_admin(member):
 
 
 def app_role(member, app_id):
+    roles = app_roles(member, app_id)
+    return roles[0] if roles else None
+
+
+def app_roles(member, app_id):
     if is_portal_admin(member):
-        return {"role": "owner", "scope_team_id": ""}
+        return [{"role": "owner", "scope_team_id": ""}]
     if not member:
-        return None
+        return []
     member_id = str(member.get("member_id", ""))
     priority = {"viewer": 1, "member": 2, "lead": 3, "manager": 4, "owner": 5}
-    best = None
+    resolved = []
     for record in SheetRecord.objects.filter(source="registry", table_name="App_Roles"):
         payload = record.payload
         if (
@@ -58,18 +63,36 @@ def app_role(member, app_id):
             and str(payload.get("app_id", "")) == app_id
             and truthy(payload.get("active", ""))
         ):
-            candidate = {
+            resolved.append(
+                {
                 "role": str(payload.get("app_role", "viewer")).lower(),
                 "scope_team_id": str(payload.get("scope_team_id", "")),
-            }
-            if not best or priority.get(candidate["role"], 0) > priority.get(best["role"], 0):
-                best = candidate
-    return best
+                }
+            )
+    return sorted(
+        resolved,
+        key=lambda item: (
+            -priority.get(item["role"], 0),
+            item["scope_team_id"],
+        ),
+    )
 
 
 def can_write(member, app_id):
-    resolved = app_role(member, app_id)
-    return bool(resolved and resolved["role"] in WRITE_ROLES)
+    return any(resolved["role"] in WRITE_ROLES for resolved in app_roles(member, app_id))
+
+
+def can_write_scope(member, app_id, scope_team_id=""):
+    requested_scope = str(scope_team_id or "")
+    return any(
+        resolved["role"] in WRITE_ROLES
+        and (
+            not requested_scope
+            or not resolved.get("scope_team_id")
+            or resolved.get("scope_team_id") == requested_scope
+        )
+        for resolved in app_roles(member, app_id)
+    )
 
 
 def lab_app_access(app_id, *, write=False, admin=False):

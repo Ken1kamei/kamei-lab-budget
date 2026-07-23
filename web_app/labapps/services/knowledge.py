@@ -1,10 +1,12 @@
 import re
 import zipfile
+import csv
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree
 
 import pdfplumber
+from openpyxl import load_workbook
 
 
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -65,6 +67,9 @@ def extract_knowledge_metadata(filename, content, content_type=""):
         ".pdf": "pdf-v1",
         ".md": "text-v1",
         ".txt": "text-v1",
+        ".csv": "csv-v1",
+        ".xlsx": "xlsx-v1",
+        ".pptx": "pptx-v1",
     }.get(suffix, "unsupported")
     try:
         if suffix == ".docx":
@@ -73,11 +78,17 @@ def extract_knowledge_metadata(filename, content, content_type=""):
             parsed = _parse_pdf(content)
         elif suffix in {".md", ".txt"}:
             parsed = _parse_text(content)
+        elif suffix == ".csv":
+            parsed = _parse_csv(content)
+        elif suffix == ".xlsx":
+            parsed = _parse_xlsx(content)
+        elif suffix == ".pptx":
+            parsed = _parse_pptx(content)
         else:
             return {
                 "parse_status": "unsupported",
                 "parser": parser,
-                "parse_message": "Automatic text extraction is available for DOCX, PDF, MD, and TXT files.",
+                "parse_message": "Automatic text extraction is available for DOCX, PDF, MD, TXT, CSV, XLSX, and PPTX files.",
             }
         parsed.update(
             {
@@ -213,6 +224,101 @@ def _parse_text(content):
             raise ValueError("The text document contains too many content blocks.")
     if not blocks:
         raise ValueError("The text document is empty.")
+    return _build_document(blocks)
+
+
+def _parse_csv(content):
+    text = content.decode("utf-8-sig")
+    rows = [
+        [_clean_text(cell) for cell in row]
+        for row in csv.reader(text.splitlines())
+        if any(_clean_text(cell) for cell in row)
+    ]
+    if not rows:
+        raise ValueError("The CSV file is empty.")
+    if len(rows) > MAX_TABLE_ROWS:
+        raise ValueError("The CSV file exceeds the safe row limit.")
+    return _build_document(
+        [
+            {"kind": "heading", "text": "CSV data"},
+            {"kind": "table", "rows": rows},
+        ]
+    )
+
+
+def _parse_xlsx(content):
+    workbook = load_workbook(
+        BytesIO(content),
+        read_only=True,
+        data_only=True,
+    )
+    blocks = []
+    extracted_characters = 0
+    for worksheet in workbook.worksheets[:50]:
+        blocks.append({"kind": "heading", "text": worksheet.title})
+        rows = []
+        for row_index, row in enumerate(
+            worksheet.iter_rows(max_col=100, values_only=True),
+            start=1,
+        ):
+            if row_index > MAX_TABLE_ROWS:
+                raise ValueError("An Excel worksheet exceeds the safe row limit.")
+            values = [_clean_text(value) for value in row]
+            while values and not values[-1]:
+                values.pop()
+            if not any(values):
+                continue
+            extracted_characters += sum(len(value) for value in values)
+            if extracted_characters > MAX_EXTRACTED_CHARACTERS:
+                raise ValueError("The Excel workbook contains too much text to extract safely.")
+            rows.append(values)
+        if rows:
+            blocks.append({"kind": "table", "rows": rows})
+        if len(blocks) > MAX_BLOCKS:
+            raise ValueError("The Excel workbook contains too many content blocks.")
+    if not blocks:
+        raise ValueError("The Excel workbook is empty.")
+    return _build_document(blocks)
+
+
+def _parse_pptx(content):
+    if not zipfile.is_zipfile(BytesIO(content)):
+        raise ValueError("The uploaded PPTX file is not a valid presentation.")
+    blocks = []
+    extracted_characters = 0
+    with zipfile.ZipFile(BytesIO(content)) as archive:
+        slide_names = sorted(
+            (
+                name
+                for name in archive.namelist()
+                if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)
+            ),
+            key=lambda name: int(re.search(r"(\d+)", name.rsplit("/", 1)[-1]).group(1)),
+        )
+        for slide_number, name in enumerate(slide_names[:500], start=1):
+            info = archive.getinfo(name)
+            if info.file_size > MAX_DOCUMENT_XML_BYTES:
+                raise ValueError("A PowerPoint slide is too large to extract safely.")
+            root = ElementTree.fromstring(archive.read(info))
+            texts = [
+                _clean_text(node.text)
+                for node in root.iter()
+                if node.tag.rsplit("}", 1)[-1] == "t" and _clean_text(node.text)
+            ]
+            if not texts:
+                continue
+            extracted_characters += sum(len(text) for text in texts)
+            if extracted_characters > MAX_EXTRACTED_CHARACTERS:
+                raise ValueError("The presentation contains too much text to extract safely.")
+            blocks.append(
+                {
+                    "kind": "heading",
+                    "text": texts[0] or f"Slide {slide_number}",
+                }
+            )
+            blocks.extend({"kind": "paragraph", "text": text} for text in texts[1:])
+    if not blocks:
+        raise ValueError("No readable text was found in the presentation.")
     return _build_document(blocks)
 
 

@@ -38,6 +38,18 @@ class TransactionForm(forms.Form):
         self.fields["team"].choices = [(value, value) for value in team_choices]
 
 
+class ReceiptAttachmentForm(forms.Form):
+    idempotency_key = forms.CharField(widget=forms.HiddenInput)
+    receipt_confirmed = forms.BooleanField(required=False, label="Receipt confirmed")
+    pdf_link = forms.URLField(
+        required=False,
+        max_length=1000,
+        label="Receipt / PDF link",
+        assume_scheme="https",
+    )
+    notes = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 4}))
+
+
 class AllocationForm(forms.Form):
     fiscal_year = forms.ChoiceField()
 
@@ -100,16 +112,54 @@ class ExchangeRateForm(forms.Form):
         self.fields["fiscal_year"].choices = [(value, value) for value in year_choices]
 
 
+class WorkspaceSettingsForm(forms.Form):
+    notification_threshold = forms.DecimalField(
+        max_digits=5,
+        decimal_places=1,
+        min_value=1,
+        max_value=100,
+        label="Notification threshold (%)",
+    )
+    gmail_label = forms.CharField(
+        max_length=200,
+        label="Gmail label",
+        initial="Budget/Invoices",
+    )
+
+
 class MemberForm(forms.Form):
     display_name = forms.CharField(max_length=160, label="Name")
     email = forms.EmailField()
-    role = forms.ChoiceField(choices=LabMember.ROLE_CHOICES)
-    team_names = forms.MultipleChoiceField(required=False, widget=forms.CheckboxSelectMultiple)
+    role = forms.ChoiceField(
+        choices=[
+            ("pi", "PI"),
+            ("budget_manager", "Budget Manager"),
+            ("member", "Team-scoped member or leader"),
+        ],
+        label="Lab-wide role",
+    )
     active = forms.BooleanField(required=False, initial=True)
 
     def __init__(self, *args, team_choices=(), **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["team_names"].choices = [(value, value) for value in team_choices]
+        self.team_choices = list(team_choices)
+        for index, team_name in enumerate(self.team_choices):
+            self.fields[f"team_role_{index}"] = forms.ChoiceField(
+                required=False,
+                label=f"{team_name} role",
+                choices=[
+                    ("", "No access"),
+                    ("member", "Member"),
+                    ("lead", "Team Leader"),
+                ],
+            )
+
+    def team_role_values(self):
+        return {
+            team_name: self.cleaned_data.get(f"team_role_{index}", "")
+            for index, team_name in enumerate(self.team_choices)
+            if self.cleaned_data.get(f"team_role_{index}")
+        }
 
 
 class ErbImportForm(forms.Form):
@@ -130,7 +180,10 @@ class InvoiceCommitForm(TransactionForm):
 
     def __init__(self, *args, year_choices=(), team_choices=(), **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["fiscal_year"].choices = [(value, value) for value in year_choices]
+        self.fields["fiscal_year"].choices = [
+            ("", "Select fiscal year"),
+            *((value, value) for value in year_choices),
+        ]
         self.fields["team"].choices = [(value, value) for value in team_choices]
         self.fields.pop("status", None)
         self.fields.pop("receipt_confirmed", None)

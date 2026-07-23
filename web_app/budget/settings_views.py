@@ -6,7 +6,13 @@ from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
 from budget.access import lab_access
-from budget.forms import AllocationForm, ExchangeRateForm, MemberForm, TeamForm
+from budget.forms import (
+    AllocationForm,
+    ExchangeRateForm,
+    MemberForm,
+    TeamForm,
+    WorkspaceSettingsForm,
+)
 from budget.models import AdministrativeAudit, FiscalYear, LabMember, Team
 from budget.operation_views import _sheet_write_allowed
 from budget.services.calculations import CATEGORIES, DEFAULT_RATES_TO_USD
@@ -51,6 +57,22 @@ def _settings_context(request, fiscal_year, **overrides):
     if fiscal_year:
         rates.update(fiscal_year.exchange_rates or {})
         aed_per_usd = str(fiscal_year.aed_per_usd)
+    creator_state = {
+        "ready": False,
+        "message": "Fiscal-year creator status is unavailable.",
+        "template_id": "",
+        "requests": [],
+        "notification_threshold": "80",
+        "gmail_label": "Budget/Invoices",
+    }
+    creator_error = ""
+    if request.lab_member.highest_role == "pi":
+        try:
+            creator_state = SheetsGateway().fiscal_year_creator_status()
+        except SheetsSourceError:
+            creator_error = (
+                "Could not read the fiscal-year creator status from Google Sheets."
+            )
     context = {
         "years": years,
         "fiscal_year": fiscal_year,
@@ -78,9 +100,20 @@ def _settings_context(request, fiscal_year, **overrides):
             prefix="rate",
         ),
         "member_form": MemberForm(team_choices=team_names, prefix="member"),
+        "workspace_form": WorkspaceSettingsForm(
+            initial={
+                "notification_threshold": creator_state[
+                    "notification_threshold"
+                ],
+                "gmail_label": creator_state["gmail_label"],
+            },
+            prefix="workspace",
+        ),
         "teams": fiscal_year.teams.all() if fiscal_year else [],
         "members": LabMember.objects.order_by("display_name", "email"),
         "sheet_write_allowed": _sheet_write_allowed(request),
+        "creator_state": creator_state,
+        "creator_error": creator_error,
     }
     context.update(overrides)
     return context
@@ -196,7 +229,14 @@ def settings_page(request):
                     _settings_context(request, fiscal_year, member_form=form),
                     status=400,
                 )
-            gateway.upsert_registry_member(form.cleaned_data)
+            payload = {
+                key: value
+                for key, value in form.cleaned_data.items()
+                if not key.startswith("team_role_")
+            }
+            payload["team_roles"] = form.team_role_values()
+            payload["team_names"] = list(payload["team_roles"])
+            gateway.upsert_registry_member(payload)
             for target in labels:
                 _sync(gateway, target, request.user.email)
             _audit(
@@ -204,7 +244,7 @@ def settings_page(request):
                 "member_updated",
                 form.cleaned_data["email"],
                 {},
-                form.cleaned_data,
+                payload,
             )
             messages.success(request, f"Saved and verified access for {form.cleaned_data['email']}.")
             return redirect(f"{reverse('budget:settings')}?fy={fiscal_year.label}#members")
@@ -219,6 +259,47 @@ def settings_page(request):
                 f"Queued {target}. The PI-owned Google Sheet creator will register it shortly.",
             )
             return redirect(f"{reverse('budget:settings')}?fy={fiscal_year.label}#fiscal-year")
+        if action == "workspace":
+            if request.lab_member.highest_role != "pi":
+                return _error_response(
+                    request,
+                    "Only the PI can change workspace notification settings.",
+                    403,
+                )
+            form = WorkspaceSettingsForm(request.POST, prefix="workspace")
+            if not form.is_valid():
+                return render(
+                    request,
+                    "budget/settings.html",
+                    _settings_context(request, fiscal_year, workspace_form=form),
+                    status=400,
+                )
+            before = gateway.fiscal_year_creator_status()
+            results = [
+                gateway.set_workspace_config(
+                    "Notification Threshold %",
+                    form.cleaned_data["notification_threshold"],
+                ),
+                gateway.set_workspace_config(
+                    "Gmail Label",
+                    form.cleaned_data["gmail_label"],
+                ),
+            ]
+            after = gateway.fiscal_year_creator_status()
+            _audit(
+                request,
+                "workspace_settings_updated",
+                "master_config",
+                before,
+                after,
+            )
+            messages.success(
+                request,
+                "Saved and verified workspace notification settings.",
+            )
+            return redirect(
+                f"{reverse('budget:settings')}?fy={fiscal_year.label}#fiscal-year"
+            )
     except (SheetsSourceError, ValueError):
         return _error_response(
             request,

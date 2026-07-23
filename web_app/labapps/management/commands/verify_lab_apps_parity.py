@@ -45,12 +45,17 @@ class Command(BaseCommand):
         seed_ids = {_knowledge_id(record) for record in _knowledge_seed()}
         seed_ids.discard("")
         mirror_ids = set(KnowledgeRecord.objects.values_list("record_id", flat=True))
-        results["Knowledge"] = {"seed": len(seed_ids), "mirror": len(mirror_ids)}
-        if seed_ids != mirror_ids:
+        missing_ids = seed_ids - mirror_ids
+        results["Knowledge"] = {
+            "seed": len(seed_ids),
+            "mirror": len(mirror_ids),
+            "web_added": len(mirror_ids - seed_ids),
+            "metadata_only": KnowledgeRecord.objects.filter(object_name="").count(),
+        }
+        if missing_ids:
             mismatches["Knowledge"] = {
                 **results["Knowledge"],
-                "missing": sorted(seed_ids - mirror_ids),
-                "unexpected": sorted(mirror_ids - seed_ids),
+                "missing": sorted(missing_ids),
             }
         self.stdout.write(json.dumps(results, sort_keys=True))
         if mismatches:

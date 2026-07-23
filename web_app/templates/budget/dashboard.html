@@ -14,6 +14,9 @@
   <article class="metric amber"><span>Available</span><strong>${{ totals.available|floatformat:2|intcomma }}</strong><small>Budget less allocated</small></article>
   <article class="metric"><span>Transactions</span><strong>{{ totals.transaction_count }}</strong><small>{{ cancelled_count }} cancelled</small></article>
 </section>
+{% if pending_review_count %}
+<div class="notice review-notice"><strong>{{ pending_review_count }} invoice draft{{ pending_review_count|pluralize }} awaiting review.</strong> <a class="text-link" href="{% url 'budget:imports' %}">Open invoice review</a></div>
+{% endif %}
 
 <section class="panel panel-wide">
   <div class="panel-heading"><div><span class="eyebrow">TREND</span><h2>Monthly spending</h2></div><span>USD</span></div>
@@ -29,9 +32,24 @@
 
 <section class="two-column">
   <article class="panel">
-    <div class="panel-heading"><div><span class="eyebrow">CATEGORY</span><h2>Budget position</h2></div></div>
-    <div class="data-list">
-    {% for row in category_rows %}<div class="data-row"><div><strong>{{ row.name }}</strong><small>${{ row.allocated|floatformat:2|intcomma }} allocated</small></div><span>${{ row.available|floatformat:2|intcomma }}</span></div>{% empty %}<p class="empty">No category budgets yet.</p>{% endfor %}
+    <div class="panel-heading"><div><span class="eyebrow">CATEGORY</span><h2>Expense breakdown</h2></div></div>
+    <div class="budget-bars">
+    {% for row in category_rows %}<div class="budget-bar"><div><strong>{{ row.name }}</strong><span>{{ row.share_percent }}% of allocated</span></div><div class="bar-track"><span style="--bar-width: {{ row.share_percent }}%"></span></div><small>${{ row.allocated|floatformat:2|intcomma }} allocated · ${{ row.available|floatformat:2|intcomma }} available</small></div>{% empty %}<p class="empty">No category budgets yet.</p>{% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-heading"><div><span class="eyebrow">TEAMS</span><h2>Team budget</h2></div></div>
+    <div class="budget-bars">
+    {% for row in team_rows %}<div class="budget-bar"><div><strong>{{ row.name }}</strong><span>{{ row.used_percent }}% used</span></div><div class="bar-track magenta"><span style="--bar-width: {{ row.used_percent }}%"></span></div><small>${{ row.allocated|floatformat:2|intcomma }} of ${{ row.budget|floatformat:2|intcomma }}</small></div>{% empty %}<p class="empty">No team budgets found.</p>{% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="two-column dashboard-lower">
+  <article class="panel">
+    <div class="panel-heading"><div><span class="eyebrow">RECENT</span><h2>Recent transactions</h2></div><a class="text-link" href="{% url 'budget:transactions' %}?fy={{ fiscal_year.label }}">Open ledger</a></div>
+    <div class="recent-list">
+    {% for txn in recent_transactions %}<div class="recent-row"><div><strong>{{ txn.vendor|default:txn.description|truncatechars:42 }}</strong><small>{{ txn.date|date:'Y-m-d' }} · {{ txn.team }} · {{ txn.category }}</small></div><span>${{ txn.amount_usd_equiv|floatformat:2|intcomma }}</span></div>{% empty %}<p class="empty">No transactions yet.</p>{% endfor %}
     </div>
   </article>
   <article class="panel">
