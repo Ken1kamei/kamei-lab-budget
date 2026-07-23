@@ -1,5 +1,7 @@
-from unittest.mock import patch
 from io import BytesIO
+from pathlib import Path
+from unittest.mock import patch
+import zipfile
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -125,7 +127,55 @@ def test_portal_tracker_and_knowledge_pages_render():
     assert b'href="/knowledge/#protocols"' in knowledge.content
     assert b'href="/knowledge/#search"' in knowledge.content
     assert b'href="/knowledge/upload/"' in knowledge.content
+    assert b"Kamei_Lab_Protocol_Template.docx" in knowledge.content
+    assert b"Download protocol template" in knowledge.content
     assert b">Transactions<" not in knowledge.content
+
+
+def test_protocol_template_is_valid_and_linked_from_upload_page():
+    seed_pi()
+    template = (
+        Path(__file__).resolve().parents[2]
+        / "labapps/static/labapps/Kamei_Lab_Protocol_Template.docx"
+    )
+    assert template.exists()
+    assert zipfile.is_zipfile(template)
+
+    response = signed_in_client().get("/knowledge/upload/")
+    assert response.status_code == 200
+    assert b"Kamei_Lab_Protocol_Template.docx" in response.content
+    assert b"Download protocol template" in response.content
+
+
+def test_protocol_template_is_available_to_read_only_members():
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "member@nyu.edu",
+            "display_name": "Lab member",
+            "global_role": "member",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "App_Roles",
+        "AR-notebooks-reader",
+        {
+            "member_id": "M002",
+            "app_id": "notebooks_protocols",
+            "app_role": "viewer",
+            "scope_team_id": "",
+            "active": "TRUE",
+        },
+    )
+
+    response = client_for("member@nyu.edu").get("/knowledge/")
+    assert response.status_code == 200
+    assert b"Kamei_Lab_Protocol_Template.docx" in response.content
+    assert b"Download protocol template" in response.content
+    assert b'href="/knowledge/upload/"' not in response.content
 
 
 @patch("labapps.views.replace_project_gantt")

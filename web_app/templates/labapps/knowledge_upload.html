@@ -1,6 +1,10 @@
 {% extends "budget/base.html" %}
+{% load static %}
 {% block title %}Upload Lab Record{% endblock %}
 {% block content %}
-<header class="page-head"><div><span class="eyebrow">Private upload</span><h1>Upload notebook or protocol</h1><p>The document is stored in a private bucket and is available only through an authenticated app download.</p></div></header>
+<header class="page-head">
+  <div><span class="eyebrow">Private upload</span><h1>Upload notebook or protocol</h1><p>The document is stored in a private bucket and is available only through an authenticated app download.</p></div>
+  <a class="button secondary" href="{% static 'labapps/Kamei_Lab_Protocol_Template.docx' %}" download>Download protocol template</a>
+</header>
 <section class="panel upload-panel"><form method="post" enctype="multipart/form-data" class="form-grid">{% csrf_token %}{{ form.as_div }}<div class="span-2 form-actions"><button class="button primary" type="submit">Upload private file</button><a class="button secondary" href="{% url 'labapps:knowledge' %}">Cancel</a></div></form></section>
 {% endblock %}

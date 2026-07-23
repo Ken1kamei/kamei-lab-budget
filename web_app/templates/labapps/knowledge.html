@@ -1,8 +1,14 @@
 {% extends "budget/base.html" %}
-{% load labapps_tags %}
+{% load static labapps_tags %}
 {% block title %}Notebooks and Protocols{% endblock %}
 {% block content %}
-<header class="page-head"><div><span class="eyebrow">Private knowledge</span><h1>Notebooks &amp; Protocols</h1><p>Search the lab knowledge base, or select a protocol to view its structured detail.</p></div>{% if can_edit %}<a class="button primary" href="{% url 'labapps:knowledge_upload' %}">Upload record</a>{% endif %}</header>
+<header class="page-head">
+  <div><span class="eyebrow">Private knowledge</span><h1>Notebooks &amp; Protocols</h1><p>Search the lab knowledge base, or select a protocol to view its structured detail.</p></div>
+  <div class="page-actions">
+    <a class="button secondary" href="{% static 'labapps/Kamei_Lab_Protocol_Template.docx' %}" download>Download protocol template</a>
+    {% if can_edit %}<a class="button primary" href="{% url 'labapps:knowledge_upload' %}">Upload record</a>{% endif %}
+  </div>
+</header>
 
 <section class="metric-grid knowledge-metrics"><article class="metric cyan"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>Structured protocol records</small></article><article class="metric magenta"><span>Notebooks</span><strong>{{ counts.notebooks }}</strong><small>Registered notebook records</small></article></section>
 
