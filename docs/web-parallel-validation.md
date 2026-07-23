@@ -1,11 +1,12 @@
-# Web parallel validation
+# Integrated web validation
 
 Last verified: 2026-07-23 (Asia/Dubai)
 
 ## Scope
 
 - Django/Cloud Run is the production application.
-- Existing Streamlit remains available as a rollback and parity reference.
+- No user-facing route, parser, runtime configuration, container layer, or
+  operational workflow depends on the legacy application.
 - The Web application includes the full Budget workflow: manual transactions,
   edit/cancel, receipt attachment, reports, PDF and ERB import, Settings,
   multi-team roles, audit, fiscal-year creation, notification settings, and
@@ -18,7 +19,7 @@ Last verified: 2026-07-23 (Asia/Dubai)
 ## Staging
 
 - Service: `kamei-lab-budget-web-staging`
-- Revision: `kamei-lab-budget-web-staging-00036-kuw`
+- Revision: `kamei-lab-budget-web-staging-00038-pun`
 - Region: `me-central1`
 - URL: <https://kamei-lab-budget-web-staging-7id3bdyliq-ww.a.run.app>
 - Access: Google Cloud IAP plus the application lab-member allowlist
@@ -53,19 +54,19 @@ of one Cloud Run instance.
 | FY2025-26 | 27 | 27 | $169,500.00 | $10,698.03 | $158,801.97 | Exact match |
 | FY2026-27 | 0 | 0 | $169,500.00 | $0.00 | $169,500.00 | Exact match |
 
-The verification command compares Django output against the existing
-Streamlit calculation functions, including fiscal-year routing, currency
-conversion, team allocations, and `Cancelled` exclusion.
+The verification command compares the Google Sheet source with the PostgreSQL
+web mirror, including fiscal-year routing, currency conversion, team
+allocations, and `Cancelled` exclusion.
 
 ## Candidate verification completed
 
-- Django test suite: 122 passed.
+- Django test suite: 125 passed.
 - Independent QA review: no remaining P0, P1, or P2 findings.
 - Main authenticated production routes returned normal pages for Budget
   overview, transactions, imports, reports, Settings, portal, Project Tracker,
   and Notebooks/Protocols.
-- Streamlit-to-Web parity remained exact after the release for FY2025-26 and
-  FY2026-27.
+- Google Sheet-to-Web parity remained exact after the release for FY2025-26
+  and FY2026-27.
 - The completed parity work adds team/category/recent/pending dashboard views,
   filtered CSV, multi-currency previews, member receipt attachment, safer
   invoice and ERB identity matching, partial batch recovery, per-team roles,
@@ -113,16 +114,26 @@ conversion, team allocations, and `Cancelled` exclusion.
   $109,500.00. A subsequent complete parity read confirmed 27 rows, $169,500.00
   total budget, $10,698.03 allocated, and $158,801.97 available, with no dummy
   data remaining.
+- Portal routing correction: the previous production Portal was observed
+  rendering three registry-provided legacy URLs. Revision `00038-pun` ignores
+  registry `app_url` values for navigation and always resolves Budget,
+  Project Tracker, and Notebooks/Protocols to internal Django routes.
+- Candidate and production click checks: all three Portal cards stayed on the
+  same Cloud Run host and opened `/`, `/tracker/`, and `/knowledge/`.
+- Runtime independence: the deployment image copies only `web_app/`; invoice
+  parsing and Google configuration no longer read files from the legacy app.
+- Operational cleanup: the keep-awake workflow and old operational guide were
+  removed.
 
 ## Rollback
 
 Set `ENABLE_SHEET_WRITES=false` to disable new registrations immediately.
-Traffic can be returned to revision `00034-hev`, and the existing Streamlit
-application remains available. No dummy transaction or budget value remains.
+Traffic can be returned to Django revision `00036-kuw`. No dummy transaction or
+budget value remains.
 
-## Promotion gate
+## Promotion status
 
-Continue daily read-only Streamlit-vs-Web parity checks while Streamlit remains
-available as a rollback reference. Run production write probes only when Google
-Sheets quota is healthy, and always verify restoration before closing the
+Revision `00038-pun` receives 100% production traffic. Continue daily
+Google Sheet-to-Web parity checks. Run production write probes only when Google
+Sheets quota is healthy, and always verify restoration before closing a
 maintenance task.
