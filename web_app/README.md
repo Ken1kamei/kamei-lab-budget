@@ -37,7 +37,8 @@ Credentials. The gateway requests a read-only Sheets scope unless
 - Every Sheet mutation is serialized, read back, mirrored, and audited before
   the UI reports success. Repeated submissions use durable idempotency keys.
 - Shared launcher and registry administration at `/portal/`.
-- Project, milestone, experiment, review, and next-action workflows at `/tracker/`.
+- Project, milestone, experiment, review, and next-action workflows at `/tracker/`,
+  including per-project Excel Gantt import, preview, and timeline display.
 - Searchable protocol and notebook registry plus private uploads at `/knowledge/`.
 
 ## Production requirements

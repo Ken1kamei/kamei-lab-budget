@@ -77,6 +77,14 @@ class MilestoneForm(forms.Form):
     owner_member_id = forms.ChoiceField(choices=[])
     start_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
     due_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
+    progress_percent = forms.DecimalField(
+        min_value=0,
+        max_value=100,
+        decimal_places=1,
+        required=False,
+        initial=0,
+        label="Progress (%)",
+    )
     status = forms.ChoiceField(choices=STATUS_CHOICES)
     next_action = forms.CharField(max_length=500)
     blocker_reason = forms.CharField(widget=forms.Textarea(attrs={"rows": 2}), required=False)
@@ -91,6 +99,41 @@ class MilestoneForm(forms.Form):
             (row["member_id"], row.get("display_name") or row.get("name") or row["member_id"])
             for row in (members or [])
         ]
+
+
+class GanttImportForm(forms.Form):
+    project_id = forms.ChoiceField(choices=[], label="Project")
+    default_owner_member_id = forms.ChoiceField(
+        choices=[],
+        label="Default owner for unmatched names",
+    )
+    gantt_file = forms.FileField(
+        label="Gantt Excel file",
+        help_text="Upload the Kamei Lab template or a compatible .xlsx Gantt chart.",
+        widget=forms.ClearableFileInput(attrs={"accept": ".xlsx"}),
+    )
+
+    def __init__(self, *args, projects=None, members=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["project_id"].choices = [
+            (row["project_id"], row.get("project") or row["project_id"])
+            for row in (projects or [])
+        ]
+        self.fields["default_owner_member_id"].choices = [
+            (
+                row["member_id"],
+                row.get("display_name") or row.get("name") or row["member_id"],
+            )
+            for row in (members or [])
+        ]
+
+    def clean_gantt_file(self):
+        uploaded = self.cleaned_data["gantt_file"]
+        if not uploaded.name.casefold().endswith(".xlsx"):
+            raise forms.ValidationError("Upload an .xlsx Excel workbook.")
+        if uploaded.size > 10 * 1024 * 1024:
+            raise forms.ValidationError("The Gantt workbook must be 10 MB or smaller.")
+        return uploaded
 
 
 class ExperimentForm(forms.Form):

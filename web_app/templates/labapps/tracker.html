@@ -1,5 +1,5 @@
 {% extends "budget/base.html" %}
-{% load labapps_tags %}
+{% load labapps_tags static %}
 {% block title %}Project Tracker{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -14,11 +14,100 @@
   <article class="metric amber"><span>Pending review</span><strong>{{ counts.pending }}</strong><small>{{ counts.blocked }} blocked</small></article>
 </section>
 
-<div class="section-tabs"><a href="#projects">Projects</a><a href="#milestones">Milestones</a><a href="#experiments">Experiments</a><a href="#review">Review</a>{% if can_edit %}<a href="#new">Add records</a>{% endif %}</div>
+<div class="section-tabs"><a href="#gantt">Gantt chart</a><a href="#projects">Projects</a><a href="#milestones">Milestones</a><a href="#experiments">Experiments</a><a href="#review">Review</a>{% if can_edit %}<a href="#new">Add records</a>{% endif %}</div>
+
+<section id="gantt" class="panel settings-section">
+  <div class="panel-heading">
+    <div><span>Project schedule</span><h2>Gantt chart</h2></div>
+    {% if can_edit %}<a class="button secondary" href="{% static 'labapps/Kamei_Lab_Gantt_Import_Template.xlsx' %}" download>Download Excel template</a>{% endif %}
+  </div>
+  <form method="get" class="gantt-project-picker">
+    {% if selected_team %}<input type="hidden" name="team" value="{{ selected_team }}">{% endif %}
+    <label for="gantt-project">Project
+      <select id="gantt-project" name="gantt_project" onchange="this.form.submit()">
+        {% for row in projects %}<option value="{{ row.project_id }}" {% if selected_gantt_project and row.project_id == selected_gantt_project.project_id %}selected{% endif %}>{{ row.project }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+
+  {% if gantt.rows %}
+  <div class="gantt-summary">
+    <strong>{{ gantt.project.project }}</strong>
+    <span>{{ gantt.start_date }} to {{ gantt.end_date }} · {{ gantt.rows|length }} tasks</span>
+  </div>
+  <div class="gantt-scroll">
+    <div class="gantt-grid">
+      <div class="gantt-label gantt-label-heading">Task and owner</div>
+      <div class="gantt-axis">
+        {% for tick in gantt.ticks %}<span style="--tick-left: {{ tick.left }}%">{{ tick.label }}</span>{% endfor %}
+      </div>
+      {% for row in gantt.rows %}
+      <div class="gantt-label">
+        <strong>{{ row.milestone }}</strong>
+        <span>{{ row.phase }} · {{ row.owner }}</span>
+      </div>
+      <div class="gantt-track" aria-label="{{ row.milestone }}: {{ row.start }} to {{ row.end }}, {{ row.progress }} percent complete">
+        <div class="gantt-bar" style="--bar-left: {{ row.left }}%; --bar-width: {{ row.width }}%">
+          <span style="--progress-width: {{ row.progress_width }}%"></span>
+          <small>{{ row.progress_width }}%</small>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% elif selected_gantt_project %}
+  <p class="empty">No scheduled milestones for this project yet. Import the Excel template or add milestones with start and due dates.</p>
+  {% else %}
+  <p class="empty">Create a project before adding a Gantt chart.</p>
+  {% endif %}
+
+  {% if can_edit %}
+  <details class="gantt-import" {% if gantt_preview %}open{% endif %}>
+    <summary>Import or update this project's Gantt chart</summary>
+    <div class="gantt-import-body">
+      <p class="muted">The upload is previewed first. Confirming replaces only earlier Excel-imported Gantt tasks for the selected project; manually entered milestones remain unchanged.</p>
+      <form method="post" enctype="multipart/form-data" class="form-grid single">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="gantt_preview">
+        {{ gantt_import_form.as_div }}
+        <button class="button primary" type="submit">Preview Gantt import</button>
+      </form>
+      {% if gantt_preview %}
+      <div class="gantt-preview">
+        <div class="panel-heading">
+          <div><span>Import preview</span><h3>{{ gantt_preview.project }}</h3></div>
+          <span>{{ gantt_preview.rows|length }} tasks · {{ gantt_preview.sheet_name }}</span>
+        </div>
+        {% for error in gantt_preview.errors %}<p class="notice error">{{ error }}</p>{% endfor %}
+        {% for warning in gantt_preview.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
+        {% if gantt_preview.rows %}
+        <div class="table-panel">
+          <table class="gantt-preview-table">
+            <thead><tr><th>Phase</th><th>Task</th><th>Owner</th><th>Progress</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for row in gantt_preview.rows %}
+              <tr><td>{{ row.time_window }}</td><td>{{ row.milestone }}</td><td>{{ members|get_item:row.owner_member_id }}</td><td>{{ row.progress_percent }}%</td><td>{{ row.start_date }}</td><td>{{ row.due_date }}</td><td>{{ row.status }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+        <div class="form-actions">
+          {% if not gantt_preview.errors %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="gantt_confirm"><input type="hidden" name="preview_token" value="{{ gantt_preview.token }}"><button class="button primary" type="submit">Confirm and save to Google Sheets</button></form>
+          {% endif %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="gantt_cancel"><button class="button secondary" type="submit">Cancel preview</button></form>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
+</section>
 
 <section id="projects" class="panel settings-section"><div class="panel-heading"><div><span>Portfolio</span><h2>Projects</h2></div></div><div class="table-panel"><table><thead><tr><th>Project</th><th>Aim</th><th>Owner</th><th>Start</th><th>Target</th></tr></thead><tbody>{% for row in projects %}<tr><td><strong>{{ row.project }}</strong><small>{{ row.project_id }}</small></td><td>{{ row.aim }}</td><td>{{ members|get_item:row.owner_member_id }}</td><td>{{ row.start_date }}</td><td>{{ row.target_date }}</td></tr>{% empty %}<tr><td colspan="5" class="empty">No projects in this scope.</td></tr>{% endfor %}</tbody></table></div></section>
 
-<section id="milestones" class="panel settings-section"><div class="panel-heading"><div><span>Delivery</span><h2>Milestones</h2></div></div><div class="table-panel"><table><thead><tr><th>Milestone</th><th>Owner</th><th>Status</th><th>Review</th><th>Next action</th><th>Due</th></tr></thead><tbody>{% for row in milestones %}<tr><td><strong>{{ row.milestone }}</strong><small>{{ row.project }} · {{ row.milestone_id }}</small></td><td>{{ members|get_item:row.owner_member_id }}</td><td><span class="status">{{ row.status }}</span></td><td>{{ row.review_status }}</td><td>{{ row.next_action }}{% if can_edit %}<details><summary>Update</summary><form method="post" class="mini-form">{% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="table_name" value="Milestones"><input type="hidden" name="record_id" value="{{ row.milestone_id }}"><select name="status"><option>{{ row.status }}</option><option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option></select><input name="next_action" value="{{ row.next_action }}"><input name="update_note" placeholder="Update note"><button class="button secondary" type="submit">Save</button></form></details>{% endif %}</td><td>{{ row.due_date }}</td></tr>{% empty %}<tr><td colspan="6" class="empty">No milestones.</td></tr>{% endfor %}</tbody></table></div></section>
+<section id="milestones" class="panel settings-section"><div class="panel-heading"><div><span>Delivery</span><h2>Milestones</h2></div></div><div class="table-panel"><table><thead><tr><th>Milestone</th><th>Owner</th><th>Status</th><th>Progress</th><th>Review</th><th>Next action</th><th>Due</th></tr></thead><tbody>{% for row in milestones %}<tr><td><strong>{{ row.milestone }}</strong><small>{{ row.project }} · {{ row.milestone_id }}</small></td><td>{{ members|get_item:row.owner_member_id }}</td><td><span class="status">{{ row.status }}</span></td><td>{{ row.progress_percent|default:"0" }}%</td><td>{{ row.review_status }}</td><td>{{ row.next_action }}{% if can_edit %}<details><summary>Update</summary><form method="post" class="mini-form">{% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="table_name" value="Milestones"><input type="hidden" name="record_id" value="{{ row.milestone_id }}"><select name="status"><option>{{ row.status }}</option><option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option></select><input type="number" name="progress_percent" min="0" max="100" step="1" value="{{ row.progress_percent|default:"0" }}" aria-label="Progress percent"><input name="next_action" value="{{ row.next_action }}"><input name="update_note" placeholder="Update note"><button class="button secondary" type="submit">Save</button></form></details>{% endif %}</td><td>{{ row.due_date }}</td></tr>{% empty %}<tr><td colspan="7" class="empty">No milestones.</td></tr>{% endfor %}</tbody></table></div></section>
 
 <section id="experiments" class="panel settings-section"><div class="panel-heading"><div><span>Execution</span><h2>Experiments</h2></div></div><div class="table-panel"><table><thead><tr><th>Experiment</th><th>Researcher</th><th>Status</th><th>Review</th><th>Next action</th><th>Due</th></tr></thead><tbody>{% for row in experiments %}<tr><td><strong>{{ row.experiment_title }}</strong><small>{{ row.experiment_id }}</small></td><td>{{ members|get_item:row.member_id }}</td><td>{{ row.status }}</td><td>{{ row.review_status }}</td><td>{{ row.next_action }}{% if can_edit %}<details><summary>Update</summary><form method="post" class="mini-form">{% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="table_name" value="Experiments"><input type="hidden" name="record_id" value="{{ row.experiment_id }}"><select name="status"><option>{{ row.status }}</option><option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option></select><input name="next_action" value="{{ row.next_action }}"><input name="update_note" placeholder="Update note"><button class="button secondary" type="submit">Save</button></form></details>{% endif %}</td><td>{{ row.due_date }}</td></tr>{% empty %}<tr><td colspan="6" class="empty">No experiments.</td></tr>{% endfor %}</tbody></table></div></section>
 

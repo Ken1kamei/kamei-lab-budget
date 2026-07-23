@@ -12,6 +12,7 @@ from django.utils import timezone
 from .forms import (
     AppRoleForm,
     ExperimentForm,
+    GanttImportForm,
     KnowledgeUploadForm,
     MemberForm,
     MilestoneForm,
@@ -29,10 +30,17 @@ from .permissions import (
     registry_access,
     truthy,
 )
+from .services.gantt import (
+    build_gantt_context,
+    parse_gantt_workbook,
+    resolve_gantt_rows,
+)
 from .services.sheets import (
     append_history,
     append_registry_audit,
     next_identifier,
+    replace_project_gantt,
+    replace_table,
     snapshot_rows,
     upsert_record,
 )
@@ -268,14 +276,111 @@ def tracker(request):
     project_form = ProjectForm(prefix="project", members=members)
     milestone_form = MilestoneForm(prefix="milestone", projects=projects, members=members)
     experiment_form = ExperimentForm(prefix="experiment", milestones=milestones, members=members)
+    gantt_import_form = GanttImportForm(
+        prefix="gantt",
+        projects=projects,
+        members=members,
+    )
     review_form = ReviewForm(prefix="review")
+    gantt_preview = request.session.get("gantt_import_preview")
 
     if request.method == "POST":
         if not can_edit:
             return HttpResponse("Your Project Tracker role is read-only.", status=403)
         action = request.POST.get("action", "")
         try:
-            if action == "project":
+            if action == "gantt_preview":
+                gantt_import_form = GanttImportForm(
+                    request.POST,
+                    request.FILES,
+                    prefix="gantt",
+                    projects=projects,
+                    members=members,
+                )
+                if gantt_import_form.is_valid():
+                    cleaned = gantt_import_form.cleaned_data
+                    project = next(
+                        (
+                            row
+                            for row in projects
+                            if row["project_id"] == cleaned["project_id"]
+                        ),
+                        None,
+                    )
+                    if project is None:
+                        return HttpResponse(
+                            "This project is outside your permitted team scope.",
+                            status=403,
+                        )
+                    parsed = parse_gantt_workbook(cleaned["gantt_file"])
+                    resolved_rows, resolution_warnings = resolve_gantt_rows(
+                        parsed.rows,
+                        project=project,
+                        members=members,
+                        default_owner_member_id=cleaned["default_owner_member_id"],
+                        updated_at=timezone.now().isoformat(timespec="seconds"),
+                    )
+                    gantt_preview = {
+                        "token": secrets.token_urlsafe(18),
+                        "actor": actor,
+                        "project_id": project["project_id"],
+                        "project": project.get("project", ""),
+                        "sheet_name": parsed.sheet_name,
+                        "header_row": parsed.header_row,
+                        "rows": resolved_rows,
+                        "warnings": [*parsed.warnings, *resolution_warnings],
+                        "errors": parsed.errors,
+                    }
+                    if parsed.errors:
+                        request.session.pop("gantt_import_preview", None)
+                    else:
+                        request.session["gantt_import_preview"] = gantt_preview
+                    request.session.modified = True
+            elif action == "gantt_confirm":
+                stored = request.session.get("gantt_import_preview") or {}
+                if not secrets.compare_digest(
+                    str(request.POST.get("preview_token", "")),
+                    str(stored.get("token", "")),
+                ) or not secrets.compare_digest(
+                    actor,
+                    str(stored.get("actor", "")),
+                ):
+                    raise ValueError("The Gantt preview expired. Upload the workbook again.")
+                project = next(
+                    (
+                        row
+                        for row in projects
+                        if row["project_id"] == stored.get("project_id")
+                    ),
+                    None,
+                )
+                if project is None:
+                    return HttpResponse(
+                        "This project is outside your permitted team scope.",
+                        status=403,
+                    )
+                imported_rows = stored.get("rows") or []
+                if not imported_rows:
+                    raise ValueError("The Gantt preview does not contain any task rows.")
+                replace_project_gantt(
+                    project["project_id"],
+                    imported_rows,
+                    actor=actor,
+                )
+                request.session.pop("gantt_import_preview", None)
+                request.session.modified = True
+                messages.success(
+                    request,
+                    f"{len(imported_rows)} Gantt tasks were saved and verified in Google Sheets.",
+                )
+                return redirect(
+                    f"{reverse('labapps:tracker')}?gantt_project={project['project_id']}#gantt"
+                )
+            elif action == "gantt_cancel":
+                request.session.pop("gantt_import_preview", None)
+                request.session.modified = True
+                return redirect(f"{reverse('labapps:tracker')}#gantt")
+            elif action == "project":
                 project_form = ProjectForm(request.POST, prefix="project", members=members)
                 if project_form.is_valid():
                     cleaned = project_form.cleaned_data
@@ -306,6 +411,7 @@ def tracker(request):
                         "review_status": "Pending", "next_action": cleaned["next_action"],
                         "due_date": cleaned["due_date"].isoformat(),
                         "blocker_reason": cleaned["blocker_reason"], "help_needed_from": cleaned["help_needed_from"],
+                        "progress_percent": str(cleaned["progress_percent"] or 0),
                         "updated_at": timezone.now().isoformat(timespec="seconds"),
                     }
                     upsert_record("Milestones", payload, actor=actor, action="create_milestone")
@@ -353,6 +459,19 @@ def tracker(request):
                     "review_status": "Pending",
                     "updated_at": timezone.now().isoformat(timespec="seconds"),
                 }
+                if table_name == "Milestones":
+                    try:
+                        progress = float(
+                            request.POST.get(
+                                "progress_percent",
+                                current.get("progress_percent") or 0,
+                            )
+                        )
+                    except ValueError as error:
+                        raise ValueError("Progress must be a number from 0 to 100.") from error
+                    if not 0 <= progress <= 100:
+                        raise ValueError("Progress must be a number from 0 to 100.")
+                    updated["progress_percent"] = str(progress)
                 upsert_record(table_name, updated, actor=actor, action="update_progress")
                 append_history(
                     record_type=table_name[:-1], record_id=record_id, actor=actor,
@@ -393,6 +512,25 @@ def tracker(request):
         for row in experiments if row.get("review_status") == "Pending"
     ]
     blocked = sum(row.get("status") == "Blocked" for row in [*milestones, *experiments])
+    requested_gantt_project_id = (
+        request.POST.get("gantt-project_id", "")
+        if request.method == "POST" and request.POST.get("action") == "gantt_preview"
+        else request.GET.get("gantt_project", "")
+    )
+    selected_gantt_project = next(
+        (
+            project
+            for project in projects
+            if project.get("project_id") == requested_gantt_project_id
+        ),
+        projects[0] if projects else None,
+    )
+    member_lookup = _member_lookup()
+    member_display = {
+        member_id: _display_member(member_id, member_lookup)
+        for member_id in member_lookup
+    }
+    gantt = build_gantt_context(selected_gantt_project, milestones, member_display)
     return render(
         request,
         "labapps/tracker.html",
@@ -400,10 +538,14 @@ def tracker(request):
             "projects": projects, "milestones": milestones, "experiments": experiments,
             "pending": pending, "teams": teams, "selected_team": selected_team,
             "scope_locked": scope_locked,
-            "members": _member_lookup(), "can_edit": can_edit,
+            "members": member_lookup, "can_edit": can_edit,
             "counts": {"projects": len(projects), "milestones": len(milestones), "experiments": len(experiments), "pending": len(pending), "blocked": blocked},
             "project_form": project_form, "milestone_form": milestone_form,
             "experiment_form": experiment_form, "review_form": review_form,
+            "gantt_import_form": gantt_import_form,
+            "gantt_preview": gantt_preview,
+            "gantt": gantt,
+            "selected_gantt_project": selected_gantt_project,
         },
     )
 

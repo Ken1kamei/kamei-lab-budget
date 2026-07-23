@@ -49,7 +49,8 @@ TRACKER_HEADERS = {
     "Milestones": [
         "milestone_id", "project_id", "project", "aim", "milestone", "time_window",
         "owner_member_id", "start_date", "status", "review_status", "next_action",
-        "due_date", "blocker_reason", "help_needed_from", "updated_at",
+        "due_date", "blocker_reason", "help_needed_from", "progress_percent",
+        "updated_at",
     ],
     "Experiments": [
         "experiment_id", "milestone_id", "project_id", "member_id", "experiment_title",
@@ -186,6 +187,45 @@ def replace_table(table_name, rows, *, actor, action, target, before=None):
         action=action,
         target=target,
         before=before if before is not None else {"rows": live_before},
+        after={"rows": rows},
+    )
+    return rows
+
+
+def replace_project_gantt(project_id, imported_rows, *, actor):
+    _assert_write_allowed(actor)
+    table_name = "Milestones"
+    source = _source_for(table_name)
+    headers = _headers(table_name)
+    imported_rows = _normalize_rows(table_name, imported_rows)
+    with _sheet_write_lock():
+        gateway, worksheet, live_before = _live_table(table_name)
+        live_before = _normalize_rows(table_name, live_before)
+        preserved = [
+            row
+            for row in live_before
+            if not (
+                row.get("project_id") == project_id
+                and row.get("milestone_id", "").startswith("MS-GANTT-")
+            )
+        ]
+        rows = [*preserved, *imported_rows]
+        values = [headers, *[[row.get(header, "") for header in headers] for row in rows]]
+        worksheet.update(values=values, range_name="A1", value_input_option="RAW")
+        old_last_row = len(live_before) + 1
+        if old_last_row > len(values):
+            end_column = gateway._column_label(len(headers))
+            worksheet.batch_clear([f"A{len(values) + 1}:{end_column}{old_last_row}"])
+        readback = _normalize_rows(table_name, worksheet.get_all_records())
+        if readback != rows:
+            raise SheetsSourceError("Milestones Gantt import verification failed.")
+        sync_table(table_name, gateway)
+    LabAppAudit.objects.create(
+        actor=actor,
+        app_id=source,
+        action="import_project_gantt",
+        target=f"Projects:{project_id}:gantt",
+        before={"rows": live_before},
         after={"rows": rows},
     )
     return rows

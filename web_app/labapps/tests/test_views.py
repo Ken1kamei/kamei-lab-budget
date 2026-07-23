@@ -1,9 +1,11 @@
 from unittest.mock import patch
+from io import BytesIO
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
+from openpyxl import Workbook
 
 from labapps.models import KnowledgeRecord, SheetRecord
 
@@ -31,6 +33,58 @@ def client_for(email):
     client = Client()
     client.force_login(user)
     return client
+
+
+def gantt_upload():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Gantt Import"
+    sheet.append(
+        [
+            "Phase",
+            "Task",
+            "Assigned to",
+            "Start Date",
+            "End Date",
+            "Progress %",
+            "Status",
+            "Next Action",
+        ]
+    )
+    sheet.append(
+        [
+            "Planning",
+            "Define scope",
+            "kk4801@nyu.edu",
+            "2026-09-01",
+            "2026-09-05",
+            50,
+            "In progress",
+            "Review scope",
+        ]
+    )
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return SimpleUploadedFile(
+        "project-gantt.xlsx",
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def invalid_gantt_upload():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Gantt Import"
+    sheet.append(["Task", "Start Date", "End Date"])
+    sheet.append(["Impossible task", "2026-09-10", "2026-09-01"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return SimpleUploadedFile(
+        "invalid-gantt.xlsx",
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 def seed_pi():
@@ -63,6 +117,8 @@ def test_portal_tracker_and_knowledge_pages_render():
     assert b'href="/tracker/#projects"' in tracker.content
     assert b">Transactions<" not in tracker.content
     assert b">Notebooks / protocols<" not in tracker.content
+    assert b"Gantt chart" in tracker.content
+    assert b"Kamei_Lab_Gantt_Import_Template.xlsx" in tracker.content
     assert b"Prepare buffer" in knowledge.content
     assert b"Notebook registry" not in knowledge.content
     assert b"Find notebooks and protocols" in knowledge.content
@@ -70,6 +126,174 @@ def test_portal_tracker_and_knowledge_pages_render():
     assert b'href="/knowledge/#search"' in knowledge.content
     assert b'href="/knowledge/upload/"' in knowledge.content
     assert b">Transactions<" not in knowledge.content
+
+
+@patch("labapps.views.replace_project_gantt")
+def test_gantt_upload_previews_then_replaces_only_imported_project_rows(mock_replace):
+    seed_pi()
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Chip study",
+            "aim": "Model disease",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Milestones",
+        "MS001",
+        {
+            "milestone_id": "MS001",
+            "project_id": "P001",
+            "milestone": "Manual milestone",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Milestones",
+        "MS-GANTT-OLD",
+        {
+            "milestone_id": "MS-GANTT-OLD",
+            "project_id": "P001",
+            "milestone": "Previous import",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Milestones",
+        "MS-GANTT-OTHER",
+        {
+            "milestone_id": "MS-GANTT-OTHER",
+            "project_id": "P002",
+            "milestone": "Another project",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    client = signed_in_client()
+
+    preview = client.post(
+        "/tracker/",
+        {
+            "action": "gantt_preview",
+            "gantt-project_id": "P001",
+            "gantt-default_owner_member_id": "M001",
+            "gantt-gantt_file": gantt_upload(),
+        },
+    )
+
+    assert preview.status_code == 200
+    assert b"Import preview" in preview.content
+    assert b"Define scope" in preview.content
+    stored = client.session["gantt_import_preview"]
+    assert stored["project_id"] == "P001"
+    assert stored["actor"] == "kk4801@nyu.edu"
+    assert len(stored["rows"]) == 1
+
+    confirm = client.post(
+        "/tracker/",
+        {
+            "action": "gantt_confirm",
+            "preview_token": stored["token"],
+        },
+    )
+
+    assert confirm.status_code == 302
+    assert "gantt_project=P001" in confirm["Location"]
+    assert mock_replace.call_args.args[0] == "P001"
+    saved_rows = mock_replace.call_args.args[1]
+    assert any(
+        row["milestone"] == "Define scope"
+        and row["milestone_id"].startswith("MS-GANTT-")
+        for row in saved_rows
+    )
+
+
+@patch("labapps.views.replace_project_gantt")
+def test_invalid_gantt_preview_cannot_be_confirmed(mock_replace):
+    seed_pi()
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Chip study",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    client = signed_in_client()
+
+    preview = client.post(
+        "/tracker/",
+        {
+            "action": "gantt_preview",
+            "gantt-project_id": "P001",
+            "gantt-default_owner_member_id": "M001",
+            "gantt-gantt_file": invalid_gantt_upload(),
+        },
+    )
+
+    assert preview.status_code == 200
+    assert b"ends before its start date" in preview.content
+    assert "gantt_import_preview" not in client.session
+    assert b"Confirm and save to Google Sheets" not in preview.content
+    mock_replace.assert_not_called()
+
+
+@patch("labapps.views.replace_project_gantt")
+def test_read_only_project_tracker_role_cannot_upload_gantt(mock_replace):
+    add_record(
+        "Members",
+        "M004",
+        {
+            "member_id": "M004",
+            "email": "viewer@nyu.edu",
+            "display_name": "Viewer",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "App_Roles",
+        "AR-viewer",
+        {
+            "member_id": "M004",
+            "app_id": "project_tracker",
+            "app_role": "viewer",
+            "scope_team_id": "",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Chip study",
+            "owner_member_id": "M004",
+        },
+        source="tracker",
+    )
+    client = client_for("viewer@nyu.edu")
+
+    response = client.post(
+        "/tracker/",
+        {
+            "action": "gantt_preview",
+            "gantt-project_id": "P001",
+            "gantt-default_owner_member_id": "M004",
+            "gantt-gantt_file": gantt_upload(),
+        },
+    )
+
+    assert response.status_code == 403
+    assert "gantt_import_preview" not in client.session
+    mock_replace.assert_not_called()
 
 
 def test_knowledge_keyword_search_matches_notebooks_and_protocol_content():
