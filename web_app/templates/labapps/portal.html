@@ -1,31 +1,41 @@
 {% extends "budget/base.html" %}
 {% block title %}Kamei Lab Portal{% endblock %}
 {% block content %}
-<header class="page-head">
+<div class="portal-console">
+<header class="page-head portal-head">
   <div>
-    <span class="eyebrow">Private lab portal</span>
+    <span class="eyebrow">Lab operations</span>
     <h1>Kamei Lab Apps</h1>
-    <p>One sign-in for the lab's operational tools. Hello, {{ member.display_name|default:"Lab member" }}.</p>
+    <p>Private tools for budget, research delivery, and lab knowledge. Welcome, {{ member.display_name|default:"Lab member" }}.</p>
+  </div>
+  <div class="console-status" aria-label="Workspace status">
+    <span><i></i>Private workspace</span>
+    <strong>{{ cards|length }} app{{ cards|length|pluralize }} available</strong>
   </div>
 </header>
 
-<section class="metric-grid app-metric-grid" aria-label="Lab registry summary">
+<section class="metric-grid app-metric-grid portal-summary" aria-label="Lab registry summary">
   <article class="metric cyan"><span>Active members</span><strong>{{ counts.members }}</strong><small>Shared allowlist</small></article>
   <article class="metric magenta"><span>Teams</span><strong>{{ counts.teams }}</strong><small>Cross-team membership supported</small></article>
   <article class="metric amber"><span>Projects</span><strong>{{ counts.projects }}</strong><small>Tracked research projects</small></article>
   <article class="metric cyan"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>Private knowledge records</small></article>
 </section>
 
-<section class="app-card-grid">
+<div class="section-heading">
+  <div><span class="eyebrow">Workspace</span><h2>Open an app</h2></div>
+  <span>Access is based on your lab role</span>
+</div>
+<section class="app-card-grid" aria-label="Available lab apps">
   {% for card in cards %}
-  <a class="app-card" href="{{ card.url }}">
-    <span class="status ready">{{ card.role }}</span>
-    <h2>{{ card.name }}</h2>
+  <a class="app-card app-card-{{ card.app_id }}" href="{{ card.url }}">
+    <div class="app-card-top"><span class="app-code">0{{ forloop.counter }}</span><span class="status ready">{{ card.role }}</span></div>
+    <h3>{{ card.name }}</h3>
     <p>{{ card.description }}</p>
-    <strong>Open app</strong>
+    <strong>Open app <span aria-hidden="true">→</span></strong>
   </a>
   {% empty %}
   <div class="panel empty">No app roles are assigned to your account.</div>
   {% endfor %}
 </section>
+</div>
 {% endblock %}

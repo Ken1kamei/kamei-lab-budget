@@ -1,6 +1,6 @@
 {% extends 'budget/base.html' %}
 {% load humanize %}
-{% block content %}
+{% block content %}<div class="dashboard-console">
 <header class="page-head">
   <div><div class="eyebrow">FISCAL YEAR OVERVIEW</div><h1>Kamei Lab Budget</h1><p>Google Sheet-backed budget operations with a verified web mirror.</p></div>
   {% include 'budget/_year_picker.html' %}
@@ -25,10 +25,11 @@
       <line x1="0" y1="220" x2="1000" y2="220" class="chart-axis" />
       <polygon points="{{ monthly_area_points }}" class="chart-area" />
       <polyline points="{{ monthly_points }}" class="chart-line" />
-    </svg>
-    <div class="chart-labels">{% for row in monthly_rows %}<span title="{{ row.month }}: ${{ row.amount|floatformat:2|intcomma }}">{{ row.month|slice:'5:' }}</span>{% endfor %}</div>
-  </div>
-</section>
+      </svg>
+      <div class="chart-labels">{% for row in monthly_rows %}<span title="{{ row.month }}: ${{ row.amount|floatformat:2|intcomma }}">{{ row.month|slice:'5:' }}</span>{% endfor %}</div>
+      <ul class="sr-only" aria-label="Monthly allocated spending values">{% for row in monthly_rows %}<li>{{ row.month }}: ${{ row.amount|floatformat:2|intcomma }}</li>{% endfor %}</ul>
+    </div>
+  </section>
 
 <section class="two-column">
   <article class="panel">
@@ -59,5 +60,6 @@
     {% else %}<p class="empty">No comparison has run yet.</p>{% endif %}
   </article>
 </section>
-{% endif %}
+  {% endif %}
+</div>
 {% endblock %}

@@ -5,14 +5,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Kamei Lab Apps{% endblock %}</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23121a2b'/%3E%3Cpath d='M16 14v36h9V35l14 15h12L34 31l16-17H38L25 28V14z' fill='%232ee6cf'/%3E%3C/svg%3E" type="image/svg+xml">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23101827'/%3E%3Cpath d='M16 14v36h9V35l14 15h12L34 31l16-17H38L25 28V14z' fill='%2335d4c2'/%3E%3C/svg%3E" type="image/svg+xml">
   <link rel="stylesheet" href="{% static 'budget/app.css' %}">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
   <div class="shell shell-{{ lab_nav_section }}">
     {% if request.user.is_authenticated and lab_nav_section == 'portal' %}
     <header class="portal-topbar">
-      <a class="brand" href="{% url 'labapps:portal' %}">Kamei Lab</a>
+      <div class="portal-brand">
+        <a class="brand" href="{% url 'labapps:portal' %}">Kamei Lab</a>
+        <span>Lab operations console</span>
+      </div>
       <div class="portal-session"><span>{{ request.user.email }}</span><a href="{% url 'budget:logout' %}">Sign out</a></div>
     </header>
     {% elif request.user.is_authenticated %}
@@ -31,7 +35,7 @@
       </div>
     </aside>
     {% endif %}
-    <main class="content {% if not request.user.is_authenticated %}content-auth{% elif lab_nav_section == 'portal' %}content-portal{% endif %}">
+    <main id="main-content" class="content {% if not request.user.is_authenticated %}content-auth{% elif lab_nav_section == 'portal' %}content-portal{% endif %}">
       {% if messages %}
       <div class="message-stack" aria-live="polite">
         {% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}

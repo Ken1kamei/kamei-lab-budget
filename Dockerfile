@@ -13,6 +13,6 @@ COPY web_app/ /app/
 RUN chmod +x /app/start.sh && \
     DEBUG=false BUILD_STATIC=true SECRET_KEY=build-only-static-secret \
     DATABASE_URL=sqlite:////tmp/kamei-budget-build.sqlite3 \
-    python manage.py collectstatic --noinput
+    python manage.py collectstatic --clear --noinput
 
 CMD ["/app/start.sh"]
