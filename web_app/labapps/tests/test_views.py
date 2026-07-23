@@ -135,6 +135,35 @@ def test_portal_tracker_and_knowledge_pages_render():
     assert b">Transactions<" not in knowledge.content
 
 
+def test_portal_uses_integrated_routes_even_with_legacy_registry_urls():
+    seed_pi()
+    legacy_urls = {
+        "budget": "https://legacy-budget.example.streamlit.app/",
+        "project_tracker": "https://legacy-tracker.example.streamlit.app/",
+        "notebooks_protocols": "https://legacy-knowledge.example.streamlit.app/",
+    }
+    for index, (app_id, app_url) in enumerate(legacy_urls.items(), start=1):
+        add_record(
+            "Apps",
+            f"APP-{index}",
+            {
+                "app_id": app_id,
+                "app_name": app_id,
+                "app_url": app_url,
+                "description": f"{app_id} description",
+                "active": "TRUE",
+            },
+        )
+
+    response = signed_in_client().get("/portal/")
+
+    assert response.status_code == 200
+    assert b"streamlit.app" not in response.content
+    assert b'href="/"' in response.content
+    assert b'href="/tracker/"' in response.content
+    assert b'href="/knowledge/"' in response.content
+
+
 def test_protocol_template_is_valid_and_linked_from_upload_page():
     seed_pi()
     template = (

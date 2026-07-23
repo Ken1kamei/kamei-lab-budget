@@ -1,25 +1,11 @@
 import hashlib
-import importlib.util
-from pathlib import Path
 
 from budget.models import InvoiceDraft, Transaction
+from budget.services.invoice_parser import parse_erb_excel_bytes, parse_pdf_bytes
 from budget.services.storage import save_invoice
 
 
 MAX_PDF_BYTES = 20 * 1024 * 1024
-
-
-def _load_parser():
-    parser_path = Path(__file__).resolve().parents[3] / "streamlit_app" / "utils" / "parse_invoice.py"
-    spec = importlib.util.spec_from_file_location("legacy_invoice_parser", parser_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("The existing invoice parser could not be loaded.")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.parse_pdf_bytes, module.parse_erb_excel_bytes
-
-
-parse_pdf_bytes, parse_erb_excel_bytes = _load_parser()
 
 
 def _history_key(value):

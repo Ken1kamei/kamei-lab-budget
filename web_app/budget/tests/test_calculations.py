@@ -12,7 +12,7 @@ def test_fiscal_year_starts_on_september_first():
     assert fiscal_year_for_date("2026-09-01") == "FY2026-27"
 
 
-def test_snapshot_totals_match_streamlit_status_and_currency_semantics():
+def test_snapshot_totals_follow_allocated_status_and_currency_semantics():
     snapshot = {
         "exchange_rates": {"USD": "1", "AED": str(1 / 3.6725), "EUR": "1.08"},
         "summary": [

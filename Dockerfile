@@ -10,7 +10,6 @@ COPY web_app/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY web_app/ /app/
-COPY streamlit_app/utils/parse_invoice.py /streamlit_app/utils/parse_invoice.py
 RUN chmod +x /app/start.sh && \
     DEBUG=false BUILD_STATIC=true SECRET_KEY=build-only-static-secret \
     DATABASE_URL=sqlite:////tmp/kamei-budget-build.sqlite3 \

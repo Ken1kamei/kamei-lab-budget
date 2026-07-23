@@ -2,7 +2,10 @@
 
 ## Accessing the System
 
-Navigate to the Streamlit app URL shared by the PI. You must sign in with your verified `nyu.edu` Google account.
+Navigate to the integrated Cloud Run web URL shared by the PI. You must sign in
+with your verified `nyu.edu` Google account. The Portal opens Budget Manager,
+Project Tracker, and Notebooks/Protocols inside the same web application; it
+does not redirect to a legacy app.
 
 Access is based on the `Teams` sheet. If you see "Email not registered", ask the PI to add your email as a team lead or member.
 

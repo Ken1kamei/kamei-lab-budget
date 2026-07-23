@@ -153,7 +153,6 @@ def test_gateway_reads_dedicated_year_and_filters_blank_transaction_ids(settings
         }
     )
     gateway = SheetsGateway(client=Client({"master": master, "fy-2026": annual}))
-    monkeypatch.setattr("budget.services.sheets._legacy_secrets", lambda: {})
 
     snapshot = gateway.read_fiscal_year("FY2026-27")
 
@@ -189,7 +188,6 @@ def test_invoice_write_is_verified_and_idempotent_by_pdf_hash(settings, monkeypa
         }
     )
     gateway = SheetsGateway(client=Client({"master": master, "fy-2026": annual}))
-    monkeypatch.setattr("budget.services.sheets._legacy_secrets", lambda: {})
     payload = {
         "date": "2026-03-26",
         "category": "Consumables",
@@ -420,7 +418,6 @@ def test_invoice_hash_cannot_move_a_transaction_to_another_team(settings, monkey
         }
     )
     gateway = SheetsGateway(client=Client({"master": master, "fy-2026": annual}))
-    monkeypatch.setattr("budget.services.sheets._legacy_secrets", lambda: {})
 
     with pytest.raises(SheetsSourceError, match="another team"):
         gateway.write_invoice_transaction(
@@ -484,7 +481,6 @@ def test_reimport_does_not_restore_a_cancelled_transaction(settings, monkeypatch
         }
     )
     gateway = SheetsGateway(client=Client({"master": master, "fy-2026": annual}))
-    monkeypatch.setattr("budget.services.sheets._legacy_secrets", lambda: {})
 
     with pytest.raises(SheetsSourceError, match="Cancelled"):
         gateway.write_invoice_transaction(
@@ -528,7 +524,6 @@ def test_invoice_update_preserves_previous_pdf_hash(settings, monkeypatch):
         }
     )
     gateway = SheetsGateway(client=Client({"master": master, "fy-2026": annual}))
-    monkeypatch.setattr("budget.services.sheets._legacy_secrets", lambda: {})
     base = {
         "date": "2026-03-26",
         "category": "Consumables",
@@ -583,7 +578,6 @@ def test_same_pdf_is_rejected_in_another_fiscal_year(settings, monkeypatch):
         }
     )
     gateway = SheetsGateway(client=Client({"master": master, "fy-2026": annual}))
-    monkeypatch.setattr("budget.services.sheets._legacy_secrets", lambda: {})
 
     with pytest.raises(SheetsSourceError, match="FY2025-26"):
         gateway.write_invoice_transaction(
@@ -654,7 +648,6 @@ def _mutation_gateway(
     books = {"master": master, "fy-2026": annual}
     if registry:
         books["registry"] = registry
-    monkeypatch.setattr("budget.services.sheets._legacy_secrets", lambda: {})
     return SheetsGateway(client=Client(books)), master, annual
 
 

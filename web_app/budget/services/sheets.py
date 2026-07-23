@@ -4,11 +4,9 @@ import json
 import os
 import re
 import secrets
-import tomllib
 from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import gspread
@@ -182,16 +180,6 @@ def _truthy(value) -> bool:
     return str(value or "").strip().upper() in {"TRUE", "YES", "Y", "1"}
 
 
-def _legacy_secrets() -> dict:
-    if not settings.DEBUG:
-        return {}
-    path = Path(settings.BASE_DIR).parent / "streamlit_app" / ".streamlit" / "secrets.toml"
-    if not path.exists():
-        return {}
-    with path.open("rb") as handle:
-        return tomllib.load(handle)
-
-
 def _service_account_info() -> dict:
     raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
     if raw:
@@ -199,21 +187,15 @@ def _service_account_info() -> dict:
             return json.loads(raw)
         except json.JSONDecodeError as error:
             raise SheetsSourceError("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON.") from error
-    return dict(_legacy_secrets().get("gcp_service_account", {}))
+    return {}
 
 
 def _master_spreadsheet_id() -> str:
-    return (
-        settings.MASTER_SPREADSHEET_ID
-        or str(_legacy_secrets().get("SPREADSHEET_ID", ""))
-    ).strip()
+    return settings.MASTER_SPREADSHEET_ID.strip()
 
 
 def _registry_spreadsheet_id() -> str:
-    return (
-        settings.REGISTRY_SPREADSHEET_ID
-        or str(_legacy_secrets().get("REGISTRY_SPREADSHEET_ID", ""))
-    ).strip()
+    return settings.REGISTRY_SPREADSHEET_ID.strip()
 
 
 def _split_values(value) -> list[str]:

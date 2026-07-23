@@ -6,9 +6,9 @@ the structured-data source of truth, private GCS buckets hold uploaded files,
 and PostgreSQL provides the fast web mirror, audit trail, durable import queue,
 and idempotency.
 
-The existing Streamlit application remains available during the measured
-parallel-run period. Do not switch the production entry point until the two
-systems have matched for at least one week.
+All user-facing routes, invoice parsing, Google Sheet access, and deployment
+artifacts are owned by this Django application. The legacy application is not
+used as a launcher, fallback, parser dependency, or configuration source.
 
 ## Local verification
 
@@ -17,14 +17,14 @@ python -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python manage.py migrate
 .venv/bin/python manage.py sync_sheets
-.venv/bin/python manage.py verify_streamlit_parity
+.venv/bin/python manage.py verify_parity
 .venv/bin/python manage.py runserver
 ```
 
-Local development may reuse `../streamlit_app/.streamlit/secrets.toml`.
-Production never reads that file and uses Cloud Run Application Default
-Credentials. The gateway requests a read-only Sheets scope unless
-`ENABLE_SHEET_WRITES=true`.
+Local development uses the same environment variables as production, including
+`GOOGLE_SERVICE_ACCOUNT_JSON`, `MASTER_SPREADSHEET_ID`, and
+`REGISTRY_SPREADSHEET_ID`. Cloud Run may use Application Default Credentials.
+The gateway requests a read-only Sheets scope unless `ENABLE_SHEET_WRITES=true`.
 
 ## Supported workflows
 
@@ -59,7 +59,7 @@ Recommended Cloud Run job schedule after PostgreSQL is connected:
 
 - Every 5 minutes: `python manage.py sync_sheets`, then
   `python manage.py sync_lab_apps`
-- Daily after the sync: `python manage.py verify_streamlit_parity`
+- Daily after the sync: `python manage.py verify_parity`
 - Each release: `python manage.py migrate --noinput`, then one `sync_sheets` and
   one `sync_lab_apps`
 

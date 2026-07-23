@@ -14,7 +14,7 @@ Use a lightweight single-agent workflow for small visual or text-only changes.
 Use a multi-agent-style workflow for changes involving any of the following:
 
 - Google Sheets reads or writes
-- Streamlit Cloud deployment behavior
+- Cloud Run deployment behavior
 - user roles, allowlists, or authentication
 - invoice/PDF import
 - fiscal-year data routing

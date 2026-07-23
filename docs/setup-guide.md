@@ -6,9 +6,10 @@ One-time setup for the PI or lab manager. Estimated time: 30–45 minutes.
 
 - Google account with `nyu.edu` domain (NYUAD Google Workspace)
 - Node.js installed (for `clasp`)
-- Python 3.11+ for the Streamlit app
+- Python 3.12+ for the Django web app
 - A Google Cloud service account with Sheets/Drive API access
-- A Google OAuth client for Streamlit OIDC login
+- Cloud Run with IAP or a Google OAuth client for web login
+- Cloud SQL PostgreSQL and private Cloud Storage buckets
 
 ---
 
@@ -83,7 +84,8 @@ In the Apps Script editor:
 5. Who has access: `Anyone in NYUAD domain` (or `Anyone` if needed)
 6. Click **Deploy** and copy the **Web App URL**
 
-Save the URL for internal automation and optional PI maintenance. Lab members should normally use the Streamlit app URL.
+Save the URL for internal automation and optional PI maintenance. Lab members
+should use the integrated Cloud Run Portal URL.
 
 ---
 
@@ -97,28 +99,32 @@ To import an invoice email manually: open Gmail → find the email → apply the
 
 ---
 
-## Step 8 — Configure Streamlit Cloud
+## Step 8 — Configure the integrated Cloud Run web app
 
-1. Share the spreadsheet with the Google service account email as **Editor**.
-2. In Streamlit Cloud secrets, add the contents shown in `streamlit_app/.streamlit/secrets.toml.example`.
-3. Configure the Google OAuth client redirect URI and Streamlit Cloud `[auth].redirect_uri` as:
-   `https://YOUR-STREAMLIT-APP.streamlit.app/~/+/oauth2callback`
-4. Install dependencies from `streamlit_app/requirements.txt`.
-5. Run the Teams setup script once:
-   ```bash
-   cd streamlit_app
-   .venv/bin/python scripts/setup_teams_sheet.py
-   ```
-6. Add teams, leads, members, and allocations in **Settings → Teams**.
-7. Keep Streamlit Cloud password protection off. The app already uses NYU Google/OIDC login through `st.login()`, and Cloud password protection prevents automated keep-awake requests from reaching the app.
+1. Share the fiscal-year and registry spreadsheets with the Cloud Run service
+   account as **Editor**.
+2. Configure Cloud SQL PostgreSQL through `CLOUD_DATABASE_URL`.
+3. Configure private invoice and knowledge buckets through `INVOICE_BUCKET` and
+   `KNOWLEDGE_BUCKET`.
+4. Set `MASTER_SPREADSHEET_ID`, `REGISTRY_SPREADSHEET_ID`,
+   `ENABLE_SHEET_WRITES`, and the approved write accounts.
+5. Protect Cloud Run with IAP and configure `IAP_EXPECTED_AUDIENCE`, or configure
+   the Google OAuth client variables documented in `web_app/.env.example`.
+6. Deploy the root `Dockerfile`, which copies only `web_app/` into the runtime
+   image.
+7. Run `migrate`, `sync_sheets`, `sync_lab_apps`, and `verify_parity` as Cloud
+   Run jobs before directing users to `/portal/`.
+8. Add teams, leads, members, and allocations in **Settings** and **Lab
+   Registry**.
 
-The app uses `st.login()` / `st.user`; users cannot choose their email manually.
+All Portal cards use internal Django routes. Registry `app_url` values are
+retained only as historical metadata and cannot redirect users to legacy apps.
 
 ---
 
 ## Step 8A — Configure PI My Drive Fiscal-Year Creation
 
-The Streamlit service account can edit a shared ledger, but it has no personal
+The Cloud Run service account can edit a shared ledger, but it has no personal
 Drive quota and cannot create annual files itself. A small standalone Apps
 Script runs as the PI once per minute, creates new annual Google Sheets in the
 PI's **My Drive**, then shares each new workbook with the service account.

@@ -111,33 +111,26 @@ def _sync_iap_allowlist_member(payload):
 @registry_access
 def portal(request):
     member = current_registry_member(request)
-    base = request.build_absolute_uri("/").rstrip("/")
     configured = {row["app_id"]: row for row in _active(snapshot_rows("Apps"))}
     cards = [
         {
             "app_id": "budget",
             "name": "Budget Manager",
-            "url": configured.get("budget", {}).get("url")
-            or configured.get("budget", {}).get("app_url")
-            or f"{base}/",
+            "url": reverse("budget:dashboard"),
             "description": configured.get("budget", {}).get("description", "Lab budget and invoice management"),
             "role": (app_role(member, "budget") or {}).get("role", "No access"),
         },
         {
             "app_id": "project_tracker",
             "name": "Project Tracker",
-            "url": configured.get("project_tracker", {}).get("url")
-            or configured.get("project_tracker", {}).get("app_url")
-            or f"{base}/tracker/",
+            "url": reverse("labapps:tracker"),
             "description": configured.get("project_tracker", {}).get("description", "Milestones, experiments, and reviews"),
             "role": (app_role(member, "project_tracker") or {}).get("role", "No access"),
         },
         {
             "app_id": "notebooks_protocols",
             "name": "Notebooks / Protocols",
-            "url": configured.get("notebooks_protocols", {}).get("url")
-            or configured.get("notebooks_protocols", {}).get("app_url")
-            or f"{base}/knowledge/",
+            "url": reverse("labapps:knowledge"),
             "description": configured.get("notebooks_protocols", {}).get("description", "Private lab knowledge library"),
             "role": (app_role(member, "notebooks_protocols") or {}).get("role", "No access"),
         },

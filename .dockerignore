@@ -3,10 +3,7 @@
 node_modules
 backups
 outputs
-streamlit_app/*
-!streamlit_app/utils/
-streamlit_app/utils/*
-!streamlit_app/utils/parse_invoice.py
+streamlit_app
 web_app/.venv
 web_app/.pytest_cache
 web_app/db.sqlite3
