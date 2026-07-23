@@ -43,6 +43,7 @@ MAX_WORKBOOK_BYTES = 10 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 2_000
 MAX_WORKSHEETS = 20
+MAX_EMPTY_TASK_ROWS = 100
 
 
 @dataclass
@@ -126,15 +127,14 @@ def _find_header(workbook):
         key=lambda sheet: sheet.title != "Gantt Import",
     )
     for sheet in preferred:
-        for row_number in range(1, min(sheet.max_row, 40) + 1):
+        header_rows = sheet.iter_rows(
+            min_row=1,
+            max_row=40,
+            max_col=min(sheet.max_column or 64, 256),
+            values_only=True,
+        )
+        for row_number, header_values in enumerate(header_rows, start=1):
             mapping = {}
-            header_values = next(
-                sheet.iter_rows(
-                    min_row=row_number,
-                    max_row=row_number,
-                    values_only=True,
-                )
-            )
             for column_number, cell in enumerate(
                 header_values,
                 start=1,
@@ -208,18 +208,24 @@ def parse_gantt_workbook(file_or_bytes) -> GanttImportResult:
     errors = []
     current_phase = ""
     empty_run = 0
-    for row_number in range(header_row + 1, min(sheet.max_row, 1000) + 1):
+    data_rows = sheet.iter_rows(
+        min_row=header_row + 1,
+        max_row=1000,
+        max_col=max(columns.values()),
+        values_only=False,
+    )
+    for row_number, row_cells in enumerate(data_rows, start=header_row + 1):
         row_dimensions = getattr(sheet, "row_dimensions", None)
         if row_dimensions and row_dimensions[row_number].hidden:
             continue
         values = {
-            field: sheet.cell(row=row_number, column=column_number).value
+            field: row_cells[column_number - 1].value
             for field, column_number in columns.items()
         }
         task = str(values.get("task") or "").strip()
         if not task:
             empty_run += 1
-            if empty_run >= 20:
+            if empty_run >= MAX_EMPTY_TASK_ROWS:
                 break
             continue
         empty_run = 0

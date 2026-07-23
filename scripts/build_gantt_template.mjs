@@ -4,7 +4,11 @@ import path from "node:path";
 import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const outputDir = path.join(repoRoot, "outputs", "project-gantt-20260723");
+const outputDir = path.join(
+  repoRoot,
+  "outputs",
+  "project-gantt-dynamic-20260723",
+);
 const outputPath = path.join(
   outputDir,
   "Kamei_Lab_Gantt_Import_Template.xlsx",
@@ -31,6 +35,16 @@ const colors = {
   white: "#FFFFFF",
   grid: "#CFD7E6",
 };
+const formulaErrorPattern =
+  "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!|#SPILL!|#CALC!";
+
+function formulaErrorMatches(result) {
+  return result.ndjson
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((entry) => entry.kind !== "notice");
+}
 
 function columnLabel(columnNumber) {
   let value = columnNumber;
@@ -43,14 +57,17 @@ function columnLabel(columnNumber) {
   return label;
 }
 
-function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
-  const firstTimelineColumn = 9;
-  const timelineDays = 84;
-  const lastTimelineColumn = firstTimelineColumn + timelineDays - 1;
-  const lastTimelineLabel = columnLabel(lastTimelineColumn);
-  const firstDataRow = 6;
-  const lastDataRow = 35;
+const firstTimelineColumn = 9;
+const timelineDays = 371;
+const timelineWeeks = timelineDays / 7;
+const lastTimelineColumn = firstTimelineColumn + timelineDays - 1;
+const lastTimelineLabel = columnLabel(lastTimelineColumn);
+const normalizedStartLabel = columnLabel(lastTimelineColumn + 1);
+const normalizedEndLabel = columnLabel(lastTimelineColumn + 2);
+const firstDataRow = 8;
+const lastDataRow = 37;
 
+function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
   sheet.showGridLines = false;
   sheet.mergeCells("A1:H1");
   sheet.getRange("A1").values = [["Kamei Lab Project Gantt"]];
@@ -62,13 +79,22 @@ function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
   sheet.getRange("A1:H1").format.rowHeight = 38;
 
   sheet.getRange("A2:H3").values = [
-    ["Project name", "", "Project start", new Date("2026-09-01"), "", "", "Tasks", null],
     [
-      "Use one row per task. Enter lab roster name, NYU email, or member ID in Assigned to.",
+      "Project name",
+      "",
+      "Project start (auto)",
       null,
+      "Project end (auto)",
       null,
+      "Tasks",
       null,
+    ],
+    [
+      "Enter Start Date and End Date below. The calendar and Gantt bars update automatically.",
+      "",
+      "Calendar starts",
       null,
+      "Calendar ends",
       null,
       "Average progress",
       null,
@@ -81,9 +107,22 @@ function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
     verticalAlignment: "center",
   };
   sheet.getRange("A2").format.font = { bold: true, color: colors.ink };
-  sheet.getRange("C2").format.font = { bold: true, color: colors.ink };
+  sheet.getRange("C2:C3").format.font = { bold: true, color: colors.ink };
+  sheet.getRange("E2:E3").format.font = { bold: true, color: colors.ink };
   sheet.getRange("G2:G3").format.font = { bold: true, color: colors.ink };
-  sheet.getRange("D2").setNumberFormat("yyyy-mm-dd");
+  sheet.getRange("D2").formulas = [
+    [`=IF(COUNT(${normalizedStartLabel}${firstDataRow}:${normalizedStartLabel}${lastDataRow})=0,"",MIN(${normalizedStartLabel}${firstDataRow}:${normalizedStartLabel}${lastDataRow}))`],
+  ];
+  sheet.getRange("F2").formulas = [
+    [`=IF(COUNT(${normalizedEndLabel}${firstDataRow}:${normalizedEndLabel}${lastDataRow})=0,"",MAX(${normalizedEndLabel}${firstDataRow}:${normalizedEndLabel}${lastDataRow}))`],
+  ];
+  sheet.getRange("D3").formulas = [
+    ['=IF(D2="","",D2-WEEKDAY(D2,2)+1)'],
+  ];
+  sheet.getRange("F3").formulas = [
+    ['=IF(F2="","",F2)'],
+  ];
+  sheet.getRange("D2:F3").setNumberFormat("yyyy-mm-dd");
   sheet.getRange("H2").formulas = [[`=COUNTIF(B${firstDataRow}:B${lastDataRow},"<>")`]];
   sheet.getRange("H3").formulas = [[`=IFERROR(AVERAGE(F${firstDataRow}:F${lastDataRow}),0)`]];
   sheet.getRange("H3").setNumberFormat('0"%"');
@@ -98,8 +137,8 @@ function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
     "Status",
     "Next Action",
   ];
-  sheet.getRange("A5:H5").values = [headers];
-  sheet.getRange("A5:H5").format = {
+  sheet.getRange("A7:H7").values = [headers];
+  sheet.getRange("A7:H7").format = {
     fill: colors.navy,
     font: { bold: true, color: colors.white },
     horizontalAlignment: "center",
@@ -108,17 +147,66 @@ function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
     borders: { preset: "all", style: "thin", color: colors.grid },
   };
 
-  const timelineFormulas = Array.from({ length: timelineDays }, (_, index) =>
-    index === 0 ? "=$D$2" : `=${columnLabel(firstTimelineColumn + index - 1)}5+1`,
-  );
-  sheet.getRange(`I5:${lastTimelineLabel}5`).formulas = [timelineFormulas];
-  sheet.getRange(`I5:${lastTimelineLabel}5`).setNumberFormat("d");
+  for (let weekIndex = 0; weekIndex < timelineWeeks; weekIndex += 1) {
+    const firstWeekColumn = firstTimelineColumn + weekIndex * 7;
+    const lastWeekColumn = firstWeekColumn + 6;
+    const firstWeekLabel = columnLabel(firstWeekColumn);
+    const lastWeekLabel = columnLabel(lastWeekColumn);
+    sheet.mergeCells(`${firstWeekLabel}5:${lastWeekLabel}5`);
+    sheet.getRange(`${firstWeekLabel}5`).formulas = [
+      [`=IF(${firstWeekLabel}6="","",${firstWeekLabel}6)`],
+    ];
+  }
+  sheet.getRange(`I5:${lastTimelineLabel}5`).setNumberFormat("mmm d, yyyy");
   sheet.getRange(`I5:${lastTimelineLabel}5`).format = {
     fill: colors.navy,
     font: { bold: true, color: colors.white, size: 9 },
     horizontalAlignment: "center",
+    verticalAlignment: "center",
     borders: { preset: "all", style: "thin", color: colors.grid },
   };
+
+  const timelineDateFormulas = Array.from({ length: timelineDays }, (_, index) =>
+    index === 0
+      ? '=IF($D$3="","",$D$3)'
+      : `=IF(OR(${columnLabel(firstTimelineColumn + index - 1)}6="",${columnLabel(firstTimelineColumn + index - 1)}6>=$F$2),"",${columnLabel(firstTimelineColumn + index - 1)}6+1)`,
+  );
+  sheet.getRange(`I6:${lastTimelineLabel}6`).formulas = [timelineDateFormulas];
+  sheet.getRange(`I6:${lastTimelineLabel}6`).setNumberFormat("d");
+  sheet.getRange(`I6:${lastTimelineLabel}6`).format = {
+    fill: colors.navy,
+    font: { bold: true, color: colors.white, size: 9 },
+    horizontalAlignment: "center",
+    verticalAlignment: "center",
+    borders: { preset: "all", style: "thin", color: colors.grid },
+  };
+
+  const timelineWeekdayFormulas = Array.from(
+    { length: timelineDays },
+    (_, index) => {
+      const dateLabel = columnLabel(firstTimelineColumn + index);
+      return `=IF(${dateLabel}6="","",CHOOSE(WEEKDAY(${dateLabel}6,2),"M","T","W","T","F","S","S"))`;
+    },
+  );
+  sheet.getRange(`I7:${lastTimelineLabel}7`).formulas = [
+    timelineWeekdayFormulas,
+  ];
+  sheet.getRange(`I7:${lastTimelineLabel}7`).format = {
+    fill: colors.navy,
+    font: { bold: true, color: colors.white, size: 9 },
+    horizontalAlignment: "center",
+    verticalAlignment: "center",
+    borders: { preset: "all", style: "thin", color: colors.grid },
+  };
+  for (let weekIndex = 0; weekIndex < timelineWeeks; weekIndex += 1) {
+    for (const dayOffset of [5, 6]) {
+      const weekendLabel = columnLabel(
+        firstTimelineColumn + weekIndex * 7 + dayOffset,
+      );
+      sheet.getRange(`${weekendLabel}6:${weekendLabel}7`).format.fill =
+        "#31405A";
+    }
+  }
 
   const blankRows = Array.from({ length: lastDataRow - firstDataRow + 1 }, () =>
     Array(8).fill(null),
@@ -127,6 +215,19 @@ function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
     blankRows[index] = exampleRows[index];
   }
   sheet.getRange(`A${firstDataRow}:H${lastDataRow}`).values = blankRows;
+  const normalizedDateFormulas = Array.from(
+    { length: lastDataRow - firstDataRow + 1 },
+    (_, index) => {
+      const rowNumber = firstDataRow + index;
+      return [
+        `=IF(D${rowNumber}="","",IF(ISNUMBER(D${rowNumber}),D${rowNumber},IFERROR(DATE(LEFT(D${rowNumber},4),MID(D${rowNumber},6,2),RIGHT(D${rowNumber},2)),"")))`,
+        `=IF(E${rowNumber}="","",IF(ISNUMBER(E${rowNumber}),E${rowNumber},IFERROR(DATE(LEFT(E${rowNumber},4),MID(E${rowNumber},6,2),RIGHT(E${rowNumber},2)),"")))`,
+      ];
+    },
+  );
+  sheet.getRange(
+    `${normalizedStartLabel}${firstDataRow}:${normalizedEndLabel}${lastDataRow}`,
+  ).formulas = normalizedDateFormulas;
   sheet.getRange(`A${firstDataRow}:H${lastDataRow}`).format = {
     font: { color: colors.ink },
     borders: { preset: "all", style: "thin", color: colors.grid },
@@ -149,17 +250,27 @@ function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
     fill: colors.white,
     borders: { preset: "all", style: "thin", color: "#E6EAF1" },
   };
+  for (let weekIndex = 0; weekIndex < timelineWeeks; weekIndex += 1) {
+    for (const dayOffset of [5, 6]) {
+      const weekendLabel = columnLabel(
+        firstTimelineColumn + weekIndex * 7 + dayOffset,
+      );
+      sheet.getRange(
+        `${weekendLabel}${firstDataRow}:${weekendLabel}${lastDataRow}`,
+      ).format.fill = "#F4F6FA";
+    }
+  }
   sheet
     .getRange(`I${firstDataRow}:${lastTimelineLabel}${lastDataRow}`)
     .conditionalFormats.addCustom(
-      `=AND(I$5>=$D${firstDataRow},I$5<=$E${firstDataRow},$B${firstDataRow}<>"")`,
-      { fill: colors.cyanLight },
+      `=AND(I$6>=$${normalizedStartLabel}${firstDataRow},I$6<=$${normalizedStartLabel}${firstDataRow}+ROUND(($${normalizedEndLabel}${firstDataRow}-$${normalizedStartLabel}${firstDataRow}+1)*$F${firstDataRow}/100,0)-1,$B${firstDataRow}<>"")`,
+      { fill: colors.cyan },
     );
   sheet
     .getRange(`I${firstDataRow}:${lastTimelineLabel}${lastDataRow}`)
     .conditionalFormats.addCustom(
-      `=AND(I$5>=$D${firstDataRow},I$5<=$D${firstDataRow}+ROUND(($E${firstDataRow}-$D${firstDataRow}+1)*$F${firstDataRow}/100,0)-1,$B${firstDataRow}<>"")`,
-      { fill: colors.cyan },
+      `=AND(I$6>=$${normalizedStartLabel}${firstDataRow},I$6<=$${normalizedEndLabel}${firstDataRow},$B${firstDataRow}<>"")`,
+      { fill: colors.cyanLight },
     );
 
   sheet.getRange("A:A").format.columnWidth = 18;
@@ -170,10 +281,13 @@ function styleScheduleSheet(sheet, { exampleRows = [] } = {}) {
   sheet.getRange("G:G").format.columnWidth = 15;
   sheet.getRange("H:H").format.columnWidth = 28;
   sheet.getRange(`I:${lastTimelineLabel}`).format.columnWidth = 4.2;
+  sheet.getRange(`${normalizedStartLabel}:${normalizedEndLabel}`).format.columnWidth =
+    0.1;
   sheet.getRange(`${firstDataRow}:${lastDataRow}`).format.rowHeight = 27;
-  sheet.freezePanes.freezeRows(5);
+  sheet.getRange("5:7").format.rowHeight = 22;
+  sheet.freezePanes.freezeRows(7);
   sheet.freezePanes.freezeColumns(8);
-  sheet.tables.add(`A5:H${lastDataRow}`, true, `${sheet.name.replaceAll(" ", "")}Tasks`);
+  sheet.tables.add(`A7:H${lastDataRow}`, true, `${sheet.name.replaceAll(" ", "")}Tasks`);
 }
 
 const workbook = Workbook.create();
@@ -206,12 +320,12 @@ instructions.getRange("A3:F12").values = [
   ["1", "Open the Gantt Import sheet.", "Yes", "", "The app reads this sheet first.", "Do not rename the Task, Start Date, or End Date headers."],
   ["2", "Enter one task per row.", "Yes", "Plain text", "Each row becomes a Project Tracker milestone.", "Phase may repeat across rows."],
   ["3", "Enter Assigned to.", "Recommended", "Member ID, NYU email, full name, or display name", "Unmatched names use the default owner selected during upload.", "Keep the lab roster spelling."],
-  ["4", "Enter Start Date and End Date.", "Yes", "Excel date", "Tasks with missing or reversed dates are blocked before import.", "Use yyyy-mm-dd when typing."],
+  ["4", "Enter Start Date and End Date.", "Yes", "Excel date or yyyy-mm-dd text", "The calendar, weekday headers, and Gantt bars update automatically. Missing or reversed dates are blocked before import.", "The display starts on the Monday of the earliest task and continues through the latest End Date, up to 53 weeks."],
   ["5", "Enter Progress %.", "No", "0 to 100", "Status is inferred when Status is blank.", "100 becomes Completed."],
   ["6", "Choose Status.", "No", "Not started, In progress, Blocked, Completed", "The selected status is saved to Google Sheets.", ""],
   ["7", "Upload in Project Tracker > Gantt chart.", "Yes", ".xlsx up to 10 MB", "The app shows a preview before any write.", ""],
   ["8", "Confirm the preview.", "Yes", "", "Only prior Excel-imported Gantt tasks for that project are replaced.", "Manual milestones and other projects remain unchanged."],
-  ["Tip", "Use the Example sheet as a visual reference.", "", "", "", "Copy only your own rows into Gantt Import."],
+  ["Tip", "Use the Example sheet as a visual reference.", "", "", "", "Copy only your own rows into Gantt Import. Project start and end cells are calculated from the task dates."],
 ];
 instructions.getRange("A3:F3").format = {
   fill: colors.navy,
@@ -260,8 +374,8 @@ await fs.mkdir(path.dirname(staticPath), { recursive: true });
 await fs.mkdir(previewDir, { recursive: true });
 
 for (const [sheetName, range] of [
-  ["Gantt Import", "A1:U18"],
-  ["Example", "A1:U18"],
+  ["Gantt Import", "A1:CN20"],
+  ["Example", "A1:CN20"],
   ["Instructions", "A1:F12"],
   ["Reference", "A1:D9"],
 ]) {
@@ -276,18 +390,40 @@ for (const [sheetName, range] of [
 const check = await workbook.inspect({
   kind: "table",
   sheetId: "Example",
-  range: "A1:H12",
+  range: "A1:CN14",
+  maxChars: 24000,
+  tableMaxRows: 14,
+  tableMaxCols: 92,
+});
+const formulaCheck = await workbook.inspect({
+  kind: "formula",
+  sheetId: "Example",
+  range: "A1:CN14",
+  maxChars: 24000,
+  options: { maxResults: 300 },
+});
+const tailFormulaCheck = await workbook.inspect({
+  kind: "formula",
+  sheetId: "Example",
+  range: `${columnLabel(lastTimelineColumn - 6)}5:${normalizedEndLabel}14`,
   maxChars: 12000,
-  tableMaxRows: 12,
-  tableMaxCols: 8,
+  options: { maxResults: 100 },
 });
 const errors = await workbook.inspect({
   kind: "match",
-  searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A",
+  searchTerm: formulaErrorPattern,
   options: { useRegex: true, maxResults: 100 },
   summary: "formula error scan",
 });
-console.log(JSON.stringify({ check, errors }, null, 2));
+const errorMatches = formulaErrorMatches(errors);
+if (errorMatches.length > 0) {
+  throw new Error(
+    `Formula error scan failed: ${JSON.stringify(errorMatches)}`,
+  );
+}
+console.log(
+  JSON.stringify({ check, formulaCheck, tailFormulaCheck, errors }, null, 2),
+);
 
 const output = await SpreadsheetFile.exportXlsx(workbook);
 await output.save(outputPath);

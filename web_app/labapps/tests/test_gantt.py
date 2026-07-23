@@ -1,6 +1,7 @@
 from io import BytesIO
+from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from labapps.services.gantt import (
     build_gantt_context,
@@ -50,6 +51,87 @@ def test_parse_rejects_non_excel_content():
     assert result.rows == []
     assert result.errors
     assert "could not be read safely" in result.errors[0]
+
+
+def test_distributed_template_has_dynamic_calendar_and_remains_importable():
+    template_path = (
+        Path(__file__).resolve().parents[2]
+        / "labapps"
+        / "static"
+        / "labapps"
+        / "Kamei_Lab_Gantt_Import_Template.xlsx"
+    )
+    exact_result = parse_gantt_workbook(template_path.read_bytes())
+
+    assert exact_result.header_row == 7
+    assert exact_result.rows == []
+    assert exact_result.errors == [
+        "The Gantt table does not contain any importable task rows."
+    ]
+
+    workbook = load_workbook(template_path, data_only=False)
+    sheet = workbook["Gantt Import"]
+
+    assert sheet["D2"].value == '=IF(COUNT(NP8:NP37)=0,"",MIN(NP8:NP37))'
+    assert sheet["F2"].value == '=IF(COUNT(NQ8:NQ37)=0,"",MAX(NQ8:NQ37))'
+    assert sheet["D3"].value == '=IF(D2="","",D2-WEEKDAY(D2,2)+1)'
+    assert sheet["F3"].value == '=IF(F2="","",F2)'
+    assert sheet["I6"].value == '=IF($D$3="","",$D$3)'
+    assert sheet["J6"].value == '=IF(OR(I6="",I6>=$F$2),"",I6+1)'
+    assert (
+        sheet["I7"].value
+        == '=IF(I6="","",CHOOSE(WEEKDAY(I6,2),"M","T","W","T","F","S","S"))'
+    )
+    assert (
+        sheet["NP8"].value
+        == '=IF(D8="","",IF(ISNUMBER(D8),D8,IFERROR(DATE(LEFT(D8,4),MID(D8,6,2),RIGHT(D8,2)),"")))'
+    )
+    assert (
+        sheet["NQ8"].value
+        == '=IF(E8="","",IF(ISNUMBER(E8),E8,IFERROR(DATE(LEFT(E8,4),MID(E8,6,2),RIGHT(E8,2)),"")))'
+    )
+    assert sheet["NO6"].value == '=IF(OR(NN6="",NN6>=$F$2),"",NN6+1)'
+    assert "I5:O5" in {str(cell_range) for cell_range in sheet.merged_cells.ranges}
+    assert "NI5:NO5" in {
+        str(cell_range) for cell_range in sheet.merged_cells.ranges
+    }
+
+    conditional_formatting = list(sheet.conditional_formatting)
+    assert [str(item.sqref) for item in conditional_formatting] == ["I8:NO37"]
+    rules = sheet.conditional_formatting[conditional_formatting[0]]
+    assert [rule.priority for rule in rules] == [1, 2]
+    assert "$NP8" in rules[0].formula[0]
+    assert "$NQ8" in rules[0].formula[0]
+    assert "$NP8" in rules[1].formula[0]
+    assert "$NQ8" in rules[1].formula[0]
+
+    sheet["A8"] = "Planning"
+    sheet["B8"] = "Dynamic template import check"
+    sheet["C8"] = "member@nyu.edu"
+    sheet["D8"] = "2026-09-01"
+    sheet["E8"] = "2026-09-05"
+    sheet["F8"] = 50
+    sheet["G8"] = "In progress"
+    sheet["A29"] = "Reporting"
+    sheet["B29"] = "Lower template row import check"
+    sheet["C29"] = "member@nyu.edu"
+    sheet["D29"] = "2026-11-02"
+    sheet["E29"] = "2026-11-06"
+    sheet["F29"] = 0
+    sheet["G29"] = "Not started"
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    result = parse_gantt_workbook(buffer.getvalue())
+
+    assert result.errors == []
+    assert result.header_row == 7
+    assert len(result.rows) == 2
+    assert result.rows[0]["task"] == "Dynamic template import check"
+    assert result.rows[0]["start_date"] == "2026-09-01"
+    assert result.rows[0]["due_date"] == "2026-09-05"
+    assert result.rows[1]["source_row"] == 29
+    assert result.rows[1]["task"] == "Lower template row import check"
 
 
 def test_resolve_and_merge_gantt_rows_are_idempotent_and_preserve_manual_rows():
