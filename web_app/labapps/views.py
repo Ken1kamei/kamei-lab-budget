@@ -7,10 +7,12 @@ from datetime import date
 from django import forms as django_forms
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import Q
-from django.http import Http404, HttpResponse
+from django.db.models import F, Q
+from django.core.paginator import Paginator
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.http import content_disposition_header
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from budget.models import LabMember
@@ -48,6 +50,12 @@ from .services.knowledge import (
     EXTRACTED_METADATA_KEYS,
     extract_knowledge_metadata,
 )
+from .services.knowledge_catalog import (
+    AVAILABLE_STATUSES,
+    build_document_preview,
+    build_search_text,
+    public_status,
+)
 from .services.sheets import (
     append_history,
     append_registry_audit,
@@ -59,6 +67,7 @@ from .services.sheets import (
 )
 from .services.storage import (
     delete_knowledge_file,
+    open_knowledge_file,
     read_knowledge_file,
     store_knowledge_file,
 )
@@ -671,26 +680,70 @@ def tracker(request):
 @lab_app_access("notebooks_protocols")
 def knowledge(request):
     member = current_registry_member(request)
-    status_filter = request.GET.get("status", "active").strip().lower()
+    can_edit = can_write(member, "notebooks_protocols")
+    status_filter = request.GET.get("status", "available").strip().lower()
+    allowed_status_filters = {
+        "available",
+        "all",
+        "active",
+        "candidate",
+        "indexed",
+        "draft",
+        "archived",
+    }
+    if status_filter not in allowed_status_filters:
+        status_filter = "available"
+    if not can_edit and status_filter in {"draft", "archived", "all"}:
+        status_filter = "available"
     team_filter = request.GET.get("team", "").strip()
     category_filter = request.GET.get("category", "").strip()
+    type_filter = request.GET.get("type", "").strip().lower()
+    if type_filter not in {"", "protocol", "notebook"}:
+        type_filter = ""
+    browse_all = request.GET.get("browse", "") == "1"
+    search_query = request.GET.get("q", "").strip()[:120]
+    search_terms = search_query.casefold().split()
+
     records_queryset = KnowledgeRecord.objects.all()
-    if status_filter == "active":
-        records_queryset = records_queryset.filter(Q(status="active") | Q(status=""))
-    elif status_filter in {"draft", "archived"}:
+    if status_filter == "available":
+        records_queryset = records_queryset.filter(status__in=AVAILABLE_STATUSES)
+    elif status_filter != "all":
         records_queryset = records_queryset.filter(status=status_filter)
     if team_filter:
         records_queryset = records_queryset.filter(team=team_filter)
     if category_filter:
         records_queryset = records_queryset.filter(category=category_filter)
-    records = list(records_queryset)
-    protocols = [row for row in records if row.record_type == "protocol"]
-    notebooks = [row for row in records if row.record_type == "notebook"]
-    search_query = request.GET.get("q", "").strip()[:120]
-    search_terms = search_query.casefold().split()
-    matches = []
+    if type_filter:
+        records_queryset = records_queryset.filter(record_type=type_filter)
+
+    canonical_filter = Q(canonical_record_id="") | Q(
+        canonical_record_id=F("record_id")
+    )
+    canonical_queryset = records_queryset.filter(canonical_filter)
+    available_canonical = KnowledgeRecord.objects.filter(
+        status__in=AVAILABLE_STATUSES
+    ).filter(canonical_filter)
+    protocols = list(
+        available_canonical.filter(record_type="protocol")
+        .only("record_id", "record_type", "title", "status")
+        .order_by("title", "record_id")
+    )
+    notebooks = list(
+        available_canonical.filter(record_type="notebook")
+        .only("record_id", "record_type", "title", "status")
+        .order_by("title", "record_id")
+    )
+
+    matched_ids = set()
     if search_terms:
-        for row in records:
+        indexed_matches = records_queryset.exclude(search_text="")
+        for term in search_terms:
+            indexed_matches = indexed_matches.filter(search_text__icontains=term)
+        for record_id, canonical_id in indexed_matches.values_list(
+            "record_id", "canonical_record_id"
+        ):
+            matched_ids.add(canonical_id or record_id)
+        for row in records_queryset.filter(search_text=""):
             haystack = " ".join(
                 [
                     row.record_id,
@@ -703,25 +756,133 @@ def knowledge(request):
                 ]
             ).casefold()
             if all(term in haystack for term in search_terms):
-                matches.append(row)
-    selected_id = request.GET.get("protocol", "")
-    selected_protocol = next(
-        (row for row in protocols if row.record_id == selected_id),
-        protocols[0] if protocols else None,
+                matched_ids.add(row.canonical_record_id or row.record_id)
+
+    show_results = bool(
+        search_query
+        or browse_all
+        or team_filter
+        or category_filter
+        or type_filter
+        or status_filter != "available"
     )
+    if search_terms:
+        result_queryset = canonical_queryset.filter(record_id__in=matched_ids)
+    elif show_results:
+        result_queryset = canonical_queryset
+    else:
+        result_queryset = canonical_queryset.none()
+    result_queryset = result_queryset.only(
+        "record_id",
+        "record_type",
+        "title",
+        "team",
+        "owner",
+        "category",
+        "status",
+        "object_name",
+        "original_filename",
+        "updated_at",
+    ).order_by("-updated_at", "title", "record_id")
+    paginator = Paginator(result_queryset, 20)
+    search_page = paginator.get_page(request.GET.get("page", 1))
+    for row in search_page.object_list:
+        row.public_status = public_status(row.status)
+
+    selected_id = (
+        request.GET.get("record", "")
+        or request.GET.get("protocol", "")
+    ).strip()
+    selected_record = None
+    selected_aliases = []
+    selected_preview = {}
+    original_previewable = False
+    if selected_id:
+        selected_lookup = KnowledgeRecord.objects.filter(
+            record_id=selected_id
+        ).only("record_id", "canonical_record_id", "status").first()
+        if selected_lookup:
+            canonical_id = (
+                selected_lookup.canonical_record_id
+                or selected_lookup.record_id
+            )
+            selected_record = KnowledgeRecord.objects.filter(
+                record_id=canonical_id
+            ).first()
+            if (
+                selected_record
+                and not can_edit
+                and selected_record.status in {"draft", "archived"}
+            ):
+                selected_record = None
+            elif selected_record:
+                selected_record.public_status = public_status(
+                    selected_record.status
+                )
+                selected_aliases = list(
+                    KnowledgeRecord.objects.filter(
+                        canonical_record_id=selected_record.record_id
+                    )
+                    .exclude(record_id=selected_record.record_id)
+                    .only("record_id", "title", "source_path")
+                    .order_by("record_id")
+                )
+                selected_preview = build_document_preview(
+                    selected_record.metadata
+                )
+                selected_content_type = (
+                    selected_record.metadata.get("content_type")
+                    or mimetypes.guess_type(
+                        selected_record.original_filename
+                    )[0]
+                    or ""
+                )
+                original_previewable = selected_content_type in {
+                    "application/pdf",
+                    "text/plain",
+                    "text/markdown",
+                    "image/png",
+                    "image/jpeg",
+                    "image/gif",
+                    "image/webp",
+                }
+
+    query_params = request.GET.copy()
+    query_params.pop("record", None)
+    query_params.pop("protocol", None)
+    query_params.pop("page", None)
     return render(
         request,
         "labapps/knowledge.html",
         {
-            "protocols": protocols, "notebooks": notebooks, "selected_protocol": selected_protocol,
-            "can_edit": can_write(member, "notebooks_protocols"),
-            "counts": {"protocols": len(protocols), "notebooks": len(notebooks)},
+            "protocols": protocols,
+            "notebooks": notebooks,
+            "selected_record": selected_record,
+            "selected_aliases": selected_aliases,
+            "selected_preview": selected_preview,
+            "original_previewable": original_previewable,
+            "can_edit": can_edit,
+            "counts": {
+                "protocols": len(protocols),
+                "notebooks": len(notebooks),
+                "duplicates": KnowledgeRecord.objects.filter(
+                    status__in=AVAILABLE_STATUSES
+                )
+                .exclude(canonical_record_id="")
+                .exclude(canonical_record_id=F("record_id"))
+                .count(),
+            },
             "search_query": search_query,
-            "search_results": matches[:24],
-            "search_total": len(matches),
+            "search_page": search_page,
+            "search_results": search_page.object_list,
+            "search_total": paginator.count,
+            "show_results": show_results,
             "status_filter": status_filter,
             "team_filter": team_filter,
             "category_filter": category_filter,
+            "type_filter": type_filter,
+            "browse_all": browse_all,
+            "query_base": query_params.urlencode(),
             "team_choices": list(
                 KnowledgeRecord.objects.exclude(team="")
                 .order_by("team")
@@ -765,6 +926,20 @@ def knowledge_upload(request):
                 upload.content_type or "application/octet-stream",
             )
             metadata["sha256"] = digest
+            duplicate = (
+                KnowledgeRecord.objects.filter(
+                    record_type=record_type,
+                    content_sha256=digest,
+                )
+                .only("record_id", "canonical_record_id")
+                .order_by("created_at", "record_id")
+                .first()
+            )
+            canonical_record_id = (
+                duplicate.canonical_record_id or duplicate.record_id
+                if duplicate
+                else record_id
+            )
             try:
                 with transaction.atomic():
                     record = KnowledgeRecord.objects.create(
@@ -774,6 +949,18 @@ def knowledge_upload(request):
                         status=form.cleaned_data["status"],
                         object_name=key,
                         original_filename=upload.name, uploaded_by=_email(request),
+                        content_sha256=digest,
+                        canonical_record_id=canonical_record_id,
+                        search_text=build_search_text(
+                            record_id=record_id,
+                            record_type=record_type,
+                            title=form.cleaned_data["title"],
+                            team=form.cleaned_data["team"],
+                            owner=form.cleaned_data["owner"],
+                            category=form.cleaned_data["category"],
+                            original_filename=upload.name,
+                            metadata=metadata,
+                        ),
                         metadata=metadata,
                     )
                     LabAppAudit.objects.create(
@@ -782,6 +969,7 @@ def knowledge_upload(request):
                         after={
                             "record_id": record.record_id,
                             "sha256": digest,
+                            "canonical_record_id": canonical_record_id,
                             "parse_status": parsed.get("parse_status"),
                             "section_count": parsed.get("section_count", 0),
                         },
@@ -804,7 +992,7 @@ def knowledge_upload(request):
                     + parsed.get("parse_message", ""),
                 )
             return redirect(
-                f"{reverse('labapps:knowledge')}?protocol={record.record_id}#protocols"
+                f"{reverse('labapps:knowledge')}?record={canonical_record_id}#record"
             )
         except Exception as error:
             messages.error(request, str(error))
@@ -838,7 +1026,7 @@ def knowledge_reprocess(request, record_id):
             "Reprocessing stopped because the stored original does not match its recorded checksum.",
         )
         return redirect(
-            f"{reverse('labapps:knowledge')}?protocol={record.record_id}#protocols"
+            f"{reverse('labapps:knowledge')}?record={record.canonical_record_id or record.record_id}#record"
         )
 
     parsed = extract_knowledge_metadata(
@@ -882,7 +1070,17 @@ def knowledge_reprocess(request, record_id):
             )
     with transaction.atomic():
         record.metadata = metadata
-        record.save(update_fields=["metadata", "updated_at"])
+        record.search_text = build_search_text(
+            record_id=record.record_id,
+            record_type=record.record_type,
+            title=record.title,
+            team=record.team,
+            owner=record.owner,
+            category=record.category,
+            original_filename=record.original_filename,
+            metadata=metadata,
+        )
+        record.save(update_fields=["metadata", "search_text", "updated_at"])
         LabAppAudit.objects.create(
             actor=_email(request),
             app_id="notebooks_protocols",
@@ -905,7 +1103,7 @@ def knowledge_reprocess(request, record_id):
             "Automatic text extraction failed. " + parsed.get("parse_message", ""),
         )
     return redirect(
-        f"{reverse('labapps:knowledge')}?protocol={record.record_id}#protocols"
+        f"{reverse('labapps:knowledge')}?record={record.canonical_record_id or record.record_id}#record"
     )
 
 
@@ -917,10 +1115,51 @@ def knowledge_download(request, record_id):
         raise Http404 from error
     if not record.object_name:
         raise Http404("The original file has not been migrated to private storage yet.")
-    content = read_knowledge_file(record.object_name)
     content_type = record.metadata.get("content_type") or mimetypes.guess_type(record.original_filename)[0] or "application/octet-stream"
-    response = HttpResponse(content, content_type=content_type)
-    response["Content-Disposition"] = f'attachment; filename="{record.original_filename}"'
+    response = FileResponse(
+        open_knowledge_file(record.object_name),
+        content_type=content_type,
+    )
+    response["Content-Disposition"] = content_disposition_header(
+        True,
+        record.original_filename or record.record_id,
+    )
+    return response
+
+
+@lab_app_access("notebooks_protocols")
+def knowledge_original(request, record_id):
+    try:
+        record = KnowledgeRecord.objects.get(record_id=record_id)
+    except KnowledgeRecord.DoesNotExist as error:
+        raise Http404 from error
+    if not record.object_name:
+        raise Http404("The original file has not been migrated to private storage yet.")
+    content_type = (
+        record.metadata.get("content_type")
+        or mimetypes.guess_type(record.original_filename)[0]
+        or "application/octet-stream"
+    )
+    inline_types = {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+    }
+    if content_type not in inline_types:
+        return redirect("labapps:knowledge_download", record_id=record.record_id)
+    response = FileResponse(
+        open_knowledge_file(record.object_name),
+        content_type=content_type,
+    )
+    response["Content-Disposition"] = content_disposition_header(
+        False,
+        record.original_filename or record.record_id,
+    )
+    response["X-Content-Type-Options"] = "nosniff"
     return response
 
 
@@ -947,5 +1186,5 @@ def knowledge_status(request, record_id):
     )
     messages.success(request, f"{record.title} is now {record.status}.")
     return redirect(
-        f"{reverse('labapps:knowledge')}?status={record.status}&protocol={record.record_id}#protocols"
+        f"{reverse('labapps:knowledge')}?status={record.status}&record={record.canonical_record_id or record.record_id}#record"
     )

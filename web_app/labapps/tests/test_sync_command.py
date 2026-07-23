@@ -56,3 +56,52 @@ def test_sync_preserves_extracted_content(mock_sync, mock_seed):
     assert record.original_filename == "MEF_protocol.docx"
     mock_sync.assert_called_once()
     mock_seed.assert_called_once()
+
+
+@patch(
+    "labapps.management.commands.sync_lab_apps._seed_payload",
+    return_value=[
+        {
+            "notebook_id": "N-ORIGINAL",
+            "title": "Notebook",
+            "status": "indexed",
+            "sha256": "b" * 64,
+        },
+        {
+            "notebook_id": "N-COPY",
+            "title": "Notebook copy",
+            "status": "indexed",
+            "sha256": "b" * 64,
+        },
+        {
+            "protocol_id": "P-CANDIDATE",
+            "title": "Legacy protocol",
+            "status": "candidate",
+        },
+    ],
+)
+@patch(
+    "labapps.management.commands.sync_lab_apps.sync_all",
+    return_value={"registry": 1},
+)
+def test_sync_builds_search_index_and_groups_verified_duplicates(
+    mock_sync,
+    mock_seed,
+):
+    output = StringIO()
+
+    call_command("sync_lab_apps", stdout=output)
+
+    original = KnowledgeRecord.objects.get(record_id="N-ORIGINAL")
+    copy = KnowledgeRecord.objects.get(record_id="N-COPY")
+    protocol = KnowledgeRecord.objects.get(record_id="P-CANDIDATE")
+    assert original.canonical_record_id == original.record_id
+    assert copy.canonical_record_id == original.record_id
+    assert original.content_sha256 == "b" * 64
+    assert "notebook" in original.search_text
+    assert protocol.status == "candidate"
+    assert protocol.canonical_record_id == protocol.record_id
+    assert '"aliases": 1' in output.getvalue()
+    assert '"canonical": 2' in output.getvalue()
+    mock_sync.assert_called_once()
+    mock_seed.assert_called_once()

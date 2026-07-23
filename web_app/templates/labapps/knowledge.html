@@ -2,86 +2,190 @@
 {% load static labapps_tags %}
 {% block title %}Notebooks and Protocols{% endblock %}
 {% block content %}
-<header class="page-head">
-  <div><span class="eyebrow">Private knowledge</span><h1>Notebooks &amp; Protocols</h1><p>Search the lab knowledge base, or select a protocol to view its structured detail.</p></div>
-  <div class="page-actions">
-    <a class="button secondary" href="{% static 'labapps/Kamei_Lab_Protocol_Template.docx' %}" download>Download protocol template</a>
-    {% if can_edit %}<a class="button primary" href="{% url 'labapps:knowledge_upload' %}">Upload record</a>{% endif %}
-  </div>
-</header>
-
-<section class="metric-grid knowledge-metrics"><article class="metric cyan"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>Structured protocol records</small></article><article class="metric magenta"><span>Notebooks</span><strong>{{ counts.notebooks }}</strong><small>Registered notebook records</small></article></section>
-
-<section id="search" class="panel settings-section knowledge-search">
-  <div class="panel-heading"><div><span>Knowledge search</span><h2>Find notebooks and protocols</h2></div>{% if search_query %}<span>{{ search_total }} result{{ search_total|pluralize }}</span>{% endif %}</div>
-  <form method="get" class="knowledge-search-form" role="search">
-    <label for="knowledge-query">Keywords</label>
-    <div class="knowledge-filter-grid">
-      <input id="knowledge-query" type="search" name="q" value="{{ search_query }}" placeholder="Title, researcher, team, method, reagent...">
-      <select name="status" aria-label="Status"><option value="all" {% if status_filter == 'all' %}selected{% endif %}>All statuses</option><option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option><option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option><option value="archived" {% if status_filter == 'archived' %}selected{% endif %}>Archived</option></select>
-      <select name="team" aria-label="Team"><option value="">All teams</option>{% for value in team_choices %}<option value="{{ value }}" {% if team_filter == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
-      <select name="category" aria-label="Category"><option value="">All categories</option>{% for value in category_choices %}<option value="{{ value }}" {% if category_filter == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+<div class="knowledge-console">
+  <header class="page-head knowledge-head">
+    <div>
+      <span class="eyebrow">Private knowledge</span>
+      <h1>Notebooks &amp; Protocols</h1>
+      <p>Search, review, and reuse the lab's working knowledge.</p>
     </div>
-    <div class="form-actions"><button class="button primary" type="submit">Search</button>{% if search_query or team_filter or category_filter or status_filter != 'active' %}<a class="button secondary" href="{% url 'labapps:knowledge' %}#search">Clear</a>{% endif %}</div>
-  </form>
-  {% if search_query %}
-    {% if search_results %}
-    <div class="knowledge-search-results">
-      {% for row in search_results %}
-      <article class="knowledge-result">
-        <span class="status-pill">{{ row.get_record_type_display }}</span>
-        <h3>{{ row.title }}</h3>
-        <p>{{ row.owner|default:"Owner not specified" }}{% if row.team %} · {{ row.team }}{% endif %}{% if row.category %} · {{ row.category }}{% endif %}</p>
-        {% if row.record_type == "protocol" %}<a class="text-link" href="?q={{ search_query|urlencode }}&amp;protocol={{ row.record_id|urlencode }}#protocols">Open protocol</a>{% elif row.object_name %}<a class="text-link" href="{% url 'labapps:knowledge_download' row.record_id %}">Download notebook</a>{% else %}<span class="muted">Metadata only</span>{% endif %}
-      </article>
-      {% endfor %}
+    <div class="page-actions">
+      <a class="button secondary" href="{% static 'labapps/Kamei_Lab_Protocol_Template.docx' %}" download>Download protocol template</a>
+      {% if can_edit %}<a class="button primary" href="{% url 'labapps:knowledge_upload' %}">Upload record</a>{% endif %}
     </div>
-    {% if search_total > 24 %}<p class="muted search-limit">Showing the first 24 results. Add another keyword to narrow the search.</p>{% endif %}
-    {% else %}<p class="empty">No notebooks or protocols matched “{{ search_query }}”.</p>{% endif %}
-  {% endif %}
-</section>
+  </header>
 
-<section id="protocols" class="panel panel-wide settings-section">
-  <div class="panel-heading"><div><span>Protocol library</span><h2>Protocol detail</h2></div></div>
-  <form method="get" class="protocol-picker">{% if search_query %}<input type="hidden" name="q" value="{{ search_query }}">{% endif %}<label for="protocol">Protocol</label><select id="protocol" name="protocol" onchange="this.form.submit()">{% for row in protocols %}<option value="{{ row.record_id }}" {% if selected_protocol.record_id == row.record_id %}selected{% endif %}>{{ row.record_id }} · {{ row.title }}</option>{% endfor %}</select></form>
-  {% if selected_protocol %}
-  <article class="protocol-detail">
-    <div class="protocol-meta"><span><small>Team</small>{{ selected_protocol.team }}</span><span><small>Owner</small>{{ selected_protocol.owner|default:"Not specified" }}</span><span><small>Category</small>{{ selected_protocol.category|default:"Not specified" }}</span><span><small>Status</small>{{ selected_protocol.status }}</span></div>
-    <h2>{{ selected_protocol.title }}</h2>
-    {% with document_title=selected_protocol|metadata:"document_title" summary=selected_protocol|metadata:"summary" sections=selected_protocol|metadata:"sections" parse_status=selected_protocol|metadata:"parse_status" parse_message=selected_protocol|metadata:"parse_message" last_reprocess_status=selected_protocol|metadata:"last_reprocess_status" last_reprocess_error=selected_protocol|metadata:"last_reprocess_error" %}
-      {% if document_title and document_title != selected_protocol.title %}<p class="protocol-document-title">{{ document_title }}</p>{% endif %}
-      {% for line in summary %}<p>{{ line }}</p>{% endfor %}
-      {% if last_reprocess_status == "failed" %}<p class="message warning">The latest reprocessing attempt failed, so the structured content below may be from an earlier version. {{ last_reprocess_error }}</p>{% endif %}
-      {% if sections %}
-        {% for section in sections %}
-        <section class="protocol-section">
-          <h3>{{ section.heading }}</h3>
-          {% for block in section.blocks %}
-            {% if block.kind == "paragraph" %}
-              <p>{{ block.text }}</p>
-            {% elif block.kind == "bullets" %}
-              <ul>{% for item in block.items %}<li>{{ item }}</li>{% endfor %}</ul>
-            {% elif block.kind == "numbered" %}
-              <ol>{% for item in block.items %}<li>{{ item }}</li>{% endfor %}</ol>
-            {% elif block.kind == "table" %}
-              <div class="protocol-table-scroll"><table class="protocol-table"><tbody>{% for row in block.rows %}<tr>{% for cell in row %}<td>{{ cell|linebreaksbr }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
-            {% endif %}
-          {% endfor %}
-        </section>
+  <section class="knowledge-summary-strip" aria-label="Knowledge library summary">
+    <div class="summary-cell protocol-accent"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>available records</small></div>
+    <div class="summary-cell notebook-accent"><span>Notebooks</span><strong>{{ counts.notebooks }}</strong><small>available records</small></div>
+    <div class="summary-cell"><span>Duplicates grouped</span><strong>{{ counts.duplicates }}</strong><small>verified copies hidden</small></div>
+  </section>
+
+  <section id="search" class="panel knowledge-search-panel">
+    <div class="panel-heading">
+      <div><span>Knowledge search</span><h2>Find a record</h2></div>
+      {% if show_results %}<span aria-live="polite">{{ search_total }} result{{ search_total|pluralize }}</span>{% endif %}
+    </div>
+    <form method="get" class="knowledge-search-form" role="search">
+      <label for="knowledge-query">Keywords</label>
+      <div class="knowledge-filter-grid">
+        <input id="knowledge-query" type="search" name="q" value="{{ search_query }}" placeholder="Title, researcher, team, method, reagent...">
+        <select name="type" aria-label="Record type">
+          <option value="" {% if not type_filter %}selected{% endif %}>All record types</option>
+          <option value="protocol" {% if type_filter == 'protocol' %}selected{% endif %}>Protocols</option>
+          <option value="notebook" {% if type_filter == 'notebook' %}selected{% endif %}>Notebooks</option>
+        </select>
+        <select name="team" aria-label="Team">
+          <option value="">All teams</option>
+          {% for value in team_choices %}<option value="{{ value }}" {% if team_filter == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+        </select>
+        <select name="category" aria-label="Category">
+          <option value="">All categories</option>
+          {% for value in category_choices %}<option value="{{ value }}" {% if category_filter == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+        </select>
+        <select name="status" aria-label="Availability">
+          <option value="available" {% if status_filter == 'available' %}selected{% endif %}>Available</option>
+          {% if can_edit %}
+          <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+          <option value="archived" {% if status_filter == 'archived' %}selected{% endif %}>Archived</option>
+          <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All statuses</option>
+          {% endif %}
+        </select>
+      </div>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Search</button>
+        <button class="button secondary" type="submit" name="browse" value="1">Browse all</button>
+        {% if show_results %}<a class="button secondary" href="{% url 'labapps:knowledge' %}#search">Clear</a>{% endif %}
+      </div>
+    </form>
+  </section>
+
+  <section class="knowledge-quick-open" aria-label="Quick open">
+    <form method="get">
+      <label for="protocol-picker">Open a protocol</label>
+      <div><select id="protocol-picker" name="record">
+        <option value="">Select protocol</option>
+        {% for row in protocols %}<option value="{{ row.record_id }}" {% if selected_record.record_id == row.record_id %}selected{% endif %}>{{ row.title }}</option>{% endfor %}
+      </select><button class="button secondary" type="submit">Open</button></div>
+    </form>
+    <form method="get">
+      <label for="notebook-picker">Open a notebook</label>
+      <div><select id="notebook-picker" name="record">
+        <option value="">Select notebook</option>
+        {% for row in notebooks %}<option value="{{ row.record_id }}" {% if selected_record.record_id == row.record_id %}selected{% endif %}>{{ row.title }}</option>{% endfor %}
+      </select><button class="button secondary" type="submit">Open</button></div>
+    </form>
+  </section>
+
+  <section id="library" class="knowledge-workspace {% if not show_results %}viewer-only{% endif %}">
+    {% if show_results %}
+    <aside class="panel knowledge-results-panel" aria-label="Knowledge search results">
+      <div class="panel-heading">
+        <div><span>Library</span><h2>Results</h2></div>
+        <span>{{ search_page.start_index }}–{{ search_page.end_index }} of {{ search_total }}</span>
+      </div>
+      {% if search_results %}
+      <div class="knowledge-result-list">
+        {% for row in search_results %}
+        <a class="knowledge-result-row {% if selected_record.record_id == row.record_id %}selected{% endif %}" href="?{% if query_base %}{{ query_base }}&amp;{% endif %}record={{ row.record_id|urlencode }}#record">
+          <span class="record-type {{ row.record_type }}">{{ row.get_record_type_display }}</span>
+          <strong>{{ row.title }}</strong>
+          <small>{{ row.owner|default:"Owner not specified" }}{% if row.team %} · {{ row.team }}{% endif %}</small>
+          <span class="result-status">{{ row.public_status }}</span>
+        </a>
         {% endfor %}
-      {% else %}
-        {% with overview=selected_protocol|metadata:"overview" %}{% if overview %}<h3>Overview</h3><ul>{% for line in overview %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}{% endwith %}
-        {% with materials=selected_protocol|metadata:"materials" %}{% if materials %}<h3>Materials</h3><ul>{% for line in materials %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}{% endwith %}
-        {% with procedure=selected_protocol|metadata:"procedure" %}{% if procedure %}<h3>Procedure</h3><ol>{% for line in procedure %}<li>{{ line }}</li>{% endfor %}</ol>{% endif %}{% endwith %}
-        {% if parse_status == "failed" and last_reprocess_status != "failed" %}<p class="message error">The original file is available, but its text could not be extracted. {{ parse_message }}</p>{% elif parse_status == "unsupported" %}<p class="message warning">{{ parse_message }}</p>{% elif selected_protocol.object_name and not parse_status %}<p class="message warning">This record was uploaded before automatic extraction was added. Reprocess it to display the document content.</p>{% endif %}
+      </div>
+      {% if search_page.has_other_pages %}
+      <nav class="pagination" aria-label="Search results pages">
+        {% if search_page.has_previous %}<a class="button secondary" href="?{% if query_base %}{{ query_base }}&amp;{% endif %}page={{ search_page.previous_page_number }}#library">Previous</a>{% endif %}
+        <span>Page {{ search_page.number }} of {{ search_page.paginator.num_pages }}</span>
+        {% if search_page.has_next %}<a class="button secondary" href="?{% if query_base %}{{ query_base }}&amp;{% endif %}page={{ search_page.next_page_number }}#library">Next</a>{% endif %}
+      </nav>
       {% endif %}
-    {% endwith %}
-    <div class="protocol-actions">
-      {% if selected_protocol.object_name %}<a class="button secondary" href="{% url 'labapps:knowledge_download' selected_protocol.record_id %}">Download original</a>{% else %}<p class="muted">Structured content is available. The original Dropbox file has not yet been copied to private Cloud Storage.</p>{% endif %}
-      {% if can_edit and selected_protocol.object_name %}<form method="post" action="{% url 'labapps:knowledge_reprocess' selected_protocol.record_id %}">{% csrf_token %}<button class="button primary" type="submit">Reprocess content</button></form>{% endif %}
-      {% if can_edit %}<form method="post" action="{% url 'labapps:knowledge_status' selected_protocol.record_id %}">{% csrf_token %}<select name="status" aria-label="Record status"><option value="active" {% if selected_protocol.status == 'active' %}selected{% endif %}>Active</option><option value="draft" {% if selected_protocol.status == 'draft' %}selected{% endif %}>Draft</option><option value="archived" {% if selected_protocol.status == 'archived' %}selected{% endif %}>Archived</option></select><button class="button secondary" type="submit">Update status</button></form>{% endif %}
-    </div>
-  </article>
-  {% else %}<p class="empty">No protocol records are available.</p>{% endif %}
-</section>
+      {% else %}<p class="empty">No notebooks or protocols matched these filters.</p>{% endif %}
+    </aside>
+    {% endif %}
+
+    <article id="record" class="panel knowledge-viewer">
+      {% if selected_record %}
+      <div class="viewer-heading">
+        <div>
+          <span class="record-type {{ selected_record.record_type }}">{{ selected_record.get_record_type_display }}</span>
+          <h2>{{ selected_record.title }}</h2>
+          <p>{{ selected_record.record_id }}</p>
+        </div>
+        <span class="availability-pill">{{ selected_record.public_status }}</span>
+      </div>
+
+      <dl class="knowledge-record-meta">
+        <div><dt>Team</dt><dd>{{ selected_record.team|default:"Not specified" }}</dd></div>
+        <div><dt>Owner</dt><dd>{{ selected_record.owner|default:"Not specified" }}</dd></div>
+        <div><dt>Category</dt><dd>{{ selected_record.category|default:"Not specified" }}</dd></div>
+        <div><dt>File</dt><dd>{{ selected_record.original_filename|default:"Metadata only" }}</dd></div>
+      </dl>
+
+      <div class="knowledge-document">
+        {% if selected_preview.document_title and selected_preview.document_title != selected_record.title %}<p class="protocol-document-title">{{ selected_preview.document_title }}</p>{% endif %}
+        {% if selected_preview.last_reprocess_status == "failed" %}<p class="notice error">The latest reprocessing attempt failed. The content below may be from an earlier version. {{ selected_preview.last_reprocess_error }}</p>{% endif %}
+        {% if selected_preview.sections %}
+          {% for section in selected_preview.sections %}
+          <section class="protocol-section">
+            <h3>{{ section.heading }}</h3>
+            {% for block in section.blocks %}
+              {% if block.kind == "paragraph" %}
+                <p>{{ block.text }}</p>
+              {% elif block.kind == "bullets" %}
+                <ul>{% for item in block.items %}<li>{{ item }}</li>{% endfor %}</ul>
+              {% elif block.kind == "numbered" %}
+                <ol>{% for item in block.items %}<li>{{ item }}</li>{% endfor %}</ol>
+              {% elif block.kind == "table" %}
+                <div class="protocol-table-scroll"><table class="protocol-table"><tbody>{% for table_row in block.rows %}<tr>{% for cell in table_row %}<td>{{ cell|linebreaksbr }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+              {% endif %}
+            {% endfor %}
+          </section>
+          {% endfor %}
+        {% else %}
+          {% if selected_preview.summary %}{% for line in selected_preview.summary %}<p>{{ line }}</p>{% endfor %}{% endif %}
+          {% if selected_preview.overview %}<h3>Overview</h3><ul>{% for line in selected_preview.overview %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+          {% if selected_preview.materials %}<h3>Materials</h3><ul>{% for line in selected_preview.materials %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+          {% if selected_preview.procedure %}<h3>Procedure</h3><ol>{% for line in selected_preview.procedure %}<li>{{ line }}</li>{% endfor %}</ol>{% endif %}
+          {% if not selected_preview.summary and not selected_preview.overview and not selected_preview.materials and not selected_preview.procedure %}
+          <div class="metadata-state">
+            <h3>Record metadata</h3>
+            <p>This record is indexed and searchable. Its original file has not yet been copied to private Cloud Storage.</p>
+            {% if selected_preview.project %}<p><strong>Project:</strong> {{ selected_preview.project }}</p>{% endif %}
+            {% if selected_preview.modified_time %}<p><strong>Last source update:</strong> {{ selected_preview.modified_time }}</p>{% endif %}
+            {% if selected_record.source_path %}<p><strong>Source:</strong> {{ selected_record.source_path }}</p>{% endif %}
+          </div>
+          {% endif %}
+        {% endif %}
+        {% if selected_preview.truncated %}<p class="notice">Preview shortened for fast loading. Download the original for the complete document.</p>{% endif %}
+        {% if selected_preview.parse_status == "failed" %}<p class="notice error">Automatic extraction was not completed. {{ selected_preview.parse_message }}</p>{% elif selected_preview.parse_status == "unsupported" %}<p class="notice">{{ selected_preview.parse_message }}</p>{% endif %}
+      </div>
+
+      {% if selected_aliases %}
+      <details class="record-provenance">
+        <summary>{{ selected_aliases|length }} verified duplicate source{{ selected_aliases|length|pluralize }} grouped</summary>
+        <ul>{% for alias in selected_aliases %}<li>{{ alias.record_id }}{% if alias.source_path %} · {{ alias.source_path }}{% endif %}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+
+      <div class="protocol-actions">
+        {% if selected_record.object_name %}
+          {% if original_previewable %}<a class="button primary" href="{% url 'labapps:knowledge_original' selected_record.record_id %}" target="_blank" rel="noopener">View original</a>{% endif %}
+          <a class="button secondary" href="{% url 'labapps:knowledge_download' selected_record.record_id %}">Download original</a>
+        {% endif %}
+        {% if can_edit and selected_record.object_name %}<form method="post" action="{% url 'labapps:knowledge_reprocess' selected_record.record_id %}">{% csrf_token %}<button class="button secondary" type="submit">Reprocess content</button></form>{% endif %}
+        {% if can_edit %}<form method="post" action="{% url 'labapps:knowledge_status' selected_record.record_id %}">{% csrf_token %}<select name="status" aria-label="Record status"><option value="active" {% if selected_record.public_status == 'Available' %}selected{% endif %}>Available</option><option value="draft" {% if selected_record.status == 'draft' %}selected{% endif %}>Draft</option><option value="archived" {% if selected_record.status == 'archived' %}selected{% endif %}>Archived</option></select><button class="button secondary" type="submit">Update status</button></form>{% endif %}
+      </div>
+      {% else %}
+      <div class="viewer-empty">
+        <span class="eyebrow">Document viewer</span>
+        <h2>Select a notebook or protocol</h2>
+        <p>Use keyword search, Browse all, or either quick-open menu. Only the selected document is loaded.</p>
+      </div>
+      {% endif %}
+    </article>
+  </section>
+</div>
 {% endblock %}

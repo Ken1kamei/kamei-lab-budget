@@ -7,6 +7,10 @@ from google.cloud import storage
 
 from labapps.models import KnowledgeRecord
 from labapps.services.knowledge import EXTRACTED_METADATA_KEYS
+from labapps.services.knowledge_catalog import (
+    build_search_text,
+    refresh_knowledge_indexes,
+)
 from labapps.services.sheets import sync_all
 
 
@@ -87,8 +91,39 @@ class Command(BaseCommand):
                     ),
                     "source_path": value("source_path"),
                     "original_filename": value("original_filename"),
+                    "content_sha256": str(
+                        raw.get("sha256")
+                        or raw.get("content_sha256")
+                        or (existing.content_sha256 if existing else "")
+                    ).strip().casefold(),
+                    "search_text": build_search_text(
+                        record_id=record_id,
+                        record_type=record_type,
+                        title=title,
+                        team=value("team"),
+                        owner=str(
+                            raw.get("owner")
+                            or raw.get("researcher")
+                            or (existing.owner if existing else "")
+                        ),
+                        category=value("category"),
+                        original_filename=value("original_filename"),
+                        metadata=metadata,
+                    ),
                     "metadata": metadata,
                 },
             )
             seeded += 1
-        self.stdout.write(self.style.SUCCESS(json.dumps({"sheets": counts, "knowledge": seeded}, sort_keys=True)))
+        catalog = refresh_knowledge_indexes()
+        self.stdout.write(
+            self.style.SUCCESS(
+                json.dumps(
+                    {
+                        "sheets": counts,
+                        "knowledge": seeded,
+                        "catalog": catalog,
+                    },
+                    sort_keys=True,
+                )
+            )
+        )

@@ -2,6 +2,7 @@ import json
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.db import models
 from google.cloud import storage
 
 from labapps.models import KnowledgeRecord, SheetRecord
@@ -42,7 +43,14 @@ class Command(BaseCommand):
             results[table_name] = {"sheet": len(source_rows), "mirror": mirror_count}
             if len(source_rows) != mirror_count:
                 mismatches[table_name] = results[table_name]
-        seed_ids = {_knowledge_id(record) for record in _knowledge_seed()}
+        seed_records = _knowledge_seed()
+        seed_id_list = [_knowledge_id(record) for record in seed_records]
+        duplicate_seed_ids = sorted(
+            record_id
+            for record_id in set(seed_id_list)
+            if record_id and seed_id_list.count(record_id) > 1
+        )
+        seed_ids = set(seed_id_list)
         seed_ids.discard("")
         mirror_ids = set(KnowledgeRecord.objects.values_list("record_id", flat=True))
         missing_ids = seed_ids - mirror_ids
@@ -51,11 +59,18 @@ class Command(BaseCommand):
             "mirror": len(mirror_ids),
             "web_added": len(mirror_ids - seed_ids),
             "metadata_only": KnowledgeRecord.objects.filter(object_name="").count(),
+            "canonical": KnowledgeRecord.objects.filter(
+                canonical_record_id=models.F("record_id")
+            ).count(),
+            "aliases": KnowledgeRecord.objects.exclude(
+                canonical_record_id=models.F("record_id")
+            ).exclude(canonical_record_id="").count(),
         }
-        if missing_ids:
+        if missing_ids or duplicate_seed_ids:
             mismatches["Knowledge"] = {
                 **results["Knowledge"],
                 "missing": sorted(missing_ids),
+                "duplicate_seed_ids": duplicate_seed_ids,
             }
         self.stdout.write(json.dumps(results, sort_keys=True))
         if mismatches:

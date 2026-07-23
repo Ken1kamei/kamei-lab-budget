@@ -50,6 +50,18 @@ def read_knowledge_file(key):
     return path.read_bytes()
 
 
+def open_knowledge_file(key):
+    if settings.KNOWLEDGE_BUCKET:
+        try:
+            return storage.Client().bucket(settings.KNOWLEDGE_BUCKET).blob(key).open("rb")
+        except Exception as error:
+            raise KnowledgeStorageError("The private lab file could not be opened.") from error
+    path = settings.MEDIA_ROOT / key
+    if not path.exists():
+        raise KnowledgeStorageError("The requested private lab file does not exist.")
+    return path.open("rb")
+
+
 def delete_knowledge_file(key):
     if not key:
         return

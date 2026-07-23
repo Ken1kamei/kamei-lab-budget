@@ -12,6 +12,7 @@ from openpyxl import Workbook
 
 from budget.models import LabMember
 from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord
+from labapps.services.knowledge_catalog import refresh_knowledge_indexes
 from labapps.tests.test_knowledge import protocol_docx_bytes
 
 
@@ -124,15 +125,20 @@ def test_portal_tracker_and_knowledge_pages_render():
     assert b">Notebooks / protocols<" not in tracker.content
     assert b"Gantt chart" in tracker.content
     assert b"Kamei_Lab_Gantt_Import_Template.xlsx" in tracker.content
-    assert b"Prepare buffer" in knowledge.content
+    assert b"Prepare buffer" not in knowledge.content
     assert b"Notebook registry" not in knowledge.content
-    assert b"Find notebooks and protocols" in knowledge.content
-    assert b'href="/knowledge/#protocols"' in knowledge.content
+    assert b"Find a record" in knowledge.content
+    assert b'href="/knowledge/?type=protocol&amp;browse=1#library"' in knowledge.content
+    assert b'href="/knowledge/?type=notebook&amp;browse=1#library"' in knowledge.content
     assert b'href="/knowledge/#search"' in knowledge.content
     assert b'href="/knowledge/upload/"' in knowledge.content
     assert b"Kamei_Lab_Protocol_Template.docx" in knowledge.content
     assert b"Download protocol template" in knowledge.content
     assert b">Transactions<" not in knowledge.content
+
+    protocol = client.get("/knowledge/?record=P-0001")
+    assert protocol.status_code == 200
+    assert b"Prepare buffer" in protocol.content
 
 
 def test_portal_uses_integrated_routes_even_with_legacy_registry_urls():
@@ -398,10 +404,169 @@ def test_knowledge_keyword_search_matches_notebooks_and_protocol_content():
 
     assert response.status_code == 200
     assert response.context["search_total"] == 2
+    assert {
+        row.record_id for row in response.context["search_results"]
+    } == {"P-0001", "N-0001"}
     assert b"GSIS workflow" in response.content
     assert b"Buffer optimization" in response.content
-    assert b"Unrelated imaging log" not in response.content
     assert b"Notebook registry" not in response.content
+
+
+def test_knowledge_available_view_restores_legacy_statuses_without_auto_listing():
+    seed_pi()
+    KnowledgeRecord.objects.create(
+        record_id="P-CANDIDATE",
+        record_type="protocol",
+        title="Legacy candidate protocol",
+        status="candidate",
+    )
+    KnowledgeRecord.objects.create(
+        record_id="N-INDEXED",
+        record_type="notebook",
+        title="Legacy indexed notebook",
+        status="indexed",
+    )
+    client = signed_in_client()
+
+    overview = client.get("/knowledge/")
+    protocol_list = client.get("/knowledge/?type=protocol&browse=1")
+    notebook_list = client.get("/knowledge/?type=notebook&browse=1")
+
+    assert overview.status_code == 200
+    assert overview.context["counts"] == {
+        "protocols": 1,
+        "notebooks": 1,
+        "duplicates": 0,
+    }
+    assert overview.context["show_results"] is False
+    assert list(overview.context["search_results"]) == []
+    assert [
+        row.record_id for row in protocol_list.context["search_results"]
+    ] == ["P-CANDIDATE"]
+    assert [
+        row.record_id for row in notebook_list.context["search_results"]
+    ] == ["N-INDEXED"]
+
+
+def test_verified_duplicate_records_are_grouped_and_alias_opens_canonical():
+    seed_pi()
+    canonical = KnowledgeRecord.objects.create(
+        record_id="N-0001",
+        record_type="notebook",
+        title="MEF notebook",
+        status="indexed",
+        content_sha256="a" * 64,
+        metadata={"summary": ["Canonical notebook content"]},
+    )
+    alias = KnowledgeRecord.objects.create(
+        record_id="N-0002",
+        record_type="notebook",
+        title="MEF notebook copy",
+        status="indexed",
+        content_sha256="a" * 64,
+        source_path="/source/copy.pdf",
+    )
+    refresh_knowledge_indexes()
+    canonical.refresh_from_db()
+    alias.refresh_from_db()
+    client = signed_in_client()
+
+    browse = client.get("/knowledge/?type=notebook&browse=1")
+    detail = client.get(f"/knowledge/?record={alias.record_id}")
+
+    assert canonical.canonical_record_id == canonical.record_id
+    assert alias.canonical_record_id == canonical.record_id
+    assert browse.context["counts"]["duplicates"] == 1
+    assert [
+        row.record_id for row in browse.context["search_results"]
+    ] == [canonical.record_id]
+    assert detail.context["selected_record"].record_id == canonical.record_id
+    assert [
+        row.record_id for row in detail.context["selected_aliases"]
+    ] == [alias.record_id]
+    assert b"Canonical notebook content" in detail.content
+    assert b"verified duplicate source" in detail.content
+
+
+def test_notebook_structured_content_uses_common_viewer():
+    seed_pi()
+    record = KnowledgeRecord.objects.create(
+        record_id="N-LABBOOK",
+        record_type="notebook",
+        title="Differentiation notebook",
+        status="indexed",
+        original_filename="notebook.pdf",
+        metadata={
+            "sections": [
+                {
+                    "heading": "Day 3 observations",
+                    "blocks": [
+                        {
+                            "kind": "paragraph",
+                            "text": "Activin A treatment completed.",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    response = signed_in_client().get(
+        f"/knowledge/?record={record.record_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.context["selected_record"].record_type == "notebook"
+    assert b"Day 3 observations" in response.content
+    assert b"Activin A treatment completed." in response.content
+
+
+@patch("labapps.views.open_knowledge_file", return_value=BytesIO(b"%PDF-demo"))
+def test_previewable_notebook_original_opens_inline(mock_open):
+    seed_pi()
+    record = KnowledgeRecord.objects.create(
+        record_id="N-PDF",
+        record_type="notebook",
+        title="PDF notebook",
+        status="active",
+        object_name="knowledge/N-PDF/notebook.pdf",
+        original_filename="notebook.pdf",
+        metadata={"content_type": "application/pdf"},
+    )
+
+    response = signed_in_client().get(
+        f"/knowledge/{record.record_id}/original/"
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/pdf"
+    assert response["Content-Disposition"].startswith("inline;")
+    assert response["X-Content-Type-Options"] == "nosniff"
+    assert b"".join(response.streaming_content) == b"%PDF-demo"
+    mock_open.assert_called_once_with(record.object_name)
+
+
+def test_knowledge_results_are_paginated_twenty_at_a_time():
+    seed_pi()
+    KnowledgeRecord.objects.bulk_create(
+        [
+            KnowledgeRecord(
+                record_id=f"N-{index:04d}",
+                record_type="notebook",
+                title=f"Notebook {index:04d}",
+                status="indexed",
+            )
+            for index in range(25)
+        ]
+    )
+
+    response = signed_in_client().get(
+        "/knowledge/?type=notebook&browse=1"
+    )
+
+    assert response.context["search_total"] == 25
+    assert len(response.context["search_results"]) == 20
+    assert response.context["search_page"].paginator.num_pages == 2
 
 
 def test_knowledge_record_can_be_archived_and_restored():
@@ -423,9 +588,11 @@ def test_knowledge_record_can_be_archived_and_restored():
     record.refresh_from_db()
     assert record.status == "archived"
     active_page = client.get("/knowledge/")
-    archived_page = client.get("/knowledge/?status=archived")
+    archived_page = client.get("/knowledge/?status=archived&browse=1")
     assert list(active_page.context["protocols"]) == []
-    assert [row.record_id for row in archived_page.context["protocols"]] == [
+    assert [
+        row.record_id for row in archived_page.context["search_results"]
+    ] == [
         "P-LIFECYCLE"
     ]
     audit = LabAppAudit.objects.get(

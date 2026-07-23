@@ -34,6 +34,9 @@ class KnowledgeRecord(models.Model):
     source_path = models.CharField(max_length=1200, blank=True)
     object_name = models.CharField(max_length=1200, blank=True)
     original_filename = models.CharField(max_length=500, blank=True)
+    content_sha256 = models.CharField(max_length=64, blank=True)
+    canonical_record_id = models.CharField(max_length=160, blank=True)
+    search_text = models.TextField(blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     uploaded_by = models.EmailField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -44,6 +47,14 @@ class KnowledgeRecord(models.Model):
         indexes = [
             models.Index(fields=["record_type", "team"]),
             models.Index(fields=["record_type", "status"]),
+            models.Index(
+                fields=["canonical_record_id"],
+                name="labapps_kno_canonic_cac87c_idx",
+            ),
+            models.Index(
+                fields=["content_sha256"],
+                name="labapps_kno_content_23b557_idx",
+            ),
         ]
 
 

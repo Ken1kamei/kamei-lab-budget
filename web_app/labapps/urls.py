@@ -18,6 +18,11 @@ urlpatterns = [
     ),
     path("knowledge/<str:record_id>/download/", views.knowledge_download, name="knowledge_download"),
     path(
+        "knowledge/<str:record_id>/original/",
+        views.knowledge_original,
+        name="knowledge_original",
+    ),
+    path(
         "knowledge/<str:record_id>/status/",
         views.knowledge_status,
         name="knowledge_status",
