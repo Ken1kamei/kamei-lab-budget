@@ -138,6 +138,14 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
 
 PI_EMAIL = os.environ.get("PI_EMAIL", "kk4801@nyu.edu").strip().lower()
+LAB_MEMBER_EMAIL_EXCEPTIONS = {
+    email.strip().lower()
+    for email in os.environ.get(
+        "LAB_MEMBER_EMAIL_EXCEPTIONS",
+        "nyuadkameilab@gmail.com",
+    ).split(",")
+    if email.strip()
+}
 ALLOW_DEV_LOGIN = DEBUG and os.environ.get("ALLOW_DEV_LOGIN", "true").strip().lower() in {
     "1",
     "true",

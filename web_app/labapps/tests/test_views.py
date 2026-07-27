@@ -11,8 +11,9 @@ from django.test import Client
 from openpyxl import Workbook
 
 from budget.models import LabMember
-from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord
+from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord, SlackConnection
 from labapps.services.knowledge_catalog import refresh_knowledge_indexes
+from labapps.services.members import remove_member_access
 from labapps.tests.test_knowledge import protocol_docx_bytes
 
 
@@ -23,6 +24,22 @@ def add_record(table, record_id, payload, source="registry"):
     SheetRecord.objects.create(
         source=source, table_name=table, record_id=record_id, payload=payload
     )
+
+
+def fake_registry_upsert(table_name, payload, **kwargs):
+    key = {
+        "Members": "member_id",
+        "Teams": "team_id",
+        "App_Roles": "app_role_id",
+        "Member_Teams": "member_team_id",
+    }[table_name]
+    SheetRecord.objects.update_or_create(
+        source="registry",
+        table_name=table_name,
+        record_id=payload[key],
+        defaults={"payload": payload},
+    )
+    return payload
 
 
 def signed_in_client():
@@ -611,18 +628,12 @@ def test_portal_member_save_updates_budget_iap_allowlist(
     settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
     seed_pi()
 
-    def fake_upsert(table_name, payload, **kwargs):
-        key = {
-            "Members": "member_id",
-            "Teams": "team_id",
-            "App_Roles": "app_role_id",
-            "Member_Teams": "member_team_id",
-        }[table_name]
-        add_record(table_name, payload[key], payload)
-        return payload
-
-    monkeypatch.setattr("labapps.views.upsert_record", fake_upsert)
-    monkeypatch.setattr("labapps.views.append_registry_audit", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
     client = signed_in_client()
 
     response = client.post(
@@ -671,17 +682,12 @@ def test_portal_member_demotion_revokes_budget_pi_role(
         },
     )
 
-    def fake_upsert(table_name, payload, **kwargs):
-        SheetRecord.objects.update_or_create(
-            source="registry",
-            table_name=table_name,
-            record_id=payload["member_id"],
-            defaults={"payload": payload},
-        )
-        return payload
-
-    monkeypatch.setattr("labapps.views.upsert_record", fake_upsert)
-    monkeypatch.setattr("labapps.views.append_registry_audit", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
 
     response = signed_in_client().post(
         "/portal/admin/",
@@ -700,6 +706,163 @@ def test_portal_member_demotion_revokes_budget_pi_role(
     assert LabMember.objects.get(
         email="former.pi@nyu.edu"
     ).highest_role == "member"
+
+
+def test_portal_active_members_tile_links_to_member_management_for_pi():
+    seed_pi()
+
+    response = signed_in_client().get("/portal/")
+
+    assert response.status_code == 200
+    assert b'href="/portal/admin/#members"' in response.content
+    assert b"Manage members" in response.content
+
+
+def test_portal_member_form_accepts_only_nyu_or_approved_lab_account(
+    monkeypatch,
+    settings,
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    settings.LAB_MEMBER_EMAIL_EXCEPTIONS = {"nyuadkameilab@gmail.com"}
+    seed_pi()
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
+    client = signed_in_client()
+    base = {
+        "action": "member",
+        "member-name": "Kamei Lab",
+        "member-display_name": "Kamei Lab",
+        "member-global_role": "member",
+        "member-active": "on",
+        "member-notes": "",
+    }
+
+    rejected = client.post(
+        "/portal/admin/",
+        {**base, "member-email": "unapproved@gmail.com"},
+    )
+    accepted = client.post(
+        "/portal/admin/",
+        {**base, "member-email": "NYUADKAMEILAB@gmail.com"},
+    )
+
+    assert rejected.status_code == 200
+    assert b"Use an @nyu.edu account" in rejected.content
+    assert accepted.status_code == 302
+    assert LabMember.objects.get(email="nyuadkameilab@gmail.com").active is True
+
+
+def test_portal_member_remove_revokes_all_access_and_slack(
+    monkeypatch,
+    settings,
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    seed_pi()
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "member@nyu.edu",
+            "name": "Member",
+            "display_name": "Member",
+            "global_role": "member",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "App_Roles",
+        "AR002",
+        {
+            "app_role_id": "AR002",
+            "member_id": "M002",
+            "app_id": "notebooks_protocols",
+            "app_role": "member",
+            "scope_team_id": "T001",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Member_Teams",
+        "MT002",
+        {
+            "member_team_id": "MT002",
+            "member_id": "M002",
+            "team_id": "T001",
+            "team_role": "member",
+            "active": "TRUE",
+        },
+    )
+    LabMember.objects.create(
+        email="member@nyu.edu",
+        display_name="Member",
+        highest_role="member",
+        active=True,
+    )
+    SlackConnection.objects.create(
+        portal_email="member@nyu.edu",
+        slack_team_id="T1",
+        slack_team_name="KameiLab_NYUAD",
+        slack_user_id="U1",
+        slack_user_name="Member",
+        access_token_ciphertext="encrypted",
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
+
+    response = signed_in_client().post(
+        "/portal/admin/",
+        {"action": "member_remove", "member_id": "M002"},
+    )
+
+    assert response.status_code == 302
+    assert SheetRecord.objects.get(
+        table_name="Members", record_id="M002"
+    ).payload["active"] == "FALSE"
+    assert SheetRecord.objects.get(
+        table_name="App_Roles", record_id="AR002"
+    ).payload["active"] == "FALSE"
+    assert SheetRecord.objects.get(
+        table_name="Member_Teams", record_id="MT002"
+    ).payload["active"] == "FALSE"
+    assert LabMember.objects.get(email="member@nyu.edu").active is False
+    assert not SlackConnection.objects.filter(portal_email="member@nyu.edu").exists()
+
+
+def test_portal_member_remove_protects_pi_and_non_admin_access(settings):
+    settings.PI_EMAIL = "kk4801@nyu.edu"
+    seed_pi()
+
+    with pytest.raises(ValueError, match="PI account cannot be removed"):
+        remove_member_access("M001", actor="admin@nyu.edu")
+
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "member@nyu.edu",
+            "display_name": "Member",
+            "global_role": "member",
+            "active": "TRUE",
+        },
+    )
+    response = client_for("member@nyu.edu").post(
+        "/portal/admin/",
+        {"action": "member_remove", "member_id": "M001"},
+    )
+
+    assert response.status_code == 403
 
 
 def test_scoped_tracker_role_cannot_switch_to_another_team():

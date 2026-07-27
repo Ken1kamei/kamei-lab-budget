@@ -37,6 +37,10 @@ The gateway requests a read-only Sheets scope unless `ENABLE_SHEET_WRITES=true`.
 - Every Sheet mutation is serialized, read back, mirrored, and audited before
   the UI reports success. Repeated submissions use durable idempotency keys.
 - Shared launcher and registry administration at `/portal/`.
+- PI/admin member management is linked from the Portal's Active Members tile.
+  Member removal revokes app/team roles while preserving the registry audit trail.
+- Member accounts must use `@nyu.edu`, except addresses explicitly listed in
+  `LAB_MEMBER_EMAIL_EXCEPTIONS` (default: `nyuadkameilab@gmail.com`).
 - Project, milestone, experiment, review, and next-action workflows at `/tracker/`,
   including per-project Excel Gantt import, preview, and timeline display.
 - Searchable protocol and notebook registry plus private uploads at `/knowledge/`.

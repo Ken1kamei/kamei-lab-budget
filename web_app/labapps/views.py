@@ -16,8 +16,6 @@ from django.urls import reverse
 from django.utils.http import content_disposition_header
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from budget.models import LabMember
-
 from .forms import (
     AppRoleForm,
     ExperimentForm,
@@ -81,6 +79,7 @@ from .services.slack import (
     slack_configured,
     slack_workspace_context,
 )
+from .services.members import remove_member_access, upsert_member_access
 
 
 def _email(request):
@@ -102,29 +101,6 @@ def _team_lookup():
 def _display_member(member_id, members):
     row = members.get(member_id, {})
     return row.get("display_name") or row.get("name") or member_id
-
-
-def _sync_iap_allowlist_member(payload):
-    email = str(payload.get("email") or "").strip().lower()
-    if not email:
-        return
-    global_role = str(payload.get("global_role") or "").strip().lower()
-    highest_role = {
-        "pi": "pi",
-        "admin": "budget_manager",
-        "lead": "lead",
-        "member": "member",
-    }.get(global_role, "member")
-    LabMember.objects.update_or_create(
-        email=email,
-        defaults={
-            "display_name": str(
-                payload.get("display_name") or payload.get("name") or email
-            ).strip(),
-            "highest_role": highest_role,
-            "active": truthy(payload.get("active", "TRUE")),
-        },
-    )
 
 
 def _portal_slack_context(request):
@@ -323,34 +299,22 @@ def portal_admin(request):
             if action == "member":
                 member_form = MemberForm(request.POST, prefix="member")
                 if member_form.is_valid():
-                    cleaned = member_form.cleaned_data
-                    existing = next(
-                        (row for row in members if row.get("email", "").lower() == cleaned["email"].lower()),
-                        None,
-                    )
-                    member_id = existing.get("member_id") if existing else next_identifier("Members", "M")
-                    payload = {
-                        "member_id": member_id,
-                        "email": cleaned["email"].lower(),
-                        "name": cleaned["name"],
-                        "display_name": cleaned["display_name"] or cleaned["name"],
-                        "global_role": cleaned["global_role"],
-                        "active": "TRUE" if cleaned["active"] else "FALSE",
-                        "start_date": (existing or {}).get("start_date") or date.today().isoformat(),
-                        "end_date": (existing or {}).get("end_date", ""),
-                        "password_hash": (existing or {}).get("password_hash", ""),
-                        "password_set_at": (existing or {}).get("password_set_at", ""),
-                        "password_must_change": (existing or {}).get("password_must_change", "FALSE"),
-                        "notes": cleaned["notes"],
-                    }
-                    upsert_record("Members", payload, actor=_email(request), action="upsert_member")
-                    _sync_iap_allowlist_member(payload)
-                    append_registry_audit(
-                        actor=_email(request), action="upsert_member", target_type="Member",
-                        target_id=member_id, before=existing or {}, after=payload,
+                    payload = upsert_member_access(
+                        member_form.cleaned_data,
+                        actor=_email(request),
                     )
                     messages.success(request, "Member saved and verified in Google Sheets.")
-                    return redirect("labapps:portal_admin")
+                    return redirect(f"{reverse('labapps:portal_admin')}#members")
+            elif action == "member_remove":
+                payload = remove_member_access(
+                    request.POST.get("member_id", ""),
+                    actor=_email(request),
+                )
+                messages.success(
+                    request,
+                    f"Removed and verified access for {payload['email']}.",
+                )
+                return redirect(f"{reverse('labapps:portal_admin')}#members")
             elif action == "team":
                 team_form = TeamForm(request.POST, prefix="team")
                 if team_form.is_valid():

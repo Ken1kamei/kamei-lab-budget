@@ -1,5 +1,6 @@
 from django import forms
 
+from budget.member_accounts import validate_member_email
 from budget.models import LabMember
 from budget.services.calculations import CATEGORIES, SUPPORTED_CURRENCIES
 
@@ -153,6 +154,12 @@ class MemberForm(forms.Form):
                     ("lead", "Team Leader"),
                 ],
             )
+
+    def clean_email(self):
+        try:
+            return validate_member_email(self.cleaned_data["email"])
+        except ValueError as error:
+            raise forms.ValidationError(str(error)) from error
 
     def team_role_values(self):
         return {

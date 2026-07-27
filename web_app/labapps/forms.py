@@ -1,5 +1,6 @@
 from django import forms
 
+from budget.member_accounts import validate_member_email
 from .services.knowledge import MAX_KNOWLEDGE_FILE_BYTES
 
 
@@ -25,6 +26,12 @@ class MemberForm(forms.Form):
     )
     active = forms.BooleanField(required=False, initial=True)
     notes = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), required=False)
+
+    def clean_email(self):
+        try:
+            return validate_member_email(self.cleaned_data["email"])
+        except ValueError as error:
+            raise forms.ValidationError(str(error)) from error
 
 
 class TeamForm(forms.Form):

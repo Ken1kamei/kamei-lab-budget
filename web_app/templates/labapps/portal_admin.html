@@ -9,10 +9,10 @@
 </div>
 
 <section id="members" class="panel settings-section">
-  <div class="panel-heading"><div><span>Allowlist</span><h2>Members</h2></div><span>{{ members|length }} records</span></div>
+  <div class="panel-heading"><div><span>Allowlist</span><h2>Active members</h2></div><span>{{ members|length }} records</span></div>
   <div class="two-column registry-layout">
     <form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="member">{{ member_form.as_div }}<button class="button primary" type="submit">Save member</button></form>
-    <div class="table-panel"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th></tr></thead><tbody>{% for row in members %}<tr><td>{{ row.display_name|default:row.name }}</td><td>{{ row.email }}</td><td>{{ row.global_role }}</td><td>{{ row.active }}</td></tr>{% endfor %}</tbody></table></div>
+    <div class="table-panel"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for row in members %}<tr><td>{% if row.display_name %}{{ row.display_name }}{% else %}{{ row.name }}{% endif %}</td><td>{{ row.email }}</td><td>{{ row.global_role }}</td><td>{% if row.active == 'TRUE' %}<span class="status ready">Active</span>{% else %}<span class="status">Inactive</span>{% endif %}</td><td>{% if row.active == 'TRUE' and row.email != request.user.email and row.global_role != 'pi' %}<form method="post" class="table-action">{% csrf_token %}<input type="hidden" name="action" value="member_remove"><input type="hidden" name="member_id" value="{{ row.member_id }}"><button class="button danger" type="submit">Remove access</button></form>{% else %}<span class="muted">—</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="5">No members registered.</td></tr>{% endfor %}</tbody></table></div>
   </div>
 </section>
 

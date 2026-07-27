@@ -1893,9 +1893,9 @@ class SheetsGateway:
         registry_id = _registry_spreadsheet_id()
         if not registry_id:
             raise SheetsSourceError("REGISTRY_SPREADSHEET_ID is not configured.")
-        email = str(member_data.get("email") or "").strip().lower()
-        if not email.endswith("@nyu.edu"):
-            raise ValueError("Email must end with @nyu.edu.")
+        from budget.member_accounts import validate_member_email
+
+        email = validate_member_email(member_data.get("email"))
         display_name = str(member_data.get("display_name") or "").strip() or email
         role = str(member_data.get("role") or "member").strip().lower()
         if role not in {"pi", "budget_manager", "lead", "member"}:
