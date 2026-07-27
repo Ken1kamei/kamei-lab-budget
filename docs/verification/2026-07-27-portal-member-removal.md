@@ -23,6 +23,7 @@ Date: 2026-07-27
   `https://member-remove-fix---kamei-lab-budget-web-staging-7id3bdyliq-ww.a.run.app`
 - Production URL:
   `https://kamei-lab-budget-web-staging-7id3bdyliq-ww.a.run.app`
+- Final traffic: `kamei-lab-budget-web-staging-00056-cas=100%`
 - Rollback target: `kamei-lab-budget-web-staging-00053-koz=100%`
 
 ## Verification
@@ -40,7 +41,10 @@ Date: 2026-07-27
 - The candidate Portal retained all three app cards, the seven-column Google
   Calendar, connected `KameiLab_NYUAD` Slack content with seven messages, and no
   page-level horizontal overflow.
-- Cloud Run ERROR logs for the verified candidate returned no entries.
+- The production Registry showed six active members and omitted both removed
+  accounts and their inactive app roles.
+- Cloud Run ERROR logs for the verified candidate and production revision
+  returned no entries.
 
 ## Rollback
 
