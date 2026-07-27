@@ -42,8 +42,11 @@ def test_cloud_source_rebuilds_portal_integration_static_assets():
     portal_css = (
         REPO_ROOT / "web_app" / "budget" / "static" / "budget" / "app.css"
     ).read_text(encoding="utf-8")
+    start_script = (REPO_ROOT / "web_app" / "start.sh").read_text(encoding="utf-8")
 
     assert "staticfiles" in cloudignore
+    assert "python manage.py collectstatic --noinput --clear" in start_script
+    assert start_script.index("collectstatic") < start_script.index("exec gunicorn")
     assert ".portal-integrations" in portal_css
     assert ".week-calendar" in portal_css
     assert ".slack-messages" in portal_css

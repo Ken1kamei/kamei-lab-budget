@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+python manage.py collectstatic --noinput --clear
+
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   python manage.py migrate --noinput
 fi
