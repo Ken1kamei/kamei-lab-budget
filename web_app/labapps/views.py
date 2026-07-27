@@ -418,10 +418,10 @@ def portal_admin(request):
         request,
         "labapps/portal_admin.html",
         {
-            "members": members,
+            "members": _active(members),
             "teams": teams,
             "apps": apps,
-            "roles": roles,
+            "roles": _active(roles),
             "member_lookup": _member_lookup(),
             "member_form": member_form,
             "team_form": team_form,

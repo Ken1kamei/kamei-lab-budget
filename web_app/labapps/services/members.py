@@ -2,7 +2,7 @@ from datetime import date
 
 from django.conf import settings
 
-from budget.member_accounts import validate_member_email
+from budget.member_accounts import normalize_member_email, validate_member_email
 from budget.models import LabMember
 from labapps.models import SlackConnection
 from labapps.permissions import truthy
@@ -16,7 +16,9 @@ from .sheets import (
 
 
 def sync_iap_allowlist_member(payload):
-    email = validate_member_email(payload.get("email"))
+    email = normalize_member_email(payload.get("email"))
+    if not email:
+        raise ValueError("The member email is missing.")
     global_role = str(payload.get("global_role") or "").strip().lower()
     highest_role = {
         "pi": "pi",
@@ -78,7 +80,7 @@ def upsert_member_access(cleaned, *, actor):
 
 
 def remove_member_access(member_id, *, actor):
-    actor = str(actor or "").strip().lower()
+    actor = normalize_member_email(actor)
     member = next(
         (
             row
@@ -89,8 +91,10 @@ def remove_member_access(member_id, *, actor):
     )
     if member is None:
         raise ValueError("The selected member no longer exists.")
-    email = validate_member_email(member.get("email"))
-    if email == settings.PI_EMAIL:
+    email = normalize_member_email(member.get("email"))
+    if not email:
+        raise ValueError("The selected member has no email address.")
+    if email == normalize_member_email(settings.PI_EMAIL):
         raise ValueError("The configured PI account cannot be removed.")
     if email == actor:
         raise ValueError("You cannot remove your own Portal access.")

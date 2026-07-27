@@ -839,6 +839,52 @@ def test_portal_member_remove_revokes_all_access_and_slack(
     assert not SlackConnection.objects.filter(portal_email="member@nyu.edu").exists()
 
 
+def test_portal_member_remove_allows_revoking_legacy_unapproved_email(
+    monkeypatch,
+    settings,
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    seed_pi()
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "member@example.edu",
+            "name": "Legacy member",
+            "display_name": "Legacy member",
+            "global_role": "member",
+            "active": "TRUE",
+        },
+    )
+    LabMember.objects.create(
+        email="member@example.edu",
+        display_name="Legacy member",
+        highest_role="member",
+        active=True,
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
+
+    response = signed_in_client().post(
+        "/portal/admin/",
+        {"action": "member_remove", "member_id": "M002"},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert b"Legacy member" not in response.content
+    assert SheetRecord.objects.get(
+        table_name="Members", record_id="M002"
+    ).payload["active"] == "FALSE"
+    assert LabMember.objects.get(email="member@example.edu").active is False
+
+
 def test_portal_member_remove_protects_pi_and_non_admin_access(settings):
     settings.PI_EMAIL = "kk4801@nyu.edu"
     seed_pi()
