@@ -29,3 +29,21 @@ def test_web_runtime_does_not_reference_legacy_app():
                 offenders.append(str(path.relative_to(REPO_ROOT)))
 
     assert offenders == []
+
+
+def test_cloud_source_rebuilds_portal_integration_static_assets():
+    cloudignore = {
+        line.strip().rstrip("/")
+        for line in (REPO_ROOT / "web_app" / ".gcloudignore").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    portal_css = (
+        REPO_ROOT / "web_app" / "budget" / "static" / "budget" / "app.css"
+    ).read_text(encoding="utf-8")
+
+    assert "staticfiles" in cloudignore
+    assert ".portal-integrations" in portal_css
+    assert ".week-calendar" in portal_css
+    assert ".slack-messages" in portal_css
