@@ -5,6 +5,7 @@ import secrets
 from datetime import date
 
 from django import forms as django_forms
+from django.conf import settings
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import F, Q
@@ -29,7 +30,7 @@ from .forms import (
     ReviewForm,
     TeamForm,
 )
-from .models import KnowledgeRecord, LabAppAudit, SheetRecord
+from .models import KnowledgeRecord, LabAppAudit, SheetRecord, SlackConnection
 from .permissions import (
     app_role,
     app_roles,
@@ -46,6 +47,7 @@ from .services.gantt import (
     parse_gantt_workbook,
     resolve_gantt_rows,
 )
+from .services.calendar import lab_calendar_week
 from .services.knowledge import (
     EXTRACTED_METADATA_KEYS,
     extract_knowledge_metadata,
@@ -70,6 +72,14 @@ from .services.storage import (
     open_knowledge_file,
     read_knowledge_file,
     store_knowledge_file,
+)
+from .services.slack import (
+    SlackIntegrationError,
+    encrypt_token,
+    exchange_code,
+    oauth_authorize_url,
+    slack_configured,
+    slack_workspace_context,
 )
 
 
@@ -117,6 +127,37 @@ def _sync_iap_allowlist_member(payload):
     )
 
 
+def _portal_slack_context(request):
+    if not slack_configured():
+        return {
+            "status": "not_configured",
+            "workspace_name": settings.SLACK_TEAM_NAME,
+        }
+    connection = SlackConnection.objects.filter(portal_email=_email(request)).first()
+    if not connection:
+        return {
+            "status": "disconnected",
+            "workspace_name": settings.SLACK_TEAM_NAME,
+        }
+    if not connection.confirmed:
+        return {
+            "status": "confirm",
+            "connection": connection,
+            "workspace_name": settings.SLACK_TEAM_NAME,
+        }
+    try:
+        return slack_workspace_context(
+            connection, str(request.GET.get("slack_channel") or "").strip()
+        )
+    except SlackIntegrationError as error:
+        return {
+            "status": "error",
+            "connection": connection,
+            "message": str(error),
+            "workspace_name": settings.SLACK_TEAM_NAME,
+        }
+
+
 @registry_access
 def portal(request):
     member = current_registry_member(request)
@@ -151,7 +192,119 @@ def portal(request):
         "projects": len(snapshot_rows("Projects")),
         "protocols": KnowledgeRecord.objects.filter(record_type="protocol").count(),
     }
-    return render(request, "labapps/portal.html", {"cards": visible, "counts": counts, "member": member})
+    return render(
+        request,
+        "labapps/portal.html",
+        {
+            "cards": visible,
+            "counts": counts,
+            "member": member,
+            "calendar": lab_calendar_week(),
+            "slack": _portal_slack_context(request),
+        },
+    )
+
+
+@registry_access
+def slack_connect(request):
+    if not slack_configured():
+        messages.error(request, "Slack integration has not been configured by the PI yet.")
+        return redirect(f"{reverse('labapps:portal')}#slack")
+    state = secrets.token_urlsafe(32)
+    request.session["slack_oauth_state"] = state
+    return redirect(oauth_authorize_url(state))
+
+
+@registry_access
+def slack_callback(request):
+    expected_state = request.session.pop("slack_oauth_state", "")
+    supplied_state = str(request.GET.get("state") or "")
+    if not expected_state or not secrets.compare_digest(expected_state, supplied_state):
+        messages.error(request, "Slack authorization could not be verified. Please try again.")
+        return redirect(f"{reverse('labapps:portal')}#slack")
+    if request.GET.get("error"):
+        messages.error(request, "Slack authorization was cancelled.")
+        return redirect(f"{reverse('labapps:portal')}#slack")
+    code = str(request.GET.get("code") or "").strip()
+    if not code:
+        messages.error(request, "Slack did not return an authorization code.")
+        return redirect(f"{reverse('labapps:portal')}#slack")
+    try:
+        identity = exchange_code(code)
+        connection, _ = SlackConnection.objects.update_or_create(
+            portal_email=_email(request),
+            defaults={
+                "slack_team_id": identity["team_id"],
+                "slack_team_name": identity["team_name"],
+                "slack_user_id": identity["user_id"],
+                "slack_user_name": identity["user_name"],
+                "slack_email": identity["email"],
+                "access_token_ciphertext": encrypt_token(identity["token"]),
+                "scopes": identity["scopes"],
+                "confirmed": False,
+            },
+        )
+        LabAppAudit.objects.create(
+            actor=_email(request),
+            app_id="portal",
+            action="slack_identity_pending",
+            target=f"{connection.slack_team_id}/{connection.slack_user_id}",
+            after={
+                "workspace": connection.slack_team_name,
+                "slack_user": connection.slack_user_name,
+                "slack_email": connection.slack_email,
+            },
+        )
+    except (SlackIntegrationError, ValueError) as error:
+        messages.error(request, f"Slack connection failed: {error}")
+        return redirect(f"{reverse('labapps:portal')}#slack")
+    return redirect(f"{reverse('labapps:portal')}?slack_confirm=1#slack")
+
+
+@registry_access
+@require_POST
+def slack_confirm(request):
+    connection = SlackConnection.objects.filter(portal_email=_email(request)).first()
+    if not connection:
+        messages.error(request, "No pending Slack account was found.")
+        return redirect(f"{reverse('labapps:portal')}#slack")
+    if request.POST.get("decision") == "confirm":
+        connection.confirmed = True
+        connection.save(update_fields=["confirmed", "updated_at"])
+        LabAppAudit.objects.create(
+            actor=_email(request),
+            app_id="portal",
+            action="slack_identity_confirmed",
+            target=f"{connection.slack_team_id}/{connection.slack_user_id}",
+            after={"workspace": connection.slack_team_name, "slack_user": connection.slack_user_name},
+        )
+        messages.success(request, f"Slack connected as {connection.slack_user_name}.")
+    else:
+        LabAppAudit.objects.create(
+            actor=_email(request),
+            app_id="portal",
+            action="slack_identity_rejected",
+            target=f"{connection.slack_team_id}/{connection.slack_user_id}",
+        )
+        connection.delete()
+        messages.info(request, "Slack account connection was cancelled.")
+    return redirect(f"{reverse('labapps:portal')}#slack")
+
+
+@registry_access
+@require_POST
+def slack_disconnect(request):
+    connection = SlackConnection.objects.filter(portal_email=_email(request)).first()
+    if connection:
+        LabAppAudit.objects.create(
+            actor=_email(request),
+            app_id="portal",
+            action="slack_disconnected",
+            target=f"{connection.slack_team_id}/{connection.slack_user_id}",
+        )
+        connection.delete()
+    messages.success(request, "Slack account disconnected.")
+    return redirect(f"{reverse('labapps:portal')}#slack")
 
 
 @lab_app_access("budget", admin=True)

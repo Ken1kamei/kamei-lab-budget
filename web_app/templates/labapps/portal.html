@@ -37,5 +37,111 @@
   <div class="panel empty">No app roles are assigned to your account.</div>
   {% endfor %}
 </section>
+
+<div class="section-heading portal-integrations-heading">
+  <div><span class="eyebrow">This week</span><h2>Lab schedule and communication</h2></div>
+  <span>Times shown in Dubai time</span>
+</div>
+<section class="portal-integrations" aria-label="Lab calendar and Slack workspace">
+  <article class="panel portal-calendar" id="calendar">
+    <header class="integration-head">
+      <div>
+        <span class="integration-kicker">Google Calendar</span>
+        <h2>Lab calendar</h2>
+      </div>
+      <span class="integration-period">{{ calendar.week_label }}</span>
+    </header>
+    {% if calendar.status == 'ready' %}
+    <div class="week-calendar" aria-label="Events for {{ calendar.week_label }}">
+      {% for day in calendar.days %}
+      <section class="calendar-day{% if day.events %} has-events{% endif %}">
+        <header><strong>{{ day.label }}</strong><span>{{ day.date_label }}</span></header>
+        <div class="calendar-events">
+          {% for event in day.events %}
+          {% if event.url %}<a class="calendar-event" href="{{ event.url }}" target="_blank" rel="noopener noreferrer">{% else %}<div class="calendar-event">{% endif %}
+            <span>{{ event.time_label }}</span>
+            <strong>{{ event.title }}</strong>
+            {% if event.location %}<small>{{ event.location }}</small>{% endif %}
+          {% if event.url %}</a>{% else %}</div>{% endif %}
+          {% empty %}<span class="calendar-empty">No events</span>{% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="integration-empty">
+      <strong>Calendar connection pending</strong>
+      <p>{{ calendar.message }}</p>
+      {% if lab_apps_admin %}<small>Share <b>nyuadkameilab@gmail.com</b> with <b>budget-app@kamei-lab-budget.iam.gserviceaccount.com</b> as “See all event details”.</small>{% endif %}
+    </div>
+    {% endif %}
+  </article>
+
+  <article class="panel portal-slack" id="slack">
+    <header class="integration-head">
+      <div>
+        <span class="integration-kicker">Slack</span>
+        <h2>KameiLab_NYUAD</h2>
+      </div>
+      {% if slack.status == 'ready' %}<span class="status ready">Connected</span>{% endif %}
+    </header>
+
+    {% if slack.status == 'not_configured' %}
+    <div class="integration-empty">
+      <strong>Slack setup pending</strong>
+      <p>The workspace connection is being prepared by the PI.</p>
+    </div>
+    {% elif slack.status == 'disconnected' %}
+    <div class="integration-empty slack-connect-prompt">
+      <strong>Connect your Slack account</strong>
+      <p>Your Portal account does not expose Slack content until you choose and confirm your own <b>{{ slack.workspace_name }}</b> account.</p>
+      <a class="button primary" href="{% url 'labapps:slack_connect' %}">Connect Slack</a>
+    </div>
+    {% elif slack.status == 'confirm' %}
+    <div class="slack-confirmation" role="status">
+      <span class="integration-kicker">Confirm once</span>
+      <h3>Use this Slack account?</h3>
+      <dl>
+        <div><dt>Workspace</dt><dd>{{ slack.connection.slack_team_name }}</dd></div>
+        <div><dt>Account</dt><dd>{{ slack.connection.slack_user_name }}</dd></div>
+        {% if slack.connection.slack_email %}<div><dt>Email</dt><dd>{{ slack.connection.slack_email }}</dd></div>{% endif %}
+      </dl>
+      <form method="post" action="{% url 'labapps:slack_confirm' %}" class="slack-confirm-actions">{% csrf_token %}
+        <button class="button primary" type="submit" name="decision" value="confirm">Yes, use this account</button>
+        <button class="button secondary" type="submit" name="decision" value="cancel">Choose another account</button>
+      </form>
+    </div>
+    {% elif slack.status == 'error' %}
+    <div class="integration-empty">
+      <strong>Slack needs attention</strong>
+      <p>{{ slack.message }}</p>
+      <a class="button secondary" href="{% url 'labapps:slack_connect' %}">Reconnect Slack</a>
+    </div>
+    {% elif slack.status == 'ready' %}
+    <div class="slack-account-row">
+      <span>Signed in as <strong>{{ slack.connection.slack_user_name }}</strong></span>
+      <form method="post" action="{% url 'labapps:slack_disconnect' %}">{% csrf_token %}<button class="text-button" type="submit">Disconnect</button></form>
+    </div>
+    {% if slack.conversations %}
+    <form method="get" action="{% url 'labapps:portal' %}#slack" class="slack-channel-picker">
+      <label for="slack-channel">Conversation</label>
+      <select id="slack-channel" name="slack_channel" onchange="this.form.submit()">
+        {% for conversation in slack.conversations %}<option value="{{ conversation.id }}" {% if slack.selected.id == conversation.id %}selected{% endif %}>{{ conversation.name }}</option>{% endfor %}
+      </select>
+      <noscript><button class="button secondary" type="submit">Open</button></noscript>
+    </form>
+    <div class="slack-messages" aria-live="polite">
+      {% for message in slack.messages %}
+      <article class="slack-message">
+        <header><strong>{{ message.user_label }}</strong><time>{{ message.time_label }}</time></header>
+        <p>{{ message.text|urlize|linebreaksbr }}</p>
+      </article>
+      {% empty %}<p class="calendar-empty">No recent messages in this conversation.</p>{% endfor %}
+    </div>
+    <a class="button secondary slack-open" href="{{ slack.workspace_url }}" target="_blank" rel="noopener noreferrer">Open in Slack</a>
+    {% else %}<div class="integration-empty"><p>No accessible conversations were returned for this Slack account.</p></div>{% endif %}
+    {% endif %}
+  </article>
+</section>
 </div>
 {% endblock %}

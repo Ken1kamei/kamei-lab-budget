@@ -148,6 +148,20 @@ GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
 GOOGLE_OAUTH_REDIRECT_URI = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
 IAP_EXPECTED_AUDIENCE = os.environ.get("IAP_EXPECTED_AUDIENCE", "").strip()
+LAB_CALENDAR_ID = os.environ.get(
+    "LAB_CALENDAR_ID", "nyuadkameilab@gmail.com"
+).strip()
+LAB_CALENDAR_TIME_ZONE = os.environ.get(
+    "LAB_CALENDAR_TIME_ZONE", "Asia/Dubai"
+).strip()
+SLACK_CLIENT_ID = os.environ.get("SLACK_CLIENT_ID", "").strip()
+SLACK_CLIENT_SECRET = os.environ.get("SLACK_CLIENT_SECRET", "").strip()
+SLACK_REDIRECT_URI = os.environ.get("SLACK_REDIRECT_URI", "").strip()
+SLACK_TEAM_ID = os.environ.get("SLACK_TEAM_ID", "").strip()
+SLACK_TEAM_NAME = os.environ.get("SLACK_TEAM_NAME", "KameiLab_NYUAD").strip()
+SLACK_TOKEN_ENCRYPTION_KEY = os.environ.get(
+    "SLACK_TOKEN_ENCRYPTION_KEY", ""
+).strip()
 MASTER_SPREADSHEET_ID = os.environ.get("MASTER_SPREADSHEET_ID", "")
 REGISTRY_SPREADSHEET_ID = os.environ.get(
     "REGISTRY_SPREADSHEET_ID", ""

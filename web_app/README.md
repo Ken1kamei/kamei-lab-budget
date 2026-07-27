@@ -40,6 +40,10 @@ The gateway requests a read-only Sheets scope unless `ENABLE_SHEET_WRITES=true`.
 - Project, milestone, experiment, review, and next-action workflows at `/tracker/`,
   including per-project Excel Gantt import, preview, and timeline display.
 - Searchable protocol and notebook registry plus private uploads at `/knowledge/`.
+- Portal weekly view of the private lab Google Calendar using read-only service
+  account access.
+- Per-user Slack OAuth, one-time identity confirmation, and an encrypted private
+  connection to each member's accessible `KameiLab_NYUAD` conversations.
 
 ## Production requirements
 
@@ -49,6 +53,11 @@ The gateway requests a read-only Sheets scope unless `ENABLE_SHEET_WRITES=true`.
 - A separate private GCS bucket configured through `KNOWLEDGE_BUCKET`; public
   access prevention and uniform bucket-level access must remain enabled.
 - Cloud Run IAP with `IAP_EXPECTED_AUDIENCE` and the approved NYU users.
+- The Calendar API enabled and `nyuadkameilab@gmail.com` shared with the Cloud
+  Run service account as **See all event details**.
+- A `KameiLab_NYUAD` Slack app configured with the callback and user scopes in
+  `docs/setup-guide.md`; Slack OAuth credentials and the Fernet encryption key
+  must be provided through Secret Manager.
 - `ENABLE_SHEET_WRITES=true` only after the PostgreSQL migration and smoke test.
 - `SHEET_WRITE_ALLOWED_EMAILS` set to the accounts permitted for the rollout;
   `*` enables each role's normal application permission.

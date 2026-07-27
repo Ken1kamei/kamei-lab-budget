@@ -70,3 +70,24 @@ class LabAppAudit(models.Model):
     class Meta:
         ordering = ["-timestamp", "-id"]
         indexes = [models.Index(fields=["app_id", "-timestamp"])]
+
+
+class SlackConnection(models.Model):
+    portal_email = models.EmailField(unique=True)
+    slack_team_id = models.CharField(max_length=32)
+    slack_team_name = models.CharField(max_length=160)
+    slack_user_id = models.CharField(max_length=32)
+    slack_user_name = models.CharField(max_length=160)
+    slack_email = models.EmailField(blank=True)
+    access_token_ciphertext = models.TextField()
+    scopes = models.JSONField(default=list, blank=True)
+    confirmed = models.BooleanField(default=False)
+    connected_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["portal_email"]
+        indexes = [models.Index(fields=["slack_team_id", "slack_user_id"])]
+
+    def __str__(self):
+        return f"{self.portal_email} -> {self.slack_team_name}/{self.slack_user_name}"

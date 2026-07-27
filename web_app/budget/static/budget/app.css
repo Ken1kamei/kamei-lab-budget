@@ -321,12 +321,64 @@ details summary { color: var(--cyan); cursor: pointer; margin-top: 6px; }
 .viewer-empty h2 { margin: 8px 0; font-size: 24px; }
 .viewer-empty p { max-width: 520px; margin: 0; color: var(--muted); line-height: 1.55; }
 
+/* Portal integrations */
+.portal-integrations-heading { margin-top: 34px; }
+.portal-integrations { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, .65fr); gap: 14px; align-items: stretch; }
+.portal-integrations > .panel { min-width: 0; min-height: 480px; padding: 22px; }
+.integration-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+.integration-head h2 { margin: 4px 0 0; font-size: 20px; }
+.integration-kicker { color: var(--cyan); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.integration-period { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.week-calendar { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); min-height: 370px; border: 1px solid var(--border); overflow-x: auto; }
+.calendar-day { min-width: 92px; border-left: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 92%, transparent); }
+.calendar-day:first-child { border-left: 0; }
+.calendar-day > header { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+.calendar-day > header strong { color: var(--text); font-size: 11px; text-transform: uppercase; }
+.calendar-events { display: grid; align-content: start; gap: 7px; padding: 8px; }
+.calendar-event { display: grid; gap: 3px; min-width: 0; padding: 9px; border-left: 3px solid var(--cyan); border-radius: 0 4px 4px 0; background: var(--surface-2); color: var(--text); text-decoration: none; }
+.calendar-event:hover { background: var(--surface-3); }
+.calendar-event span, .calendar-event small { color: var(--muted); font-size: 10px; }
+.calendar-event strong { overflow-wrap: anywhere; font-size: 12px; line-height: 1.35; }
+.calendar-empty { display: block; padding: 8px 2px; color: var(--muted); font-size: 11px; }
+.integration-empty { min-height: 330px; display: grid; align-content: center; justify-items: start; gap: 9px; padding: 28px; border: 1px dashed var(--border); background: var(--surface-2); }
+.integration-empty strong { font-size: 18px; }
+.integration-empty p { max-width: 54ch; margin: 0; color: var(--muted); line-height: 1.55; }
+.integration-empty small { color: var(--muted); line-height: 1.55; overflow-wrap: anywhere; }
+.slack-confirmation { padding: 22px; border: 1px solid var(--cyan); background: var(--surface-2); }
+.slack-confirmation h3 { margin: 8px 0 16px; font-size: 22px; }
+.slack-confirmation dl { display: grid; gap: 1px; margin: 0 0 20px; background: var(--border); }
+.slack-confirmation dl div { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 10px 12px; background: var(--surface); }
+.slack-confirmation dt { color: var(--muted); }
+.slack-confirmation dd { margin: 0; overflow-wrap: anywhere; }
+.slack-confirm-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.slack-account-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 15px; color: var(--muted); font-size: 12px; }
+.text-button { padding: 0; border: 0; background: transparent; color: var(--cyan); cursor: pointer; font: inherit; }
+.slack-channel-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; margin-bottom: 12px; }
+.slack-channel-picker label { color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
+.slack-messages { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); }
+.slack-message { padding: 11px 12px; border-bottom: 1px solid var(--border); }
+.slack-message:last-child { border-bottom: 0; }
+.slack-message header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.slack-message header strong { font-size: 12px; }
+.slack-message time { color: var(--muted); font-size: 10px; }
+.slack-message p { margin: 6px 0 0; overflow-wrap: anywhere; font-size: 12px; line-height: 1.45; }
+.slack-message p a { color: var(--cyan); }
+.slack-open { margin-top: 12px; }
+
 @media (max-width: 1180px) {
+  .portal-integrations { grid-template-columns: 1fr; }
+  .portal-integrations > .panel { min-height: 0; }
   .knowledge-console .knowledge-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .knowledge-workspace { grid-template-columns: 1fr; }
   .knowledge-results-panel { position: static; min-height: 0; }
 }
 @media (max-width: 760px) {
+  .portal-integrations > .panel { padding: 16px; }
+  .integration-head { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .week-calendar { grid-template-columns: repeat(7, minmax(150px, 1fr)); min-height: 300px; }
+  .integration-empty { min-height: 240px; padding: 20px; }
+  .slack-channel-picker { grid-template-columns: 1fr; }
+  .slack-confirm-actions { display: grid; grid-template-columns: 1fr; }
   .shell-knowledge .sidebar { width: auto; padding: 16px 18px; }
   .shell-knowledge .content { margin-left: 0; padding: 24px 16px 52px; }
   .knowledge-console .knowledge-head h1 { font-size: 28px; }

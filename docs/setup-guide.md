@@ -120,6 +120,48 @@ To import an invoice email manually: open Gmail → find the email → apply the
 All Portal cards use internal Django routes. Registry `app_url` values are
 retained only as historical metadata and cannot redirect users to legacy apps.
 
+### Portal weekly Calendar
+
+The Portal reads one private shared calendar with the Cloud Run service account;
+individual lab members do not need direct access to the Google Calendar account.
+
+1. Sign in to Google Calendar as `nyuadkameilab@gmail.com`.
+2. Open **Settings and sharing** for the lab calendar.
+3. Under **Share with specific people or groups**, add
+   `budget-app@kamei-lab-budget.iam.gserviceaccount.com`.
+4. Select **See all event details**. Do not make the calendar public.
+5. Enable the Google Calendar API in project `kamei-lab-budget`.
+6. Keep `LAB_CALENDAR_ID=nyuadkameilab@gmail.com` and
+   `LAB_CALENDAR_TIME_ZONE=Asia/Dubai` on Cloud Run.
+
+The Portal requests read-only access and displays the current Monday-Sunday
+week. If Calendar is temporarily unavailable, the three lab apps continue to
+work and only the Calendar panel shows an unavailable state.
+
+### Personal Slack connection
+
+Create a Slack app for the `KameiLab_NYUAD` workspace. Each Portal user connects
+their own Slack account; the application asks them to confirm the selected
+account once before showing any conversations.
+
+1. Add this exact OAuth Redirect URL:
+   `https://kamei-lab-budget-web-staging-7id3bdyliq-ww.a.run.app/portal/slack/callback/`
+2. Add these **User Token Scopes**:
+   `channels:read`, `groups:read`, `im:read`, `mpim:read`,
+   `channels:history`, `groups:history`, `im:history`, `mpim:history`,
+   `users:read`, and `users:read.email`.
+3. Install the app to `KameiLab_NYUAD` and record the workspace Team ID.
+4. Store the Client ID, Client Secret, and a generated Fernet key in Secret
+   Manager. Never place a Slack user token in source code or plain Cloud Run
+   environment variables.
+5. Set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`,
+   `SLACK_TEAM_ID`, `SLACK_TEAM_NAME=KameiLab_NYUAD`, and
+   `SLACK_TOKEN_ENCRYPTION_KEY` on Cloud Run.
+
+Slack user tokens are encrypted before PostgreSQL storage. Connections are
+looked up by the signed-in Portal email, and only conversations available to
+that confirmed Slack identity are requested.
+
 ---
 
 ## Step 8A — Configure PI My Drive Fiscal-Year Creation
