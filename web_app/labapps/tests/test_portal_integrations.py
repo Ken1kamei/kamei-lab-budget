@@ -107,6 +107,90 @@ def test_calendar_groups_timed_and_all_day_events_for_current_week(
     assert request_params["timeZone"] == "Asia/Dubai"
 
 
+@override_settings(
+    LAB_CALENDAR_ID="lab@example.com",
+    LAB_CALENDAR_SOURCES="BSC1 (hESC/hiPSC)|bsc1@example.com;Confocal (Evident)|confocal@example.com",
+    LAB_CALENDAR_TIME_ZONE="Asia/Dubai",
+)
+@patch("labapps.services.calendar.AuthorizedSession")
+@patch("labapps.services.calendar.google.auth.default")
+def test_calendar_merges_multiple_shared_calendars_with_source_labels(
+    mock_default, mock_authorized_session
+):
+    cache.clear()
+    mock_default.return_value = (Mock(), "kamei-lab-budget")
+
+    def calendar_response(event_id, title, hour):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "items": [
+                {
+                    "id": event_id,
+                    "summary": title,
+                    "start": {"dateTime": f"2026-07-29T{hour:02d}:00:00+04:00"},
+                    "end": {"dateTime": f"2026-07-29T{hour + 1:02d}:00:00+04:00"},
+                }
+            ]
+        }
+        return response
+
+    mock_authorized_session.return_value.get.side_effect = [
+        calendar_response("lab", "Lab meeting", 11),
+        calendar_response("bsc1", "BSC1 booking", 9),
+        calendar_response("confocal", "Confocal booking", 10),
+    ]
+
+    result = lab_calendar_week(
+        datetime(2026, 7, 29, 12, tzinfo=ZoneInfo("Asia/Dubai"))
+    )
+
+    assert [source["label"] for source in result["sources"]] == [
+        "Lab calendar",
+        "BSC1 (hESC/hiPSC)",
+        "Confocal (Evident)",
+    ]
+    assert [event["title"] for event in result["days"][2]["events"]] == [
+        "BSC1 booking",
+        "Confocal booking",
+        "Lab meeting",
+    ]
+    assert [event["calendar_color_index"] for event in result["days"][2]["events"]] == [
+        1,
+        2,
+        0,
+    ]
+
+
+@override_settings(
+    LAB_CALENDAR_ID="lab@example.com",
+    LAB_CALENDAR_SOURCES="BSC1|bsc1@example.com",
+    LAB_CALENDAR_TIME_ZONE="Asia/Dubai",
+)
+@patch("labapps.services.calendar.AuthorizedSession")
+@patch("labapps.services.calendar.google.auth.default")
+def test_calendar_keeps_available_sources_when_one_shared_calendar_fails(
+    mock_default, mock_authorized_session
+):
+    cache.clear()
+    mock_default.return_value = (Mock(), "kamei-lab-budget")
+    available = Mock()
+    available.raise_for_status.return_value = None
+    available.json.return_value = {"items": []}
+    mock_authorized_session.return_value.get.side_effect = [
+        available,
+        RuntimeError("calendar denied"),
+    ]
+
+    result = lab_calendar_week(
+        datetime(2026, 7, 29, 12, tzinfo=ZoneInfo("Asia/Dubai"))
+    )
+
+    assert result["status"] == "ready"
+    assert result["unavailable_sources"] == ["BSC1"]
+    assert result["message"] == "Some shared calendars are temporarily unavailable."
+
+
 @override_settings(**SLACK_SETTINGS)
 def test_slack_token_is_encrypted_at_rest():
     ciphertext = encrypt_token("xoxp-private-token")
@@ -244,4 +328,3 @@ def test_invalid_slack_oauth_state_is_rejected_without_writing_connection():
 
     assert response.status_code == 302
     assert not SlackConnection.objects.exists()
-

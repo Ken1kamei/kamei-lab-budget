@@ -122,21 +122,35 @@ retained only as historical metadata and cannot redirect users to legacy apps.
 
 ### Portal weekly Calendar
 
-The Portal reads one private shared calendar with the Cloud Run service account;
-individual lab members do not need direct access to the Google Calendar account.
+The Portal reads the private lab and facility calendars with the Cloud Run
+service account. Individual lab members do not need direct access to the Google
+Calendar account.
 
 1. Sign in to Google Calendar as `nyuadkameilab@gmail.com`.
-2. Open **Settings and sharing** for the lab calendar.
+2. Open **Settings and sharing** for each calendar that should appear in the
+   Portal.
 3. Under **Share with specific people or groups**, add
    `budget-app@kamei-lab-budget.iam.gserviceaccount.com`.
 4. Select **See all event details**. Do not make the calendar public.
 5. Enable the Google Calendar API in project `kamei-lab-budget`.
-6. Keep `LAB_CALENDAR_ID=nyuadkameilab@gmail.com` and
+6. Keep `LAB_CALENDAR_ID=nyuadkameilab@gmail.com` for the main calendar and
    `LAB_CALENDAR_TIME_ZONE=Asia/Dubai` on Cloud Run.
+7. Copy each additional **Calendar ID** from **Integrate calendar**, then set
+   `LAB_CALENDAR_SOURCES` as semicolon-separated `display name|calendar ID`
+   entries. For example:
 
-The Portal requests read-only access and displays the current Monday-Sunday
-week. If Calendar is temporarily unavailable, the three lab apps continue to
-work and only the Calendar panel shows an unavailable state.
+   ```text
+   BSC1 (hESC/hiPSC)|calendar-id-1;BSC2 (Differentiation/Cell culture)|calendar-id-2;Confocal (Evident)|calendar-id-3
+   ```
+
+The configured calendars are merged into one Monday-Sunday view. The legend
+uses a stable color for each calendar. If one shared calendar is temporarily
+unavailable, the remaining calendars and the other Portal apps continue to
+work; the unavailable source is reported without exposing event data.
+
+The Portal requests read-only access only. Sharing a calendar with the service
+account does not add it to the service account's Calendar list, so every
+additional Calendar ID must be included explicitly in `LAB_CALENDAR_SOURCES`.
 
 ### Personal Slack connection
 

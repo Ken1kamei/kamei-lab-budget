@@ -54,15 +54,22 @@
       <span class="integration-period">{{ calendar.week_label }}</span>
     </header>
     {% if calendar.status == 'ready' %}
+    {% if calendar.sources %}
+    <div class="calendar-legend" aria-label="Displayed calendars">
+      {% for source in calendar.sources %}<span><i class="calendar-color-{{ source.color_index }}" aria-hidden="true"></i>{{ source.label }}</span>{% endfor %}
+    </div>
+    {% endif %}
+    {% if calendar.message %}<p class="calendar-note">{{ calendar.message }}</p>{% endif %}
     <div class="week-calendar" aria-label="Events for {{ calendar.week_label }}">
       {% for day in calendar.days %}
       <section class="calendar-day{% if day.events %} has-events{% endif %}">
         <header><strong>{{ day.label }}</strong><span>{{ day.date_label }}</span></header>
         <div class="calendar-events">
           {% for event in day.events %}
-          {% if event.url %}<a class="calendar-event" href="{{ event.url }}" target="_blank" rel="noopener noreferrer">{% else %}<div class="calendar-event">{% endif %}
+          {% if event.url %}<a class="calendar-event calendar-color-{{ event.calendar_color_index }}" href="{{ event.url }}" target="_blank" rel="noopener noreferrer">{% else %}<div class="calendar-event calendar-color-{{ event.calendar_color_index }}">{% endif %}
             <span>{{ event.time_label }}</span>
             <strong>{{ event.title }}</strong>
+            <small>{{ event.calendar_label }}</small>
             {% if event.location %}<small>{{ event.location }}</small>{% endif %}
           {% if event.url %}</a>{% else %}</div>{% endif %}
           {% empty %}<span class="calendar-empty">No events</span>{% endfor %}

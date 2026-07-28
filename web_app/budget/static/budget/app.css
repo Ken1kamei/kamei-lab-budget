@@ -337,13 +337,24 @@ details summary { color: var(--cyan); cursor: pointer; margin-top: 6px; }
 .integration-head h2 { margin: 4px 0 0; font-size: 20px; }
 .integration-kicker { color: var(--cyan); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .integration-period { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.calendar-legend { display: flex; flex-wrap: wrap; gap: 7px 14px; margin: -4px 0 14px; color: var(--muted); font-size: 11px; }
+.calendar-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.calendar-legend i { width: 8px; height: 8px; border-radius: 2px; background: var(--calendar-color); }
+.calendar-note { margin: -4px 0 12px; color: var(--amber); font-size: 11px; }
 .week-calendar { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); min-height: 370px; border: 1px solid var(--border); overflow-x: auto; }
 .calendar-day { min-width: 92px; border-left: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 92%, transparent); }
 .calendar-day:first-child { border-left: 0; }
 .calendar-day > header { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; }
 .calendar-day > header strong { color: var(--text); font-size: 11px; text-transform: uppercase; }
 .calendar-events { display: grid; align-content: start; gap: 7px; padding: 8px; }
-.calendar-event { display: grid; gap: 3px; min-width: 0; padding: 9px; border-left: 3px solid var(--cyan); border-radius: 0 4px 4px 0; background: var(--surface-2); color: var(--text); text-decoration: none; }
+.calendar-event { display: grid; gap: 3px; min-width: 0; padding: 9px; border-left: 3px solid var(--calendar-color, var(--cyan)); border-radius: 0 4px 4px 0; background: var(--surface-2); color: var(--text); text-decoration: none; }
+.calendar-color-0 { --calendar-color: #35d4c2; }
+.calendar-color-1 { --calendar-color: #e47c78; }
+.calendar-color-2 { --calendar-color: #4f8df7; }
+.calendar-color-3 { --calendar-color: #aa8de2; }
+.calendar-color-4 { --calendar-color: #76b947; }
+.calendar-color-5 { --calendar-color: #32b980; }
+.calendar-color-6 { --calendar-color: #b4145d; }
 .calendar-event:hover { background: var(--surface-3); }
 .calendar-event span, .calendar-event small { color: var(--muted); font-size: 10px; }
 .calendar-event strong { overflow-wrap: anywhere; font-size: 12px; line-height: 1.35; }

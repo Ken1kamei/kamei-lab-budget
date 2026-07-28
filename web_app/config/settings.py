@@ -159,6 +159,7 @@ IAP_EXPECTED_AUDIENCE = os.environ.get("IAP_EXPECTED_AUDIENCE", "").strip()
 LAB_CALENDAR_ID = os.environ.get(
     "LAB_CALENDAR_ID", "nyuadkameilab@gmail.com"
 ).strip()
+LAB_CALENDAR_SOURCES = os.environ.get("LAB_CALENDAR_SOURCES", "").strip()
 LAB_CALENDAR_TIME_ZONE = os.environ.get(
     "LAB_CALENDAR_TIME_ZONE", "Asia/Dubai"
 ).strip()
