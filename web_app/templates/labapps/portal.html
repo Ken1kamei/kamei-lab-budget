@@ -14,13 +14,21 @@
   </div>
 </header>
 
-<section class="metric-grid app-metric-grid portal-summary" aria-label="Lab registry summary">
-  {% if lab_apps_admin %}<a class="metric cyan metric-link" href="{% url 'labapps:portal_admin' %}#members" aria-label="Manage active members">{% else %}<article class="metric cyan">{% endif %}
-    <span>Active members</span><strong>{{ counts.members }}</strong><small>{% if lab_apps_admin %}Manage members <b aria-hidden="true">→</b>{% else %}Shared allowlist{% endif %}</small>
-  {% if lab_apps_admin %}</a>{% else %}</article>{% endif %}
-  <article class="metric magenta"><span>Teams</span><strong>{{ counts.teams }}</strong><small>Cross-team membership supported</small></article>
-  <article class="metric amber"><span>Projects</span><strong>{{ counts.projects }}</strong><small>Tracked research projects</small></article>
-  <article class="metric cyan"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>Private knowledge records</small></article>
+<div class="section-heading">
+  <div><span class="eyebrow">Workspace</span><h2>Open an app</h2></div>
+  <span>Access is based on your lab role</span>
+</div>
+<section class="app-card-grid" aria-label="Available lab apps">
+  {% for card in cards %}
+  <a class="app-card app-card-{{ card.app_id }}" href="{{ card.url }}">
+    <div class="app-card-top"><span class="app-code">0{{ forloop.counter }}</span><span class="status ready">{{ card.role }}</span></div>
+    <h3>{{ card.name }}</h3>
+    <p>{{ card.description }}</p>
+    <strong>Open app <span aria-hidden="true">→</span></strong>
+  </a>
+  {% empty %}
+  <div class="panel empty">No app roles are assigned to your account.</div>
+  {% endfor %}
 </section>
 
 <section class="action-center" aria-labelledby="action-center-title">
@@ -40,21 +48,13 @@
   </div>
 </section>
 
-<div class="section-heading">
-  <div><span class="eyebrow">Workspace</span><h2>Open an app</h2></div>
-  <span>Access is based on your lab role</span>
-</div>
-<section class="app-card-grid" aria-label="Available lab apps">
-  {% for card in cards %}
-  <a class="app-card app-card-{{ card.app_id }}" href="{{ card.url }}">
-    <div class="app-card-top"><span class="app-code">0{{ forloop.counter }}</span><span class="status ready">{{ card.role }}</span></div>
-    <h3>{{ card.name }}</h3>
-    <p>{{ card.description }}</p>
-    <strong>Open app <span aria-hidden="true">→</span></strong>
-  </a>
-  {% empty %}
-  <div class="panel empty">No app roles are assigned to your account.</div>
-  {% endfor %}
+<section class="metric-grid app-metric-grid portal-summary" aria-label="Lab registry summary">
+  {% if lab_apps_admin %}<a class="metric cyan metric-link" href="{% url 'labapps:portal_admin' %}#members" aria-label="Manage active members">{% else %}<article class="metric cyan">{% endif %}
+    <span>Active members</span><strong>{{ counts.members }}</strong><small>{% if lab_apps_admin %}Manage members <b aria-hidden="true">→</b>{% else %}Shared allowlist{% endif %}</small>
+  {% if lab_apps_admin %}</a>{% else %}</article>{% endif %}
+  <article class="metric magenta"><span>Teams</span><strong>{{ counts.teams }}</strong><small>Cross-team membership supported</small></article>
+  <article class="metric amber"><span>Projects</span><strong>{{ counts.projects }}</strong><small>Tracked research projects</small></article>
+  <article class="metric cyan"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>Private knowledge records</small></article>
 </section>
 
 <div class="section-heading portal-integrations-heading">

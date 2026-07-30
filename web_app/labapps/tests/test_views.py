@@ -269,6 +269,9 @@ def test_portal_action_panel_aggregates_tracker_and_budget_attention():
     assert "Needs attention" in content
     assert "Overdue" in content
     assert "Blocked" in content
+    assert content.index("Workspace") < content.index("Across your apps")
+    assert content.index("Across your apps") < content.index("Active members")
+    assert content.index("Active members") < content.index("This week")
     assert "Tracker 1 · invoices 1" in content
     assert "2 critical · highest 90%" not in content
     assert "0 critical · highest 90%" in content
