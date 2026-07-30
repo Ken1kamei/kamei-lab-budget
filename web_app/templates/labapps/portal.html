@@ -23,6 +23,23 @@
   <article class="metric cyan"><span>Protocols</span><strong>{{ counts.protocols }}</strong><small>Private knowledge records</small></article>
 </section>
 
+<section class="action-center" aria-labelledby="action-center-title">
+  <div class="section-heading action-center-heading">
+    <div><span class="eyebrow">Across your apps</span><h2 id="action-center-title">Needs attention</h2></div>
+    <span>As of {{ action_panel.as_of|date:"M j" }}{% if action_panel.fiscal_year %} · {{ action_panel.fiscal_year }}{% endif %}</span>
+  </div>
+  <div class="action-center-grid">
+    {% for item in action_panel.items %}{% if item.visible %}
+    <a class="action-tile action-tile-{{ item.tone }}" href="{{ item.url }}">
+      <span class="action-tile-label">{{ item.label }}</span>
+      <strong>{{ item.count }}</strong>
+      <small>{{ item.detail }}</small>
+      <b aria-hidden="true">→</b>
+    </a>
+    {% endif %}{% endfor %}
+  </div>
+</section>
+
 <div class="section-heading">
   <div><span class="eyebrow">Workspace</span><h2>Open an app</h2></div>
   <span>Access is based on your lab role</span>

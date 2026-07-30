@@ -46,6 +46,7 @@ from .services.gantt import (
     resolve_gantt_rows,
 )
 from .services.calendar import lab_calendar_week
+from .services.action_panel import build_action_panel
 from .services.knowledge import (
     EXTRACTED_METADATA_KEYS,
     extract_knowledge_metadata,
@@ -175,6 +176,7 @@ def portal(request):
             "cards": visible,
             "counts": counts,
             "member": member,
+            "action_panel": build_action_panel(member, _email(request)),
             "calendar": lab_calendar_week(),
             "slack": _portal_slack_context(request),
         },

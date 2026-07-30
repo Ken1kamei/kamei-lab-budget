@@ -1,4 +1,5 @@
 import hashlib
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -10,7 +11,14 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from openpyxl import Workbook
 
-from budget.models import LabMember
+from budget.models import (
+    CategoryAllocation,
+    FiscalYear,
+    InvoiceDraft,
+    LabMember,
+    Team,
+    Transaction,
+)
 from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord, SlackConnection
 from labapps.services.knowledge_catalog import refresh_knowledge_indexes
 from labapps.services.members import remove_member_access
@@ -185,6 +193,94 @@ def test_portal_uses_integrated_routes_even_with_legacy_registry_urls():
     assert b'href="/"' in response.content
     assert b'href="/tracker/"' in response.content
     assert b'href="/knowledge/"' in response.content
+
+
+def test_portal_action_panel_aggregates_tracker_and_budget_attention():
+    seed_pi()
+    add_record(
+        "Milestones",
+        "MS-OVERDUE",
+        {
+            "milestone_id": "MS-OVERDUE",
+            "milestone": "Overdue work",
+            "due_date": "2000-01-01",
+            "status": "Blocked",
+            "review_status": "Pending",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Experiments",
+        "EXP-DONE",
+        {
+            "experiment_id": "EXP-DONE",
+            "experiment_title": "Finished work",
+            "due_date": "2000-01-01",
+            "status": "Completed",
+            "review_status": "Approved",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Experiments",
+        "EXP-BAD-DATE",
+        {
+            "experiment_id": "EXP-BAD-DATE",
+            "experiment_title": "No valid deadline",
+            "due_date": "not-a-date",
+            "status": "Running",
+            "review_status": "Approved",
+        },
+        source="tracker",
+    )
+    fiscal_year = FiscalYear.objects.create(label="FY2026-27")
+    LabMember.objects.create(
+        email="kk4801@nyu.edu", display_name="Ken", highest_role="pi"
+    )
+    Team.objects.create(
+        fiscal_year=fiscal_year,
+        name="Diabetes",
+        allocation_usd=Decimal("1000"),
+    )
+    CategoryAllocation.objects.create(
+        fiscal_year=fiscal_year,
+        category="Consumables",
+        budget_usd=Decimal("1000"),
+    )
+    Transaction.objects.create(
+        fiscal_year=fiscal_year,
+        transaction_id="TX-1",
+        team="Diabetes",
+        category="Consumables",
+        amount_usd_equiv=Decimal("900"),
+    )
+    InvoiceDraft.objects.create(
+        uploader_email="member@nyu.edu",
+        file_name="invoice.pdf",
+        file_sha256="a" * 64,
+        fiscal_year=fiscal_year,
+        status="review",
+    )
+
+    response = signed_in_client().get("/portal/")
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "Needs attention" in content
+    assert "Overdue" in content
+    assert "Blocked" in content
+    assert "Tracker 1 · invoices 1" in content
+    assert "2 critical · highest 90%" not in content
+    assert "0 critical · highest 90%" in content
+    action_counts = {
+        item["label"]: item["count"] for item in response.context["action_panel"]["items"]
+    }
+    assert action_counts == {
+        "Overdue": 1,
+        "Blocked": 1,
+        "Pending approval": 2,
+        "Budget alert": 2,
+    }
 
 
 def test_protocol_template_is_valid_and_linked_from_upload_page():
