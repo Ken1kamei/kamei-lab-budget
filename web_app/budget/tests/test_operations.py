@@ -300,6 +300,26 @@ def test_add_expense_shows_date_driven_year_and_usd_preview(client):
 
 
 @pytest.mark.django_db
+def test_add_expense_defaults_to_latest_year_without_locking_manual_selection(client):
+    _login(client, "member@nyu.edu", teams=["Diabetes"])
+    older = FiscalYear.objects.create(
+        label="FY2025-26", spreadsheet_id="sheet-2025"
+    )
+    latest = FiscalYear.objects.create(
+        label="FY2026-27", spreadsheet_id="sheet-2026"
+    )
+    Team.objects.create(fiscal_year=older, name="Diabetes", active=True)
+    Team.objects.create(fiscal_year=latest, name="Diabetes", active=True)
+
+    response = client.get(reverse("budget:add_transaction"))
+
+    assert response.status_code == 200
+    assert response.context["form"]["fiscal_year"].value() == "FY2026-27"
+    assert b"yearInput.value = inferred" not in response.content
+    assert b"will be saved as an override" in response.content
+
+
+@pytest.mark.django_db
 def test_member_add_expense_recovers_after_sheet_write_when_first_sync_fails(
     client, monkeypatch, settings
 ):

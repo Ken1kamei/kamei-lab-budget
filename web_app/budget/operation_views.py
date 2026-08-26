@@ -199,7 +199,9 @@ def add_transaction(request):
     year_labels = _year_choices()
     selected_year = request.POST.get("fiscal_year") or request.GET.get("fy")
     if selected_year not in year_labels:
-        selected_year = fiscal_year_for_date(date.today())
+        selected_year = (
+            year_labels[0] if year_labels else fiscal_year_for_date(date.today())
+        )
     selected_fy = FiscalYear.objects.filter(label=selected_year).first()
     team_names = _entry_team_names(request.lab_member, selected_fy)
     initial = {

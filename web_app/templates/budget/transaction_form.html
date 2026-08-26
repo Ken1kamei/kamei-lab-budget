@@ -30,20 +30,20 @@
   };
   const update = () => {
     const inferred = inferredYear(dateInput.value);
-    if (inferred && [...yearInput.options].some((option) => option.value === inferred)) {
-      yearInput.value = inferred;
-    }
     const year = yearInput.value || inferred;
     const yearInfo = details[year];
     const amount = Number(amountInput.value);
     const rate = Number(yearInfo?.rates?.[currencyInput.value]);
     const readiness = yearInfo?.ready ? "Google Sheet ready" : "Google Sheet not prepared";
+    const dateNote = inferred && inferred !== year
+      ? ` · date normally belongs to ${inferred}; ${year} will be saved as an override`
+      : "";
     if (!yearInfo) {
       preview.textContent = `${inferred || "Fiscal year unavailable"} · prepare this fiscal year in Settings before saving.`;
     } else if (Number.isFinite(amount) && Number.isFinite(rate)) {
-      preview.textContent = `${year} · ${readiness} · ${currencyInput.value} ${amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} = USD ${(amount * rate).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      preview.textContent = `${year} · ${readiness}${dateNote} · ${currencyInput.value} ${amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} = USD ${(amount * rate).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
     } else {
-      preview.textContent = `${year} · ${readiness} · enter an amount to preview the USD equivalent.`;
+      preview.textContent = `${year} · ${readiness}${dateNote} · enter an amount to preview the USD equivalent.`;
     }
   };
   [dateInput, yearInput, currencyInput, amountInput].forEach((element) => {
