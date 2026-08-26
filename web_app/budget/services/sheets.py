@@ -1591,7 +1591,7 @@ class SheetsGateway:
             missing = sorted(all_desired.difference(members_by_email))
             if missing:
                 raise ValueError(
-                    "Add these people to the lab roster before assigning the team: "
+                    "Add these people in the Members section before assigning the team: "
                     + ", ".join(missing)
                 )
             desired_ids = {

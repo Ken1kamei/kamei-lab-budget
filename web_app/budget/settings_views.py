@@ -188,6 +188,7 @@ def settings_page(request):
                 )
             try:
                 gateway.validate_team_role_assignments(payload)
+                gateway.upsert_registry_team(payload)
             except ValueError as error:
                 form.add_error(None, str(error))
                 return render(
@@ -196,7 +197,6 @@ def settings_page(request):
                     _settings_context(request, fiscal_year, team_form=form),
                     status=400,
                 )
-            gateway.upsert_registry_team(payload)
             gateway.upsert_team(target, payload)
             _sync(gateway, target, request.user.email)
             _audit(request, "team_updated", f"{target}:{payload['name']}", before, payload)

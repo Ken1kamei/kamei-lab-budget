@@ -89,6 +89,61 @@ def test_team_settings_shows_duplicate_role_error_without_writing(
 
 
 @pytest.mark.django_db
+def test_team_settings_shows_missing_roster_error_without_annual_write(
+    client, monkeypatch, settings
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    _login(client, "pi@nyu.edu", role="pi")
+    FiscalYear.objects.create(label="FY2026-27", spreadsheet_id="sheet")
+
+    class Gateway:
+        @staticmethod
+        def validate_team_role_assignments(payload):
+            return SheetsGateway.validate_team_role_assignments(payload)
+
+        def fiscal_year_creator_status(self):
+            return {
+                "ready": True,
+                "message": "Ready",
+                "template_id": "",
+                "requests": [],
+                "legacy_years": [],
+                "notification_threshold": "80",
+                "gmail_label": "Budget/Invoices",
+            }
+
+        def upsert_registry_team(self, payload):
+            raise ValueError(
+                "Add these people in the Members section before assigning the team: "
+                "missing@nyu.edu"
+            )
+
+        def upsert_team(self, fiscal_year, payload):
+            raise AssertionError("The annual Teams sheet must not be written.")
+
+    monkeypatch.setattr("budget.settings_views.SheetsGateway", Gateway)
+    response = client.post(
+        reverse("budget:settings"),
+        {
+            "action": "team",
+            "team-fiscal_year": "FY2026-27",
+            "team-name": "Core Lab",
+            "team-allocation_usd": "1000",
+            "team-manager_emails": "pi@nyu.edu",
+            "team-lead_emails": "",
+            "team-member_emails": "missing@nyu.edu",
+            "team-description": "",
+            "team-active": "on",
+        },
+    )
+
+    assert response.status_code == 400
+    assert b"Add these people in the Members section" in response.content
+    assert b"missing@nyu.edu" in response.content
+
+
+@pytest.mark.django_db
 def test_member_add_expense_is_idempotent_and_audited(client, monkeypatch, settings):
     settings.ENABLE_SHEET_WRITES = True
     settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
