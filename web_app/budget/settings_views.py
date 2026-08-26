@@ -9,15 +9,14 @@ from budget.access import lab_access
 from budget.forms import (
     AllocationForm,
     ExchangeRateForm,
-    MemberForm,
     TeamForm,
     WorkspaceSettingsForm,
 )
-from budget.models import AdministrativeAudit, FiscalYear, LabMember, Team
+from budget.models import AdministrativeAudit, FiscalYear, Team
 from budget.operation_views import _sheet_write_allowed
 from budget.services.calculations import CATEGORIES, DEFAULT_RATES_TO_USD
 from budget.services.sheets import SheetsGateway, SheetsSourceError
-from budget.services.sync import sync_fiscal_year, sync_verified_member_access
+from budget.services.sync import sync_fiscal_year
 from budget.views import _error_response, _selected_fiscal_year
 
 
@@ -49,9 +48,6 @@ def _settings_context(request, fiscal_year, **overrides):
     allocations = {
         row.category: row.budget_usd for row in fiscal_year.allocations.all()
     } if fiscal_year else {}
-    team_names = sorted(
-        set(Team.objects.filter(active=True).values_list("name", flat=True))
-    )
     rates = {code: DEFAULT_RATES_TO_USD[code] for code in DEFAULT_RATES_TO_USD}
     aed_per_usd = "3.6725"
     if fiscal_year:
@@ -100,7 +96,6 @@ def _settings_context(request, fiscal_year, **overrides):
             year_choices=labels,
             prefix="rate",
         ),
-        "member_form": MemberForm(team_choices=team_names, prefix="member"),
         "workspace_form": WorkspaceSettingsForm(
             initial={
                 "notification_threshold": creator_state[
@@ -111,7 +106,6 @@ def _settings_context(request, fiscal_year, **overrides):
             prefix="workspace",
         ),
         "teams": fiscal_year.teams.all() if fiscal_year else [],
-        "members": LabMember.objects.order_by("display_name", "email"),
         "sheet_write_allowed": _sheet_write_allowed(request),
         "creator_state": creator_state,
         "creator_error": creator_error,
@@ -228,36 +222,6 @@ def settings_page(request):
             _audit(request, "exchange_rates_updated", target, before, form.cleaned_data)
             messages.success(request, f"Saved and verified exchange rates for {target}.")
             return redirect(f"{reverse('budget:settings')}?fy={target}#rates")
-        if action == "member":
-            if request.lab_member.highest_role != "pi":
-                return _error_response(request, "Only the PI can change the lab roster.", 403)
-            team_names = sorted(set(Team.objects.values_list("name", flat=True)))
-            form = MemberForm(request.POST, team_choices=team_names, prefix="member")
-            if not form.is_valid():
-                return render(
-                    request,
-                    "budget/settings.html",
-                    _settings_context(request, fiscal_year, member_form=form),
-                    status=400,
-                )
-            payload = {
-                key: value
-                for key, value in form.cleaned_data.items()
-                if not key.startswith("team_role_")
-            }
-            payload["team_roles"] = form.team_role_values()
-            payload["team_names"] = list(payload["team_roles"])
-            gateway.upsert_registry_member(payload)
-            sync_verified_member_access(payload)
-            _audit(
-                request,
-                "member_updated",
-                form.cleaned_data["email"],
-                {},
-                payload,
-            )
-            messages.success(request, f"Saved and verified access for {form.cleaned_data['email']}.")
-            return redirect(f"{reverse('budget:settings')}?fy={fiscal_year.label}#members")
         if action == "fiscal_year":
             if request.lab_member.highest_role != "pi":
                 return _error_response(request, "Only the PI can create a fiscal year.", 403)

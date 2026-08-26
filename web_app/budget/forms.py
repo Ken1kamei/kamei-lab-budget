@@ -1,7 +1,5 @@
 from django import forms
 
-from budget.member_accounts import validate_member_email
-from budget.models import LabMember
 from budget.services.calculations import CATEGORIES, SUPPORTED_CURRENCIES
 
 
@@ -126,47 +124,6 @@ class WorkspaceSettingsForm(forms.Form):
         label="Gmail label",
         initial="Budget/Invoices",
     )
-
-
-class MemberForm(forms.Form):
-    display_name = forms.CharField(max_length=160, label="Name")
-    email = forms.EmailField()
-    role = forms.ChoiceField(
-        choices=[
-            ("pi", "PI"),
-            ("budget_manager", "Budget Manager"),
-            ("member", "Team-scoped member or leader"),
-        ],
-        label="Lab-wide role",
-    )
-    active = forms.BooleanField(required=False, initial=True)
-
-    def __init__(self, *args, team_choices=(), **kwargs):
-        super().__init__(*args, **kwargs)
-        self.team_choices = list(team_choices)
-        for index, team_name in enumerate(self.team_choices):
-            self.fields[f"team_role_{index}"] = forms.ChoiceField(
-                required=False,
-                label=f"{team_name} role",
-                choices=[
-                    ("", "No access"),
-                    ("member", "Member"),
-                    ("lead", "Team Leader"),
-                ],
-            )
-
-    def clean_email(self):
-        try:
-            return validate_member_email(self.cleaned_data["email"])
-        except ValueError as error:
-            raise forms.ValidationError(str(error)) from error
-
-    def team_role_values(self):
-        return {
-            team_name: self.cleaned_data.get(f"team_role_{index}", "")
-            for index, team_name in enumerate(self.team_choices)
-            if self.cleaned_data.get(f"team_role_{index}")
-        }
 
 
 class ErbImportForm(forms.Form):

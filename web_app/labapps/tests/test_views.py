@@ -21,7 +21,11 @@ from budget.models import (
 )
 from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord, SlackConnection
 from labapps.services.knowledge_catalog import refresh_knowledge_indexes
-from labapps.services.members import remove_member_access
+from labapps.services.members import (
+    delete_member_record,
+    remove_member_access,
+    sync_registry_member_mirror,
+)
 from labapps.tests.test_knowledge import protocol_docx_bytes
 
 
@@ -48,6 +52,24 @@ def fake_registry_upsert(table_name, payload, **kwargs):
         defaults={"payload": payload},
     )
     return payload
+
+
+def fake_registry_replace(table_name, rows, **kwargs):
+    key = {
+        "Members": "member_id",
+        "Teams": "team_id",
+        "App_Roles": "app_role_id",
+        "Member_Teams": "member_team_id",
+    }[table_name]
+    SheetRecord.objects.filter(source="registry", table_name=table_name).delete()
+    for index, row in enumerate(rows, start=1):
+        SheetRecord.objects.create(
+            source="registry",
+            table_name=table_name,
+            record_id=row.get(key) or f"legacy-{table_name}-{index}",
+            payload=row,
+        )
+    return rows
 
 
 def signed_in_client():
@@ -856,6 +878,294 @@ def test_portal_member_form_accepts_only_nyu_or_approved_lab_account(
     assert LabMember.objects.get(email="nyuadkameilab@gmail.com").active is True
 
 
+def test_registry_member_edit_updates_same_record_and_web_mirror(
+    monkeypatch, settings
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    seed_pi()
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "wrong@nyu.edu",
+            "name": "Wrong Name",
+            "display_name": "Wrong",
+            "global_role": "member",
+            "active": "TRUE",
+            "notes": "Needs correction",
+        },
+    )
+    LabMember.objects.create(
+        email="wrong@nyu.edu", display_name="Wrong", active=True
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
+    client = signed_in_client()
+
+    edit_page = client.get("/portal/admin/?edit_member=M002#members")
+    response = client.post(
+        "/portal/admin/",
+        {
+            "action": "member",
+            "member-member_id": "M002",
+            "member-email": "correct@nyu.edu",
+            "member-name": "Correct Name",
+            "member-display_name": "Correct",
+            "member-global_role": "lead",
+            "member-active": "on",
+            "member-notes": "Corrected in Lab Registry",
+        },
+    )
+
+    assert edit_page.status_code == 200
+    assert b"Save member changes" in edit_page.content
+    assert b'value="wrong@nyu.edu"' in edit_page.content
+    assert response.status_code == 302
+    member = SheetRecord.objects.get(
+        source="registry", table_name="Members", record_id="M002"
+    ).payload
+    assert member["email"] == "correct@nyu.edu"
+    assert member["display_name"] == "Correct"
+    assert member["global_role"] == "lead"
+    assert not LabMember.objects.filter(email="wrong@nyu.edu").exists()
+    mirror = LabMember.objects.get(email="correct@nyu.edu")
+    assert mirror.display_name == "Correct"
+    assert mirror.highest_role == "lead"
+
+
+def test_registry_member_edit_rejects_duplicate_email(monkeypatch, settings):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    seed_pi()
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "first@nyu.edu",
+            "name": "First",
+            "display_name": "First",
+            "global_role": "member",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Members",
+        "M003",
+        {
+            "member_id": "M003",
+            "email": "second@nyu.edu",
+            "name": "Second",
+            "display_name": "Second",
+            "global_role": "member",
+            "active": "TRUE",
+        },
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+
+    response = signed_in_client().post(
+        "/portal/admin/",
+        {
+            "action": "member",
+            "member-member_id": "M002",
+            "member-email": "second@nyu.edu",
+            "member-name": "First",
+            "member-display_name": "First",
+            "member-global_role": "member",
+            "member-active": "on",
+            "member-notes": "",
+        },
+    )
+
+    assert response.status_code == 200
+    assert b"already assigned to another member" in response.content
+    assert SheetRecord.objects.get(
+        source="registry", table_name="Members", record_id="M002"
+    ).payload["email"] == "first@nyu.edu"
+
+
+def test_registry_mirror_uses_central_names_roles_and_team_access():
+    fiscal_year = FiscalYear.objects.create(label="FY2026-27")
+    Team.objects.create(fiscal_year=fiscal_year, name="Core Lab", active=True)
+    Team.objects.create(fiscal_year=fiscal_year, name="Diabetes", active=True)
+    add_record(
+        "Members",
+        "M007",
+        {
+            "member_id": "M007",
+            "email": "maab@nyu.edu",
+            "name": "Maab Correct",
+            "display_name": "Maab",
+            "global_role": "admin",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Teams",
+        "T001",
+        {"team_id": "T001", "team_name": "Core Lab", "active": "TRUE"},
+    )
+    add_record(
+        "Teams",
+        "T003",
+        {"team_id": "T003", "team_name": "Diabetes", "active": "TRUE"},
+    )
+    add_record(
+        "Member_Teams",
+        "MT001",
+        {
+            "member_team_id": "MT001",
+            "member_id": "M007",
+            "team_id": "T001",
+            "team_role": "member",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Member_Teams",
+        "MT002",
+        {
+            "member_team_id": "MT002",
+            "member_id": "M007",
+            "team_id": "T003",
+            "team_role": "lead",
+            "active": "TRUE",
+        },
+    )
+
+    sync_registry_member_mirror("M007")
+
+    member = LabMember.objects.get(email="maab@nyu.edu")
+    assert member.display_name == "Maab"
+    assert member.highest_role == "budget_manager"
+    assert member.team_names == ["Core Lab", "Diabetes"]
+    assert member.team_roles == {
+        "FY2026-27": {"Core Lab": "member", "Diabetes": "lead"}
+    }
+
+
+def test_registry_shows_inactive_members_and_permanently_deletes_one(
+    monkeypatch, settings
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    seed_pi()
+    add_record(
+        "Members",
+        "M005",
+        {
+            "member_id": "M005",
+            "email": "test@test.com",
+            "name": "Test Member",
+            "display_name": "Test Member",
+            "global_role": "member",
+            "active": "FALSE",
+        },
+    )
+    add_record(
+        "Member_Teams",
+        "MT005",
+        {
+            "member_team_id": "MT005",
+            "member_id": "M005",
+            "team_id": "T001",
+            "active": "FALSE",
+        },
+    )
+    add_record(
+        "App_Roles",
+        "AR005",
+        {
+            "app_role_id": "AR005",
+            "member_id": "M005",
+            "app_id": "budget",
+            "app_role": "viewer",
+            "active": "FALSE",
+        },
+    )
+    LabMember.objects.create(email="test@test.com", active=False)
+    monkeypatch.setattr(
+        "labapps.services.members.replace_table", fake_registry_replace
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
+    client = signed_in_client()
+
+    page = client.get("/portal/admin/#members")
+    confirm_page = client.get("/portal/admin/?delete_member=M005#members")
+    response = client.post(
+        "/portal/admin/",
+        {
+            "action": "member_delete",
+            "delete-member_id": "M005",
+            "delete-confirm_email": "test@test.com",
+        },
+    )
+
+    assert page.status_code == 200
+    assert b"Test Member" in page.content
+    assert b"Inactive" in page.content
+    assert b"1 active" in page.content
+    assert b"Delete" in page.content
+    assert b"Permanent deletion" in confirm_page.content
+    assert response.status_code == 302
+    assert not SheetRecord.objects.filter(
+        source="registry", table_name="Members", record_id="M005"
+    ).exists()
+    assert not SheetRecord.objects.filter(
+        source="registry", table_name="Member_Teams", record_id="MT005"
+    ).exists()
+    assert not SheetRecord.objects.filter(
+        source="registry", table_name="App_Roles", record_id="AR005"
+    ).exists()
+    assert not LabMember.objects.filter(email="test@test.com").exists()
+
+
+def test_registry_permanent_delete_requires_inactive_unreferenced_member(
+    monkeypatch, settings
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    add_record(
+        "Members",
+        "M020",
+        {
+            "member_id": "M020",
+            "email": "linked@nyu.edu",
+            "display_name": "Linked",
+            "global_role": "member",
+            "active": "FALSE",
+        },
+    )
+    add_record(
+        "Projects",
+        "P020",
+        {"project_id": "P020", "owner_member_id": "M020"},
+        source="tracker",
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.replace_table", fake_registry_replace
+    )
+
+    with pytest.raises(ValueError, match="Reassign linked records"):
+        delete_member_record(
+            "M020", actor="admin@nyu.edu", confirm_email="linked@nyu.edu"
+        )
+
+    assert SheetRecord.objects.filter(
+        source="registry", table_name="Members", record_id="M020"
+    ).exists()
+
+
 def test_portal_member_remove_revokes_all_access_and_slack(
     monkeypatch,
     settings,
@@ -977,7 +1287,8 @@ def test_portal_member_remove_allows_revoking_legacy_unapproved_email(
     )
 
     assert response.status_code == 200
-    assert b"Legacy member" not in response.content
+    assert b"Legacy member" in response.content
+    assert b"Inactive" in response.content
     assert SheetRecord.objects.get(
         table_name="Members", record_id="M002"
     ).payload["active"] == "FALSE"

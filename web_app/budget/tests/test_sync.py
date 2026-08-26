@@ -3,59 +3,7 @@ from decimal import Decimal
 import pytest
 
 from budget.models import CategoryAllocation, FiscalYear, LabMember, Team, Transaction
-from budget.services.sync import sync_fiscal_year, sync_verified_member_access
-
-
-@pytest.mark.django_db
-def test_sync_verified_member_access_updates_all_existing_fiscal_year_roles():
-    old_year = FiscalYear.objects.create(label="FY2025-26")
-    new_year = FiscalYear.objects.create(label="FY2026-27")
-    Team.objects.create(fiscal_year=old_year, name="Core Lab", active=True)
-    Team.objects.create(fiscal_year=old_year, name="Diabetes", active=True)
-    Team.objects.create(fiscal_year=new_year, name="Core Lab", active=True)
-    Team.objects.create(fiscal_year=new_year, name="Diabetes", active=False)
-
-    member = sync_verified_member_access(
-        {
-            "display_name": "Dania Al Sarraj",
-            "email": "DANIA@NYU.EDU",
-            "role": "member",
-            "active": True,
-            "team_roles": {"Core Lab": "member", "Diabetes": "lead"},
-        }
-    )
-
-    assert member.email == "dania@nyu.edu"
-    assert member.display_name == "Dania Al Sarraj"
-    assert member.highest_role == "lead"
-    assert member.team_names == ["Core Lab", "Diabetes"]
-    assert member.team_roles == {
-        "FY2025-26": {"Core Lab": "member", "Diabetes": "lead"},
-        "FY2026-27": {"Core Lab": "member"},
-    }
-    assert member.active is True
-    assert member.last_synced_at is not None
-
-
-@pytest.mark.django_db
-def test_sync_verified_member_access_clears_inactive_access():
-    fiscal_year = FiscalYear.objects.create(label="FY2026-27")
-    Team.objects.create(fiscal_year=fiscal_year, name="Diabetes", active=True)
-
-    member = sync_verified_member_access(
-        {
-            "display_name": "Former Member",
-            "email": "former@nyu.edu",
-            "role": "lead",
-            "active": False,
-            "team_roles": {"Diabetes": "lead"},
-        }
-    )
-
-    assert member.highest_role == "member"
-    assert member.team_names == []
-    assert member.team_roles == {}
-    assert member.active is False
+from budget.services.sync import sync_fiscal_year
 
 
 @pytest.mark.django_db

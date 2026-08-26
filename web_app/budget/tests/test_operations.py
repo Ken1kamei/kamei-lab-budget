@@ -144,53 +144,34 @@ def test_team_settings_shows_missing_roster_error_without_annual_write(
 
 
 @pytest.mark.django_db
-def test_member_settings_updates_verified_mirror_without_full_year_reread(
+def test_budget_settings_links_to_registry_without_member_management_surface(
     client, monkeypatch, settings
 ):
     settings.ENABLE_SHEET_WRITES = True
     settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
     _login(client, "pi@nyu.edu", role="pi")
-    old_year = FiscalYear.objects.create(label="FY2025-26", spreadsheet_id="old-sheet")
-    new_year = FiscalYear.objects.create(label="FY2026-27", spreadsheet_id="new-sheet")
-    for fiscal_year in (old_year, new_year):
-        Team.objects.create(fiscal_year=fiscal_year, name="Core Lab", active=True)
-        Team.objects.create(fiscal_year=fiscal_year, name="Diabetes", active=True)
-    captured = {}
+    FiscalYear.objects.create(label="FY2026-27", spreadsheet_id="new-sheet")
 
     class Gateway:
-        def upsert_registry_member(self, payload):
-            captured.update(payload)
-            return {"member_id": "M011"}
-
-        def read_fiscal_year(self, fiscal_year):
-            raise AssertionError("Member updates must not reread every annual workbook.")
+        def fiscal_year_creator_status(self):
+            return {
+                "ready": True,
+                "message": "Ready",
+                "template_id": "",
+                "requests": [],
+                "legacy_years": [],
+                "notification_threshold": "80",
+                "gmail_label": "Budget/Invoices",
+            }
 
     monkeypatch.setattr("budget.settings_views.SheetsGateway", Gateway)
-    response = client.post(
-        reverse("budget:settings") + "?fy=FY2026-27",
-        {
-            "action": "member",
-            "member-display_name": "Dania Al Sarraj",
-            "member-email": "da3235@nyu.edu",
-            "member-role": "member",
-            "member-active": "on",
-            "member-team_role_0": "member",
-            "member-team_role_1": "member",
-        },
-    )
+    response = client.get(reverse("budget:settings") + "?fy=FY2026-27")
 
-    assert response.status_code == 302
-    assert response.url.endswith("?fy=FY2026-27#members")
-    assert captured["team_roles"] == {"Core Lab": "member", "Diabetes": "member"}
-    member = LabMember.objects.get(email="da3235@nyu.edu")
-    assert member.team_names == ["Core Lab", "Diabetes"]
-    assert member.team_roles == {
-        "FY2025-26": {"Core Lab": "member", "Diabetes": "member"},
-        "FY2026-27": {"Core Lab": "member", "Diabetes": "member"},
-    }
-    assert AdministrativeAudit.objects.get(action="member_updated").target == (
-        "da3235@nyu.edu"
-    )
+    assert response.status_code == 200
+    assert b"Members and roles" not in response.content
+    assert b"Save and verify member" not in response.content
+    assert b'href="/portal/admin/#members"' in response.content
+    assert b"Member records are managed only in" in response.content
 
 
 @pytest.mark.django_db

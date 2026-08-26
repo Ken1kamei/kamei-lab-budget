@@ -18,13 +18,20 @@ REVIEW_CHOICES = [
 
 
 class MemberForm(forms.Form):
-    email = forms.EmailField()
-    name = forms.CharField(max_length=160)
-    display_name = forms.CharField(max_length=160, required=False)
+    member_id = forms.CharField(required=False, widget=forms.HiddenInput)
+    email = forms.EmailField(label="Email")
+    name = forms.CharField(max_length=160, label="Full name")
+    display_name = forms.CharField(max_length=160, required=False, label="Display name")
     global_role = forms.ChoiceField(
-        choices=[("pi", "PI"), ("admin", "Admin"), ("lead", "Team lead"), ("member", "Member")]
+        choices=[
+            ("pi", "Principal Investigator"),
+            ("admin", "Administrator"),
+            ("lead", "Team lead"),
+            ("member", "Member"),
+        ],
+        label="Portal role",
     )
-    active = forms.BooleanField(required=False, initial=True)
+    active = forms.BooleanField(required=False, initial=True, label="Active member")
     notes = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), required=False)
 
     def clean_email(self):
@@ -32,6 +39,13 @@ class MemberForm(forms.Form):
             return validate_member_email(self.cleaned_data["email"])
         except ValueError as error:
             raise forms.ValidationError(str(error)) from error
+
+
+class MemberDeleteForm(forms.Form):
+    member_id = forms.CharField(widget=forms.HiddenInput)
+    confirm_email = forms.EmailField(
+        label="Type the member email to confirm permanent deletion"
+    )
 
 
 class TeamForm(forms.Form):

@@ -22,6 +22,7 @@ from .forms import (
     GanttImportForm,
     KnowledgeUploadForm,
     KnowledgeStatusForm,
+    MemberDeleteForm,
     MemberForm,
     MilestoneForm,
     ProjectForm,
@@ -80,7 +81,13 @@ from .services.slack import (
     slack_configured,
     slack_workspace_context,
 )
-from .services.members import remove_member_access, upsert_member_access
+from .services.members import (
+    delete_member_record,
+    remove_member_access,
+    sync_all_member_mirrors,
+    sync_registry_member_mirror,
+    upsert_member_access,
+)
 
 
 def _email(request):
@@ -102,6 +109,41 @@ def _team_lookup():
 def _display_member(member_id, members):
     row = members.get(member_id, {})
     return row.get("display_name") or row.get("name") or member_id
+
+
+def _registry_member_rows(rows, request):
+    role_labels = {
+        "pi": "Principal Investigator",
+        "admin": "Administrator",
+        "lead": "Team lead",
+        "member": "Member",
+    }
+    actor = _email(request)
+    output = []
+    for source in rows:
+        row = dict(source)
+        email = str(row.get("email") or "").strip().lower()
+        role = str(row.get("global_role") or "member").strip().lower()
+        active = truthy(row.get("active", "TRUE"))
+        protected = email == str(settings.PI_EMAIL or "").strip().lower() or role == "pi"
+        row.update(
+            {
+                "active_bool": active,
+                "role_label": role_labels.get(role, role.title()),
+                "can_deactivate": active and email != actor and not protected,
+                "can_delete": not active and email != actor and not protected,
+            }
+        )
+        output.append(row)
+    return sorted(
+        output,
+        key=lambda row: (
+            not row["active_bool"],
+            str(row.get("display_name") or row.get("name") or row.get("email"))
+            .strip()
+            .casefold(),
+        ),
+    )
 
 
 def _portal_slack_context(request):
@@ -291,7 +333,37 @@ def portal_admin(request):
     teams = snapshot_rows("Teams")
     apps = snapshot_rows("Apps")
     roles = snapshot_rows("App_Roles")
-    member_form = MemberForm(prefix="member")
+    sync_all_member_mirrors()
+    edit_member_id = str(request.GET.get("edit_member") or "").strip()
+    delete_member_id = str(request.GET.get("delete_member") or "").strip()
+    editing_member = next(
+        (row for row in members if row.get("member_id") == edit_member_id), None
+    )
+    deleting_member = next(
+        (row for row in members if row.get("member_id") == delete_member_id), None
+    )
+    member_form = MemberForm(
+        prefix="member",
+        initial=(
+            {
+                "member_id": editing_member.get("member_id"),
+                "email": editing_member.get("email"),
+                "name": editing_member.get("name"),
+                "display_name": editing_member.get("display_name"),
+                "global_role": editing_member.get("global_role"),
+                "active": truthy(editing_member.get("active", "TRUE")),
+                "notes": editing_member.get("notes"),
+            }
+            if editing_member
+            else {"active": True, "global_role": "member"}
+        ),
+    )
+    member_delete_form = MemberDeleteForm(
+        prefix="delete",
+        initial={"member_id": deleting_member.get("member_id")}
+        if deleting_member
+        else None,
+    )
     team_form = TeamForm(prefix="team")
     role_form = AppRoleForm(prefix="role", members=_active(members), apps=_active(apps), teams=_active(teams))
 
@@ -300,6 +372,17 @@ def portal_admin(request):
         try:
             if action == "member":
                 member_form = MemberForm(request.POST, prefix="member")
+                requested_member_id = str(
+                    request.POST.get("member-member_id") or ""
+                ).strip()
+                editing_member = next(
+                    (
+                        row
+                        for row in members
+                        if row.get("member_id") == requested_member_id
+                    ),
+                    None,
+                )
                 if member_form.is_valid():
                     payload = upsert_member_access(
                         member_form.cleaned_data,
@@ -317,6 +400,34 @@ def portal_admin(request):
                     f"Removed and verified access for {payload['email']}.",
                 )
                 return redirect(f"{reverse('labapps:portal_admin')}#members")
+            elif action == "member_delete":
+                member_delete_form = MemberDeleteForm(
+                    request.POST, prefix="delete"
+                )
+                requested_member_id = str(
+                    request.POST.get("delete-member_id") or ""
+                ).strip()
+                deleting_member = next(
+                    (
+                        row
+                        for row in members
+                        if row.get("member_id") == requested_member_id
+                    ),
+                    None,
+                )
+                if member_delete_form.is_valid():
+                    payload = delete_member_record(
+                        member_delete_form.cleaned_data["member_id"],
+                        actor=_email(request),
+                        confirm_email=member_delete_form.cleaned_data[
+                            "confirm_email"
+                        ],
+                    )
+                    messages.success(
+                        request,
+                        f"Permanently deleted {payload['email']} from the Lab Registry.",
+                    )
+                    return redirect(f"{reverse('labapps:portal_admin')}#members")
             elif action == "team":
                 team_form = TeamForm(request.POST, prefix="team")
                 if team_form.is_valid():
@@ -337,6 +448,7 @@ def portal_admin(request):
                         actor=_email(request), action="upsert_team", target_type="Team",
                         target_id=team_id, before=existing or {}, after=payload,
                     )
+                    sync_all_member_mirrors()
                     messages.success(request, "Team saved and verified in Google Sheets.")
                     return redirect("labapps:portal_admin")
             elif action == "role":
@@ -407,6 +519,7 @@ def portal_admin(request):
                             actor=_email(request),
                             action="upsert_member_team",
                         )
+                    sync_registry_member_mirror(cleaned["member_id"])
                     append_registry_audit(
                         actor=_email(request), action="upsert_app_role", target_type="AppRole",
                         target_id=role_id, before=existing or {}, after=payload,
@@ -420,12 +533,16 @@ def portal_admin(request):
         request,
         "labapps/portal_admin.html",
         {
-            "members": _active(members),
+            "members": _registry_member_rows(members, request),
+            "active_member_count": len(_active(members)),
             "teams": teams,
             "apps": apps,
             "roles": _active(roles),
             "member_lookup": _member_lookup(),
             "member_form": member_form,
+            "editing_member": editing_member,
+            "member_delete_form": member_delete_form,
+            "deleting_member": deleting_member,
             "team_form": team_form,
             "role_form": role_form,
         },

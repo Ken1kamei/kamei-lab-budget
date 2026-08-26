@@ -144,6 +144,9 @@ def sync_all():
     counts = {}
     for table_name in [*REGISTRY_HEADERS, *TRACKER_HEADERS]:
         counts[table_name] = len(sync_table(table_name, gateway))
+    from .members import sync_all_member_mirrors
+
+    counts["LabMemberMirror"] = len(sync_all_member_mirrors())
     return counts
 
 

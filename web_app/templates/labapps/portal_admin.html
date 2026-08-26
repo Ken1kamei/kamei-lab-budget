@@ -2,17 +2,49 @@
 {% load labapps_tags %}
 {% block title %}Lab Registry{% endblock %}
 {% block content %}
-<header class="page-head"><div><span class="eyebrow">PI / Admin</span><h1>Lab registry</h1><p>Members, teams, and app roles are written to the shared Google Sheet and read back before success is shown.</p></div></header>
+<header class="page-head"><div><span class="eyebrow">PI / ADMIN</span><h1>Lab Registry</h1><p>This is the single source of truth for lab members, teams, and app access. Every change is written to Google Sheets and read back before success is shown.</p></div></header>
 
 <div class="section-tabs">
   <a href="#members">Members</a><a href="#teams">Teams</a><a href="#roles">App access</a>
 </div>
 
 <section id="members" class="panel settings-section">
-  <div class="panel-heading"><div><span>Allowlist</span><h2>Active members</h2></div><span>{{ members|length }} records</span></div>
+  <div class="panel-heading"><div><span class="eyebrow">MEMBER DIRECTORY</span><h2>Members</h2></div><span>{{ active_member_count }} active · {{ members|length }} total</span></div>
+  <p class="muted">Edit names, emails, roles, and status here. Deactivate a member before permanent deletion. Team and app assignments are managed below.</p>
   <div class="two-column registry-layout">
-    <form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="member">{{ member_form.as_div }}<button class="button primary" type="submit">Save member</button></form>
-    <div class="table-panel"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for row in members %}<tr><td>{% if row.display_name %}{{ row.display_name }}{% else %}{{ row.name }}{% endif %}</td><td>{{ row.email }}</td><td>{{ row.global_role }}</td><td>{% if row.active == 'TRUE' %}<span class="status ready">Active</span>{% else %}<span class="status">Inactive</span>{% endif %}</td><td>{% if row.active == 'TRUE' and row.email != request.user.email and row.global_role != 'pi' %}<form method="post" class="table-action">{% csrf_token %}<input type="hidden" name="action" value="member_remove"><input type="hidden" name="member_id" value="{{ row.member_id }}"><button class="button danger" type="submit">Remove access</button></form>{% else %}<span class="muted">—</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="5">No members registered.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="registry-editor">
+      {% if deleting_member %}
+      <div class="notice warning"><strong>Permanent deletion</strong><br>This removes {{ deleting_member.email }} and its team/app assignments from the Registry. This cannot be undone.</div>
+      <form method="post" class="form-grid single">
+        {% csrf_token %}<input type="hidden" name="action" value="member_delete">
+        {{ member_delete_form.as_div }}
+        <button class="button danger" type="submit">Delete member permanently</button>
+        <a class="button secondary" href="{% url 'labapps:portal_admin' %}#members">Cancel</a>
+      </form>
+      {% else %}
+      <div class="panel-heading compact"><div><span class="eyebrow">{% if editing_member %}EDIT RECORD{% else %}NEW RECORD{% endif %}</span><h3>{% if editing_member %}Edit {{ editing_member.display_name|default:editing_member.name }}{% else %}Add member{% endif %}</h3></div></div>
+      <form method="post" class="form-grid single">
+        {% csrf_token %}<input type="hidden" name="action" value="member">
+        {{ member_form.as_div }}
+        <button class="button primary" type="submit">{% if editing_member %}Save member changes{% else %}Add member{% endif %}</button>
+        {% if editing_member %}<a class="button secondary" href="{% url 'labapps:portal_admin' %}#members">Cancel editing</a>{% endif %}
+      </form>
+      {% endif %}
+    </div>
+    <div class="table-panel"><table class="registry-members"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+      {% for row in members %}
+      <tr{% if not row.active_bool %} class="inactive-row"{% endif %}>
+        <td><strong>{% if row.display_name %}{{ row.display_name }}{% else %}{{ row.name }}{% endif %}</strong><small>{{ row.member_id }}</small></td>
+        <td>{{ row.email }}</td><td>{{ row.role_label }}</td>
+        <td>{% if row.active_bool %}<span class="status ready">Active</span>{% else %}<span class="status">Inactive</span>{% endif %}</td>
+        <td><div class="member-actions">
+          <a class="button secondary" href="?edit_member={{ row.member_id }}#members">Edit</a>
+          {% if row.can_deactivate %}<form method="post" class="table-action">{% csrf_token %}<input type="hidden" name="action" value="member_remove"><input type="hidden" name="member_id" value="{{ row.member_id }}"><button class="button danger" type="submit">Deactivate</button></form>{% endif %}
+          {% if row.can_delete %}<a class="button danger" href="?delete_member={{ row.member_id }}#members">Delete</a>{% endif %}
+        </div></td>
+      </tr>
+      {% empty %}<tr><td colspan="5">No members registered.</td></tr>{% endfor %}
+    </tbody></table></div>
   </div>
 </section>
 
