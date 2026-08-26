@@ -9,6 +9,7 @@ from budget.access import lab_access
 from budget.forms import (
     AllocationForm,
     ExchangeRateForm,
+    TeamAllocationForm,
     TeamForm,
     WorkspaceSettingsForm,
 )
@@ -18,6 +19,7 @@ from budget.services.calculations import CATEGORIES, DEFAULT_RATES_TO_USD
 from budget.services.sheets import SheetsGateway, SheetsSourceError
 from budget.services.sync import sync_fiscal_year
 from budget.views import _error_response, _selected_fiscal_year
+from labapps.models import SheetRecord
 
 
 def _choices():
@@ -39,6 +41,56 @@ def _audit(request, action, target, before=None, after=None):
         target=target,
         before=json.loads(json.dumps(before or {}, default=str)),
         after=json.loads(json.dumps(after or {}, default=str)),
+    )
+
+
+def _team_names_for_fiscal_year(fiscal_year):
+    annual_names = (
+        list(fiscal_year.teams.values_list("name", flat=True))
+        if fiscal_year
+        else []
+    )
+    registry_names = []
+    for payload in SheetRecord.objects.filter(
+        source="registry", table_name="Teams"
+    ).order_by("record_id").values_list("payload", flat=True):
+        if str(payload.get("active", "TRUE")).strip().upper() not in {
+            "TRUE",
+            "Y",
+            "YES",
+            "1",
+        }:
+            continue
+        name = str(payload.get("team_name") or "").strip()
+        if name:
+            registry_names.append(name)
+    names = list(dict.fromkeys([*registry_names, *annual_names]))
+    return sorted(names, key=lambda name: (name != "Core Lab", name.lower()))
+
+
+def _team_allocation_form(fiscal_year, labels, *, data=None):
+    team_names = _team_names_for_fiscal_year(fiscal_year)
+    allocations = (
+        {team.name: team.allocation_usd for team in fiscal_year.teams.all()}
+        if fiscal_year
+        else {}
+    )
+    total_budget = (
+        sum(
+            (row.budget_usd for row in fiscal_year.allocations.all()),
+            0,
+        )
+        if fiscal_year
+        else 0
+    )
+    return TeamAllocationForm(
+        data,
+        initial={"fiscal_year": fiscal_year.label if fiscal_year else ""},
+        year_choices=labels,
+        team_names=team_names,
+        allocations=allocations,
+        total_budget=total_budget,
+        prefix="team-allocation",
     )
 
 
@@ -84,6 +136,12 @@ def _settings_context(request, fiscal_year, **overrides):
             year_choices=labels,
             allow_manager_assignment=request.lab_member.highest_role == "pi",
             prefix="team",
+        ),
+        "team_allocation_form": _team_allocation_form(fiscal_year, labels),
+        "team_budget_total": (
+            sum((row.budget_usd for row in fiscal_year.allocations.all()), 0)
+            if fiscal_year
+            else 0
         ),
         "rate_form": ExchangeRateForm(
             initial={
@@ -195,6 +253,47 @@ def settings_page(request):
             _sync(gateway, target, request.user.email)
             _audit(request, "team_updated", f"{target}:{payload['name']}", before, payload)
             messages.success(request, f"Saved and verified {form.cleaned_data['name']} in {target}.")
+            return redirect(f"{reverse('budget:settings')}?fy={target}#teams")
+        if action == "team_allocations":
+            requested_target = request.POST.get(
+                "team-allocation-fiscal_year", ""
+            ).strip()
+            target_year = FiscalYear.objects.filter(label=requested_target).first()
+            form = _team_allocation_form(
+                target_year or fiscal_year,
+                labels,
+                data=request.POST,
+            )
+            if not form.is_valid():
+                return render(
+                    request,
+                    "budget/settings.html",
+                    _settings_context(
+                        request,
+                        fiscal_year,
+                        team_allocation_form=form,
+                    ),
+                    status=400,
+                )
+            target = form.cleaned_data["fiscal_year"]
+            before = {
+                team.name: team.allocation_usd
+                for team in FiscalYear.objects.get(label=target).teams.all()
+            }
+            allocations = form.allocation_values()
+            gateway.write_team_allocations(target, allocations)
+            _sync(gateway, target, request.user.email)
+            _audit(
+                request,
+                "team_allocations_updated",
+                target,
+                before,
+                allocations,
+            )
+            messages.success(
+                request,
+                f"Saved and verified team allocations for {target}.",
+            )
             return redirect(f"{reverse('budget:settings')}?fy={target}#teams")
         if action == "rates":
             form = ExchangeRateForm(request.POST, year_choices=labels, prefix="rate")

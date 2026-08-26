@@ -1479,18 +1479,26 @@ class SheetsGateway:
             for column in ("Allocation (AED)", "Allocation (USD)"):
                 if money(row.get(column, 0)) < 0:
                     raise ValueError("Team allocations cannot be negative.")
-            output = [row.get(header, "") for header in headers]
+            output = [
+                str(value) if isinstance(value, Decimal) else value
+                for value in (row.get(header, "") for header in headers)
+            ]
             end_column = self._column_label(len(headers))
-            if row_index is None:
-                worksheet.append_row(output, value_input_option="RAW")
-                row_index = len(worksheet.get_all_values())
-            else:
-                worksheet.update(
-                    values=[output],
-                    range_name=f"A{row_index}:{end_column}{row_index}",
-                    value_input_option="RAW",
-                )
-            written_values = worksheet.get(f"A{row_index}:{end_column}{row_index}")
+            try:
+                if row_index is None:
+                    worksheet.append_row(output, value_input_option="RAW")
+                    row_index = len(worksheet.get_all_values())
+                else:
+                    worksheet.update(
+                        values=[output],
+                        range_name=f"A{row_index}:{end_column}{row_index}",
+                        value_input_option="RAW",
+                    )
+                written_values = worksheet.get(f"A{row_index}:{end_column}{row_index}")
+            except Exception as error:
+                raise SheetsSourceError(
+                    "The team could not be written to Google Sheets."
+                ) from error
             if not written_values:
                 raise SheetsSourceError("Google Sheets did not return the Teams row.")
             written = self._row_mapping(headers, written_values[0])
@@ -1509,6 +1517,98 @@ class SheetsGateway:
                 "matched": matched,
                 "row": written,
                 "spreadsheet_id": spreadsheet_id,
+            }
+
+    def write_team_allocations(self, fiscal_year, allocations):
+        """Write all annual team allocations together and verify every row."""
+        self._require_writes()
+        if not allocations:
+            raise ValueError("At least one team allocation is required.")
+        with _sheet_write_lock():
+            worksheet, _, spreadsheet_id, _, _ = self._worksheet_for_year(
+                fiscal_year, "Teams"
+            )
+            values = worksheet.get_all_values()
+            headers = self._ensure_headers(worksheet, values, TEAM_COLUMNS)
+            if not values:
+                values = [headers]
+            existing = {}
+            for index, raw_row in enumerate(values[1:], start=2):
+                row = self._row_mapping(headers, raw_row)
+                name = str(row.get("Team Name") or "").strip()
+                if not name:
+                    continue
+                if name in existing:
+                    raise SheetsSourceError(
+                        f"Team {name} appears more than once in Google Sheets."
+                    )
+                existing[name] = (index, row)
+
+            next_row = max(len(values) + 1, 2)
+            updates = []
+            expected_rows = {}
+            end_column = self._column_label(len(headers))
+            for team_name, raw_amount in allocations.items():
+                team_name = str(team_name or "").strip()
+                if not team_name:
+                    raise ValueError("Team Name is required.")
+                amount = money(raw_amount)
+                if amount < 0:
+                    raise ValueError("Team allocations cannot be negative.")
+                row_index, current = existing.get(team_name, (next_row, {}))
+                if team_name not in existing:
+                    next_row += 1
+                row = {header: current.get(header, "") for header in headers}
+                row["Team Name"] = team_name
+                row["Allocation (USD)"] = str(amount)
+                if not current:
+                    row["Allocation (AED)"] = "0"
+                    row["Active"] = "Y"
+                output = [
+                    str(value) if isinstance(value, Decimal) else value
+                    for value in (row.get(header, "") for header in headers)
+                ]
+                updates.append(
+                    {
+                        "range": f"A{row_index}:{end_column}{row_index}",
+                        "values": [output],
+                    }
+                )
+                expected_rows[team_name] = (row_index, row)
+            try:
+                worksheet.batch_update(updates, value_input_option="RAW")
+                written_ranges = {
+                    team_name: worksheet.get(
+                        f"A{row_index}:{end_column}{row_index}"
+                    )
+                    for team_name, (row_index, _) in expected_rows.items()
+                }
+            except Exception as error:
+                raise SheetsSourceError(
+                    "Team allocations could not be written to Google Sheets."
+                ) from error
+
+            results = {}
+            for team_name, (row_index, expected) in expected_rows.items():
+                written_values = written_ranges[team_name]
+                if not written_values:
+                    raise SheetsSourceError(
+                        f"Google Sheets did not return the {team_name} Teams row."
+                    )
+                written = self._row_mapping(headers, written_values[0])
+                if (
+                    str(written.get("Team Name") or "").strip() != team_name
+                    or money(written.get("Allocation (USD)"))
+                    != money(expected["Allocation (USD)"])
+                ):
+                    raise SheetsSourceError(
+                        f"The written {team_name} allocation did not verify."
+                    )
+                results[team_name] = written
+            return {
+                "fiscal_year": fiscal_year,
+                "spreadsheet_id": spreadsheet_id,
+                "rows": results,
             }
 
     @staticmethod

@@ -15,9 +15,10 @@ from budget.models import (
     Transaction,
     TransactionAudit,
 )
-from budget.forms import TeamForm
+from budget.forms import TeamAllocationForm, TeamForm
 from budget.erb_views import _transaction_id
 from budget.services.sheets import SheetsGateway, SheetsSourceError
+from labapps.models import SheetRecord
 
 
 def _login(client, email, role="member", teams=None):
@@ -38,6 +39,38 @@ def test_team_form_only_exposes_manager_assignment_to_pi():
 
     assert "manager_emails" not in manager_form.fields
     assert "manager_emails" in pi_form.fields
+
+
+def test_team_allocation_form_requires_the_full_fiscal_year_budget():
+    form = TeamAllocationForm(
+        {
+            "fiscal_year": "FY2026-27",
+            "allocation_0": "69500",
+            "allocation_1": "50000",
+            "allocation_2": "50000",
+        },
+        year_choices=["FY2026-27"],
+        team_names=["Core Lab", "Diabetes", "Endometriosis Project"],
+        total_budget="169500",
+    )
+
+    assert form.is_valid()
+    assert form.allocation_values()["Core Lab"] == Decimal("69500")
+
+    form = TeamAllocationForm(
+        {
+            "fiscal_year": "FY2026-27",
+            "allocation_0": "69000",
+            "allocation_1": "50000",
+            "allocation_2": "50000",
+        },
+        year_choices=["FY2026-27"],
+        team_names=["Core Lab", "Diabetes", "Endometriosis Project"],
+        total_budget="169500",
+    )
+
+    assert not form.is_valid()
+    assert "must equal the fiscal-year budget" in form.non_field_errors()[0]
 
 
 @pytest.mark.django_db
@@ -170,8 +203,8 @@ def test_budget_settings_links_to_registry_without_member_management_surface(
     assert response.status_code == 200
     assert b"Members and roles" not in response.content
     assert b"Save and verify member" not in response.content
-    assert b'href="/portal/admin/#members"' in response.content
-    assert b"Member records are managed only in" in response.content
+    assert b'href="/portal/admin/#teams"' in response.content
+    assert b"Team names, members, and access are managed only in" in response.content
 
 
 @pytest.mark.django_db
@@ -708,6 +741,79 @@ def test_budget_manager_saves_fiscal_year_allocations(client, monkeypatch, setti
     audit = AdministrativeAudit.objects.get(action="allocations_updated")
     assert audit.actor == "manager@nyu.edu"
     assert audit.target == "FY2026-27"
+
+
+@pytest.mark.django_db
+def test_budget_manager_can_save_and_later_edit_all_team_allocations(
+    client, monkeypatch, settings
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    _login(client, "manager@nyu.edu", role="budget_manager")
+    fiscal_year = FiscalYear.objects.create(
+        label="FY2026-27", spreadsheet_id="sheet"
+    )
+    CategoryAllocation.objects.create(
+        fiscal_year=fiscal_year,
+        category="Consumables",
+        budget_usd=Decimal("169500"),
+    )
+    for index, team_name in enumerate(
+        ("Core Lab", "Endometriosis Project", "Diabetes"), start=1
+    ):
+        SheetRecord.objects.create(
+            source="registry",
+            table_name="Teams",
+            record_id=f"T{index:03d}",
+            payload={"team_name": team_name, "active": "TRUE"},
+        )
+    captured = {}
+
+    class Gateway:
+        def write_team_allocations(self, label, allocations):
+            captured.clear()
+            captured.update(allocations)
+            return {"fiscal_year": label}
+
+    def sync(gateway, label, actor):
+        for team_name, amount in captured.items():
+            Team.objects.update_or_create(
+                fiscal_year=fiscal_year,
+                name=team_name,
+                defaults={"allocation_usd": amount, "active": True},
+            )
+
+    monkeypatch.setattr("budget.settings_views.SheetsGateway", Gateway)
+    monkeypatch.setattr("budget.settings_views._sync", sync)
+    response = client.post(
+        reverse("budget:settings"),
+        {
+            "action": "team_allocations",
+            "team-allocation-fiscal_year": "FY2026-27",
+            "team-allocation-allocation_0": "69500",
+            "team-allocation-allocation_1": "50000",
+            "team-allocation-allocation_2": "50000",
+        },
+    )
+
+    assert response.status_code == 302
+    assert Team.objects.get(
+        fiscal_year=fiscal_year, name="Core Lab"
+    ).allocation_usd == Decimal("69500")
+    assert Team.objects.get(
+        fiscal_year=fiscal_year, name="Diabetes"
+    ).allocation_usd == Decimal("50000")
+    audit = AdministrativeAudit.objects.get(action="team_allocations_updated")
+    assert audit.after == {
+        "Core Lab": "69500",
+        "Diabetes": "50000",
+        "Endometriosis Project": "50000",
+    }
+
+    response = client.get(reverse("budget:settings") + "?fy=FY2026-27")
+    assert response.status_code == 200
+    assert b'Team budget allocations' in response.content
+    assert b'value="69500.00"' in response.content
 
 
 @pytest.mark.django_db

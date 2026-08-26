@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 
 from budget.services.calculations import CATEGORIES, SUPPORTED_CURRENCIES
@@ -89,6 +91,59 @@ class TeamForm(forms.Form):
         self.fields["fiscal_year"].choices = [(value, value) for value in year_choices]
         if not allow_manager_assignment:
             self.fields.pop("manager_emails", None)
+
+
+class TeamAllocationForm(forms.Form):
+    fiscal_year = forms.ChoiceField()
+
+    def __init__(
+        self,
+        *args,
+        year_choices=(),
+        team_names=(),
+        allocations=None,
+        total_budget=0,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.fields["fiscal_year"].choices = [
+            (value, value) for value in year_choices
+        ]
+        self.team_names = list(dict.fromkeys(team_names))
+        self.total_budget = Decimal(str(total_budget or 0)).quantize(Decimal("0.01"))
+        allocations = allocations or {}
+        for index, team_name in enumerate(self.team_names):
+            self.fields[f"allocation_{index}"] = forms.DecimalField(
+                label=team_name,
+                max_digits=16,
+                decimal_places=2,
+                min_value=0,
+                initial=allocations.get(team_name, 0),
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        if any(
+            f"allocation_{index}" not in cleaned
+            for index in range(len(self.team_names))
+        ):
+            return cleaned
+        allocated = sum(
+            (cleaned[f"allocation_{index}"] for index in range(len(self.team_names))),
+            Decimal("0"),
+        ).quantize(Decimal("0.01"))
+        if allocated != self.total_budget:
+            raise forms.ValidationError(
+                "Team allocations must equal the fiscal-year budget "
+                f"(${self.total_budget:,.2f}). Current total: ${allocated:,.2f}."
+            )
+        return cleaned
+
+    def allocation_values(self):
+        return {
+            team_name: self.cleaned_data[f"allocation_{index}"]
+            for index, team_name in enumerate(self.team_names)
+        }
 
 
 class ExchangeRateForm(forms.Form):

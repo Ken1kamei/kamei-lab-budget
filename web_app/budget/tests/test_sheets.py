@@ -945,6 +945,33 @@ def test_upsert_team_updates_existing_and_accepts_form_field_names(settings, mon
     assert len(teams.values) == 3
 
 
+def test_write_team_allocations_creates_and_updates_verified_rows(settings, monkeypatch):
+    teams = Worksheet(values=[TEAM_COLUMNS])
+    gateway, _, _ = _mutation_gateway(settings, monkeypatch, target_teams=teams)
+
+    created = gateway.write_team_allocations(
+        "FY2026-27",
+        {
+            "Core Lab": "69500",
+            "Diabetes": "50000",
+            "Endometriosis Project": "50000",
+        },
+    )
+    updated = gateway.write_team_allocations(
+        "FY2026-27",
+        {
+            "Core Lab": "70000",
+            "Diabetes": "49500",
+            "Endometriosis Project": "50000",
+        },
+    )
+
+    assert created["rows"]["Core Lab"]["Allocation (USD)"] == "69500.00"
+    assert updated["rows"]["Core Lab"]["Allocation (USD)"] == "70000.00"
+    assert updated["rows"]["Diabetes"]["Allocation (USD)"] == "49500.00"
+    assert len(teams.values) == 4
+
+
 def test_set_config_updates_and_appends_supported_exchange_rates(settings, monkeypatch):
     config = Worksheet(
         values=[
