@@ -17,7 +17,7 @@ from budget.models import (
 )
 from budget.forms import TeamForm
 from budget.erb_views import _transaction_id
-from budget.services.sheets import SheetsSourceError
+from budget.services.sheets import SheetsGateway, SheetsSourceError
 
 
 def _login(client, email, role="member", teams=None):
@@ -38,6 +38,54 @@ def test_team_form_only_exposes_manager_assignment_to_pi():
 
     assert "manager_emails" not in manager_form.fields
     assert "manager_emails" in pi_form.fields
+
+
+@pytest.mark.django_db
+def test_team_settings_shows_duplicate_role_error_without_writing(
+    client, monkeypatch, settings
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    _login(client, "pi@nyu.edu", role="pi")
+    FiscalYear.objects.create(label="FY2026-27", spreadsheet_id="sheet")
+
+    class Gateway:
+        @staticmethod
+        def validate_team_role_assignments(payload):
+            return SheetsGateway.validate_team_role_assignments(payload)
+
+        def fiscal_year_creator_status(self):
+            return {
+                "ready": True,
+                "message": "Ready",
+                "template_id": "",
+                "requests": [],
+                "legacy_years": [],
+                "notification_threshold": "80",
+                "gmail_label": "Budget/Invoices",
+            }
+
+        def upsert_registry_team(self, payload):
+            raise AssertionError("Invalid team roles must not be written.")
+
+    monkeypatch.setattr("budget.settings_views.SheetsGateway", Gateway)
+    response = client.post(
+        reverse("budget:settings"),
+        {
+            "action": "team",
+            "team-fiscal_year": "FY2026-27",
+            "team-name": "Core Lab",
+            "team-allocation_usd": "1000",
+            "team-manager_emails": "pi@nyu.edu",
+            "team-lead_emails": "PI@nyu.edu",
+            "team-member_emails": "",
+            "team-description": "",
+            "team-active": "on",
+        },
+    )
+
+    assert response.status_code == 400
+    assert b"Each person can have only one role in a team." in response.content
 
 
 @pytest.mark.django_db

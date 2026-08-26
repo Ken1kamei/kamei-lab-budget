@@ -62,6 +62,7 @@ def _settings_context(request, fiscal_year, **overrides):
         "message": "Fiscal-year creator status is unavailable.",
         "template_id": "",
         "requests": [],
+        "legacy_years": [],
         "notification_threshold": "80",
         "gmail_label": "Budget/Invoices",
     }
@@ -185,6 +186,16 @@ def settings_page(request):
                 payload["manager_emails"] = ",".join(
                     current_team.manager_emails if current_team else []
                 )
+            try:
+                gateway.validate_team_role_assignments(payload)
+            except ValueError as error:
+                form.add_error(None, str(error))
+                return render(
+                    request,
+                    "budget/settings.html",
+                    _settings_context(request, fiscal_year, team_form=form),
+                    status=400,
+                )
             gateway.upsert_registry_team(payload)
             gateway.upsert_team(target, payload)
             _sync(gateway, target, request.user.email)
@@ -257,6 +268,17 @@ def settings_page(request):
             messages.success(
                 request,
                 f"Queued {target}. The PI-owned Google Sheet creator will register it shortly.",
+            )
+            return redirect(f"{reverse('budget:settings')}?fy={fiscal_year.label}#fiscal-year")
+        if action == "fiscal_year_migrate":
+            if request.lab_member.highest_role != "pi":
+                return _error_response(request, "Only the PI can migrate a fiscal year.", 403)
+            target = request.POST.get("migrate_fiscal_year", "").strip()
+            result = gateway.queue_fiscal_year_migration(target)
+            _audit(request, "fiscal_year_migration_queued", target, {}, result)
+            messages.success(
+                request,
+                f"Queued migration of {target} to a dedicated Google Sheet.",
             )
             return redirect(f"{reverse('budget:settings')}?fy={fiscal_year.label}#fiscal-year")
         if action == "workspace":

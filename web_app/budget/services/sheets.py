@@ -271,7 +271,7 @@ class SheetsGateway:
         return sorted(years, reverse=True)
 
     @staticmethod
-    def _creator_state(config):
+    def _creator_state(config, master_id=""):
         enabled = str(
             config.get(FISCAL_YEAR_CREATOR_TRIGGER_STATUS_KEY, "")
         ).strip()
@@ -327,6 +327,18 @@ class SheetsGateway:
                     ),
                 }
             )
+        base_year = config.get("Current Fiscal Year") or config.get("Fiscal Year")
+        legacy_years = sorted(
+            (
+                key.removeprefix("Spreadsheet ID ")
+                for key, value in config.items()
+                if key.startswith("Spreadsheet ID FY")
+                and master_id
+                and str(value).strip() == master_id
+                and key.removeprefix("Spreadsheet ID ") != base_year
+            ),
+            reverse=True,
+        )
         return {
             "ready": ready,
             "message": message,
@@ -340,6 +352,7 @@ class SheetsGateway:
                 key=lambda row: row["fiscal_year"],
                 reverse=True,
             ),
+            "legacy_years": legacy_years,
             "notification_threshold": str(
                 config.get("Notification Threshold %", "80")
             ).strip()
@@ -354,7 +367,9 @@ class SheetsGateway:
         master_id = _master_spreadsheet_id()
         if not master_id:
             raise SheetsSourceError("MASTER_SPREADSHEET_ID is not configured.")
-        return self._creator_state(self._config_map(self._open(master_id)))
+        return self._creator_state(
+            self._config_map(self._open(master_id)), master_id=master_id
+        )
 
     def _workbook_for_year(self, fiscal_year):
         master_id = _master_spreadsheet_id()
@@ -1496,6 +1511,25 @@ class SheetsGateway:
                 "spreadsheet_id": spreadsheet_id,
             }
 
+    @staticmethod
+    def validate_team_role_assignments(team_data):
+        """Return normalized role sets after rejecting cross-role duplicates."""
+        desired_by_role = {
+            "manager": {
+                email.lower() for email in _split_values(team_data.get("manager_emails"))
+            },
+            "lead": {
+                email.lower() for email in _split_values(team_data.get("lead_emails"))
+            },
+            "viewer": {
+                email.lower() for email in _split_values(team_data.get("member_emails"))
+            },
+        }
+        assigned = [email for emails in desired_by_role.values() for email in emails]
+        if len(assigned) != len(set(assigned)):
+            raise ValueError("Each person can have only one role in a team.")
+        return desired_by_role
+
     def upsert_registry_team(self, team_data):
         """Reconcile one central team, its memberships, and scoped Budget roles."""
         self._require_writes()
@@ -1507,14 +1541,7 @@ class SheetsGateway:
             raise ValueError("Team name is required.")
         active = team_data.get("active", True)
         active = active if isinstance(active, bool) else _truthy(active)
-        desired_by_role = {
-            "manager": {email.lower() for email in _split_values(team_data.get("manager_emails"))},
-            "lead": {email.lower() for email in _split_values(team_data.get("lead_emails"))},
-            "viewer": {email.lower() for email in _split_values(team_data.get("member_emails"))},
-        }
-        assigned = [email for emails in desired_by_role.values() for email in emails]
-        if len(assigned) != len(set(assigned)):
-            raise ValueError("Each person can have only one role in a team.")
+        desired_by_role = self.validate_team_role_assignments(team_data)
         all_desired = set().union(*desired_by_role.values()) if active else set()
         today = datetime.now(DUBAI_TZ).date().isoformat()
 
@@ -1794,8 +1821,17 @@ class SheetsGateway:
 
     def queue_fiscal_year_creation(self, fiscal_year):
         """Queue the existing PI-owned GAS workbook creator and verify its token."""
+        return self._queue_fiscal_year_request(fiscal_year, "Queued")
+
+    def queue_fiscal_year_migration(self, fiscal_year):
+        """Queue migration of legacy annual tabs into a dedicated workbook."""
+        return self._queue_fiscal_year_request(fiscal_year, "Migrate")
+
+    def _queue_fiscal_year_request(self, fiscal_year, request_kind):
         self._require_writes()
         fiscal_year = self._validate_fiscal_year(fiscal_year)
+        if request_kind not in {"Queued", "Migrate"}:
+            raise ValueError("Unsupported fiscal-year request kind.")
         with _sheet_write_lock():
             master_id = _master_spreadsheet_id()
             if not master_id:
@@ -1808,16 +1844,33 @@ class SheetsGateway:
                 for row in values
                 if row and str(row[0]).strip()
             }
-            creator_state = self._creator_state(config)
+            creator_state = self._creator_state(config, master_id=master_id)
             if not creator_state["ready"]:
                 raise SheetsSourceError(creator_state["message"])
             registered_id = config.get(f"Spreadsheet ID {fiscal_year}", "").strip()
             base_year = config.get("Current Fiscal Year") or config.get("Fiscal Year")
-            if registered_id or fiscal_year == base_year:
-                raise SheetsSourceError(f"{fiscal_year} is already registered.")
+            if request_kind == "Queued":
+                if registered_id or fiscal_year == base_year:
+                    raise SheetsSourceError(f"{fiscal_year} is already registered.")
+            else:
+                if fiscal_year == base_year:
+                    raise SheetsSourceError(
+                        f"{fiscal_year} is the active master fiscal year and cannot be migrated."
+                    )
+                if registered_id != master_id:
+                    raise SheetsSourceError(
+                        f"{fiscal_year} is not registered in the legacy master workbook."
+                    )
+                for tab_name in ("Transactions", "Summary", "Teams", "Config"):
+                    try:
+                        master.worksheet(f"{tab_name} {fiscal_year}")
+                    except Exception as error:
+                        raise SheetsSourceError(
+                            f"Legacy tab {tab_name} {fiscal_year} is missing."
+                        ) from error
             key = f"Fiscal Year Creation Request {fiscal_year}"
             token = (
-                f"Queued {datetime.now(DUBAI_TZ).isoformat(timespec='seconds')} "
+                f"{request_kind} {datetime.now(DUBAI_TZ).isoformat(timespec='seconds')} "
                 f"{secrets.token_hex(4)}"
             )
             matches = [
@@ -1846,6 +1899,7 @@ class SheetsGateway:
                 )
             return {
                 "fiscal_year": fiscal_year,
+                "request_kind": request_kind,
                 "key": key,
                 "token": token,
                 "spreadsheet_id": master_id,

@@ -990,6 +990,32 @@ def test_queue_fiscal_year_creation_writes_verified_master_config_token(
         gateway.queue_fiscal_year_creation("FY2026-27")
 
 
+def test_queue_fiscal_year_migration_writes_verified_master_config_token(
+    settings, monkeypatch
+):
+    gateway, master, _ = _mutation_gateway(settings, monkeypatch)
+    master.sheets["Config"].values[1][1] = "master"
+    master.sheets["Config"].values.extend(
+        [
+            ["Fiscal Year Creator Trigger Status", "Enabled"],
+            [
+                "Fiscal Year Creator Trigger Heartbeat",
+                f"Success {datetime.now(ZoneInfo('Asia/Dubai')).isoformat()}",
+            ],
+        ]
+    )
+    for tab_name in ("Transactions", "Summary", "Teams", "Config"):
+        master.sheets[f"{tab_name} FY2026-27"] = Worksheet(values=[])
+
+    state = gateway.fiscal_year_creator_status()
+    result = gateway.queue_fiscal_year_migration("FY2026-27")
+
+    assert state["legacy_years"] == ["FY2026-27"]
+    assert result["request_kind"] == "Migrate"
+    assert result["token"].startswith("Migrate ")
+    assert master.sheets["Config"].values[-1] == [result["key"], result["token"]]
+
+
 def test_creator_status_reports_requests_and_workspace_config(settings, monkeypatch):
     gateway, master, _ = _mutation_gateway(settings, monkeypatch)
     master.sheets["Config"].values.extend(
@@ -1012,6 +1038,7 @@ def test_creator_status_reports_requests_and_workspace_config(settings, monkeypa
     assert state["template_id"] == "template-id"
     assert state["notification_threshold"] == "75"
     assert state["gmail_label"] == "Lab/Invoices"
+    assert state["legacy_years"] == []
     assert state["requests"] == [
         {
             "fiscal_year": "FY2027-28",
@@ -1020,6 +1047,17 @@ def test_creator_status_reports_requests_and_workspace_config(settings, monkeypa
             "url": "",
         }
     ]
+
+
+def test_team_role_validation_rejects_same_person_in_multiple_roles():
+    with pytest.raises(ValueError, match="only one role"):
+        SheetsGateway.validate_team_role_assignments(
+            {
+                "manager_emails": "person@nyu.edu",
+                "lead_emails": "PERSON@nyu.edu",
+                "member_emails": "other@nyu.edu",
+            }
+        )
 
 
 def test_creator_queue_rejects_stale_heartbeat(settings, monkeypatch):
