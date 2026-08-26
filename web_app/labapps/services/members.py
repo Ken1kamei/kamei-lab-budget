@@ -9,7 +9,6 @@ from labapps.permissions import truthy
 
 from .sheets import (
     append_registry_audit,
-    next_identifier,
     replace_table,
     snapshot_rows,
     upsert_record,
@@ -26,6 +25,32 @@ def _member_by_id(member_id):
         ),
         None,
     )
+
+
+def _next_member_identifier():
+    """Return an ID never used by the Registry or its member references."""
+    identifiers = []
+    identifiers.extend(row.get("member_id") for row in snapshot_rows("Members"))
+    for table_name, key in (
+        ("Member_Teams", "member_id"),
+        ("App_Roles", "member_id"),
+        ("Projects", "owner_member_id"),
+        ("Milestones", "owner_member_id"),
+        ("Experiments", "member_id"),
+    ):
+        identifiers.extend(row.get(key) for row in snapshot_rows(table_name))
+    identifiers.extend(
+        row.get("target_id")
+        for row in snapshot_rows("Audit_Log")
+        if str(row.get("target_type") or "").strip().lower() == "member"
+    )
+    numbers = []
+    for raw in identifiers:
+        value = str(raw or "").strip()
+        suffix = value.removeprefix("M").lstrip("-")
+        if value.startswith("M") and suffix.isdigit():
+            numbers.append(int(suffix))
+    return f"M{max(numbers, default=0) + 1:03d}"
 
 
 def sync_registry_member_mirror(member_id, *, previous_email=""):
@@ -207,7 +232,7 @@ def upsert_member_access(cleaned, *, actor):
             raise ValueError(
                 "The configured Principal Investigator email, role, and active status are protected."
             )
-    member_id = existing.get("member_id") if existing else next_identifier("Members", "M")
+    member_id = existing.get("member_id") if existing else _next_member_identifier()
     payload = {
         "member_id": member_id,
         "email": email,

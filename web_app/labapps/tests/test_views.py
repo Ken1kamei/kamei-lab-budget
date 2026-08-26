@@ -25,6 +25,7 @@ from labapps.services.members import (
     delete_member_record,
     remove_member_access,
     sync_registry_member_mirror,
+    upsert_member_access,
 )
 from labapps.tests.test_knowledge import protocol_docx_bytes
 
@@ -70,6 +71,50 @@ def fake_registry_replace(table_name, rows, **kwargs):
             payload=row,
         )
     return rows
+
+
+def test_new_member_id_skips_dangling_references_and_deleted_member_audit(
+    monkeypatch,
+):
+    seed_pi()
+    add_record(
+        "App_Roles",
+        "AR011",
+        {"app_role_id": "AR011", "member_id": "M011", "active": "FALSE"},
+    )
+    add_record(
+        "Audit_Log",
+        "AUD014",
+        {
+            "audit_id": "AUD014",
+            "target_type": "Member",
+            "target_id": "M014",
+        },
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.upsert_record", fake_registry_upsert
+    )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
+
+    payload = upsert_member_access(
+        {
+            "member_id": "",
+            "email": "new.member@nyu.edu",
+            "name": "New Member",
+            "display_name": "New Member",
+            "global_role": "member",
+            "active": True,
+            "notes": "",
+        },
+        actor="kk4801@nyu.edu",
+    )
+
+    assert payload["member_id"] == "M015"
+    assert SheetRecord.objects.get(
+        table_name="Members", record_id="M015"
+    ).payload["email"] == "new.member@nyu.edu"
 
 
 def signed_in_client():
