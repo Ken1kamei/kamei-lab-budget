@@ -17,7 +17,7 @@ from budget.models import AdministrativeAudit, FiscalYear, LabMember, Team
 from budget.operation_views import _sheet_write_allowed
 from budget.services.calculations import CATEGORIES, DEFAULT_RATES_TO_USD
 from budget.services.sheets import SheetsGateway, SheetsSourceError
-from budget.services.sync import sync_fiscal_year
+from budget.services.sync import sync_fiscal_year, sync_verified_member_access
 from budget.views import _error_response, _selected_fiscal_year
 
 
@@ -248,8 +248,7 @@ def settings_page(request):
             payload["team_roles"] = form.team_role_values()
             payload["team_names"] = list(payload["team_roles"])
             gateway.upsert_registry_member(payload)
-            for target in labels:
-                _sync(gateway, target, request.user.email)
+            sync_verified_member_access(payload)
             _audit(
                 request,
                 "member_updated",

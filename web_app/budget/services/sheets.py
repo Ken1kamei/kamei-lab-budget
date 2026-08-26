@@ -1931,13 +1931,17 @@ class SheetsGateway:
 
     def _write_registry_table(self, worksheet, headers, rows):
         end_column = self._column_label(len(headers))
+        if not rows:
+            return
         try:
-            for index, row in enumerate(rows, start=2):
-                worksheet.update(
-                    values=[[row.get(header, "") for header in headers]],
-                    range_name=f"A{index}:{end_column}{index}",
-                    value_input_option="RAW",
-                )
+            worksheet.update(
+                values=[
+                    [row.get(header, "") for header in headers]
+                    for row in rows
+                ],
+                range_name=f"A2:{end_column}{len(rows) + 1}",
+                value_input_option="RAW",
+            )
         except Exception as error:
             raise SheetsSourceError("A central registry table could not be written.") from error
 

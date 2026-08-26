@@ -28,6 +28,60 @@ def _safe_payload(value):
     return json.loads(json.dumps(value, default=str))
 
 
+def sync_verified_member_access(member_data: dict) -> LabMember:
+    """Mirror a registry member after SheetsGateway has verified its write."""
+    email = str(member_data.get("email") or "").strip().lower()
+    if not email:
+        raise ValueError("Member email is required.")
+    display_name = str(member_data.get("display_name") or "").strip() or email
+    role = str(member_data.get("role") or "member").strip().lower()
+    if role not in ROLE_PRIORITY:
+        raise ValueError("Unsupported Budget role.")
+    raw_active = member_data.get("active", True)
+    active = (
+        raw_active
+        if isinstance(raw_active, bool)
+        else str(raw_active).strip().lower() in {"1", "true", "yes", "y", "on"}
+    )
+    raw_team_roles = member_data.get("team_roles") or {}
+    team_roles = {
+        str(name).strip(): (
+            "lead" if str(team_role).strip().lower() == "lead" else "member"
+        )
+        for name, team_role in raw_team_roles.items()
+        if str(name).strip() and str(team_role).strip()
+    }
+    if not active:
+        team_roles = {}
+    highest_role = role
+    if role not in {"pi", "budget_manager"}:
+        highest_role = "lead" if "lead" in team_roles.values() else "member"
+    annual_roles = {}
+    for fiscal_year in FiscalYear.objects.all():
+        active_names = set(
+            fiscal_year.teams.filter(active=True).values_list("name", flat=True)
+        )
+        scoped_roles = {
+            name: team_role
+            for name, team_role in team_roles.items()
+            if name in active_names
+        }
+        if scoped_roles:
+            annual_roles[fiscal_year.label] = scoped_roles
+    member, _ = LabMember.objects.update_or_create(
+        email=email,
+        defaults={
+            "display_name": display_name,
+            "highest_role": highest_role,
+            "team_names": sorted(team_roles),
+            "team_roles": annual_roles,
+            "active": active,
+            "last_synced_at": timezone.now(),
+        },
+    )
+    return member
+
+
 def _parse_date(value):
     text = str(value or "").strip()
     if not text:

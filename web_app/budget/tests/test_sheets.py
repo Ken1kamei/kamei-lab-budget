@@ -42,6 +42,7 @@ class Worksheet:
         self.values = values or []
         self.records = records
         self.col_count = max((len(row) for row in self.values), default=0)
+        self.update_calls = []
 
     def get_all_values(self):
         return self.values
@@ -65,6 +66,7 @@ class Worksheet:
         self.col_count += count
 
     def update(self, *, values, range_name, value_input_option=None):
+        self.update_calls.append((range_name, len(values)))
         start_column, start_row, end_column, end_row = _range_parts(range_name)
         while len(self.values) < end_row:
             self.values.append([])
@@ -1165,6 +1167,9 @@ def test_upsert_registry_member_preserves_id_and_reconciles_teams_and_roles(
         for row in roles
         if row["member_id"] == "M007" and row["active"] == "TRUE"
     } == {("lead", "T002")}
+    assert registry.sheets["Members"].update_calls == [("A2:L2", 1)]
+    assert registry.sheets["Member_Teams"].update_calls == [("A2:G3", 2)]
+    assert registry.sheets["App_Roles"].update_calls == [("A2:H4", 3)]
 
     disabled = gateway.upsert_registry_member(
         {
