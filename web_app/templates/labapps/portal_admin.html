@@ -15,6 +15,7 @@
     <div class="registry-editor">
       {% if deleting_member %}
       <div class="notice warning"><strong>Permanent deletion</strong><br>This removes {{ deleting_member.email }} and its team/app assignments from the Registry. This cannot be undone.</div>
+      {% if deletion_reference_count %}<div class="notice warning"><strong>Linked tracker records must be transferred</strong><br>{% for reference in deletion_references %}{% if reference.count %}{{ reference.table_name }}: {{ reference.count }}{% if not forloop.last %} · {% endif %}{% endif %}{% endfor %}<br>The selected active member will become their new owner or assignee.</div>{% endif %}
       <form method="post" class="form-grid single">
         {% csrf_token %}<input type="hidden" name="action" value="member_delete">
         {{ member_delete_form.as_div }}

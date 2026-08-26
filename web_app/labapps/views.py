@@ -83,6 +83,7 @@ from .services.slack import (
 )
 from .services.members import (
     delete_member_record,
+    member_reference_summary,
     remove_member_access,
     sync_all_member_mirrors,
     sync_registry_member_mirror,
@@ -342,6 +343,26 @@ def portal_admin(request):
     deleting_member = next(
         (row for row in members if row.get("member_id") == delete_member_id), None
     )
+    deletion_references = (
+        member_reference_summary(deleting_member.get("member_id"))
+        if deleting_member
+        else []
+    )
+    deletion_reference_count = sum(row["count"] for row in deletion_references)
+    deletion_targets = [
+        row
+        for row in _active(members)
+        if not deleting_member
+        or row.get("member_id") != deleting_member.get("member_id")
+    ]
+    actor_member = next(
+        (
+            row
+            for row in deletion_targets
+            if str(row.get("email") or "").strip().lower() == _email(request)
+        ),
+        None,
+    )
     member_form = MemberForm(
         prefix="member",
         initial=(
@@ -360,7 +381,13 @@ def portal_admin(request):
     )
     member_delete_form = MemberDeleteForm(
         prefix="delete",
-        initial={"member_id": deleting_member.get("member_id")}
+        members=deletion_targets,
+        reference_count=deletion_reference_count,
+        expected_email=(deleting_member or {}).get("email", ""),
+        initial={
+            "member_id": deleting_member.get("member_id"),
+            "reassign_to_member_id": (actor_member or {}).get("member_id", ""),
+        }
         if deleting_member
         else None,
     )
@@ -415,6 +442,26 @@ def portal_admin(request):
                     ),
                     None,
                 )
+                deletion_references = (
+                    member_reference_summary(requested_member_id)
+                    if deleting_member
+                    else []
+                )
+                deletion_reference_count = sum(
+                    row["count"] for row in deletion_references
+                )
+                deletion_targets = [
+                    row
+                    for row in _active(members)
+                    if row.get("member_id") != requested_member_id
+                ]
+                member_delete_form = MemberDeleteForm(
+                    request.POST,
+                    prefix="delete",
+                    members=deletion_targets,
+                    reference_count=deletion_reference_count,
+                    expected_email=(deleting_member or {}).get("email", ""),
+                )
                 if member_delete_form.is_valid():
                     payload = delete_member_record(
                         member_delete_form.cleaned_data["member_id"],
@@ -422,6 +469,9 @@ def portal_admin(request):
                         confirm_email=member_delete_form.cleaned_data[
                             "confirm_email"
                         ],
+                        reassign_to_member_id=member_delete_form.cleaned_data.get(
+                            "reassign_to_member_id", ""
+                        ),
                     )
                     messages.success(
                         request,
@@ -543,6 +593,8 @@ def portal_admin(request):
             "editing_member": editing_member,
             "member_delete_form": member_delete_form,
             "deleting_member": deleting_member,
+            "deletion_references": deletion_references,
+            "deletion_reference_count": deletion_reference_count,
             "team_form": team_form,
             "role_form": role_form,
         },

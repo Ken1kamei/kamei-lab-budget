@@ -43,9 +43,46 @@ class MemberForm(forms.Form):
 
 class MemberDeleteForm(forms.Form):
     member_id = forms.CharField(widget=forms.HiddenInput)
+    reassign_to_member_id = forms.ChoiceField(
+        label="Transfer linked tracker records to",
+        required=False,
+        choices=[],
+    )
     confirm_email = forms.EmailField(
         label="Type the member email to confirm permanent deletion"
     )
+
+    def __init__(
+        self,
+        *args,
+        members=None,
+        reference_count=0,
+        expected_email="",
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.fields["confirm_email"].help_text = (
+            f"Enter exactly: {expected_email}" if expected_email else ""
+        )
+        if reference_count:
+            self.fields["reassign_to_member_id"].required = True
+            self.fields["reassign_to_member_id"].choices = [
+                (
+                    row["member_id"],
+                    "{} — {} ({})".format(
+                        row.get("display_name")
+                        or row.get("name")
+                        or row.get("email")
+                        or row["member_id"],
+                        row.get("email") or "no email",
+                        row["member_id"],
+                    ),
+                )
+                for row in (members or [])
+                if str(row.get("member_id") or "").strip()
+            ]
+        else:
+            self.fields.pop("reassign_to_member_id")
 
 
 class TeamForm(forms.Form):

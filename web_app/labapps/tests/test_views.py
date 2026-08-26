@@ -61,11 +61,19 @@ def fake_registry_replace(table_name, rows, **kwargs):
         "Teams": "team_id",
         "App_Roles": "app_role_id",
         "Member_Teams": "member_team_id",
+        "Projects": "project_id",
+        "Milestones": "milestone_id",
+        "Experiments": "experiment_id",
     }[table_name]
-    SheetRecord.objects.filter(source="registry", table_name=table_name).delete()
+    source = (
+        "tracker"
+        if table_name in {"Projects", "Milestones", "Experiments"}
+        else "registry"
+    )
+    SheetRecord.objects.filter(source=source, table_name=table_name).delete()
     for index, row in enumerate(rows, start=1):
         SheetRecord.objects.create(
-            source="registry",
+            source=source,
             table_name=table_name,
             record_id=row.get(key) or f"legacy-{table_name}-{index}",
             payload=row,
@@ -1175,11 +1183,22 @@ def test_registry_shows_inactive_members_and_permanently_deletes_one(
     assert not LabMember.objects.filter(email="test@test.com").exists()
 
 
-def test_registry_permanent_delete_requires_inactive_unreferenced_member(
+def test_registry_permanent_delete_transfers_linked_records(
     monkeypatch, settings
 ):
     settings.ENABLE_SHEET_WRITES = True
     settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    add_record(
+        "Members",
+        "M001",
+        {
+            "member_id": "M001",
+            "email": "owner@nyu.edu",
+            "display_name": "Owner",
+            "global_role": "admin",
+            "active": "TRUE",
+        },
+    )
     add_record(
         "Members",
         "M020",
@@ -1197,11 +1216,26 @@ def test_registry_permanent_delete_requires_inactive_unreferenced_member(
         {"project_id": "P020", "owner_member_id": "M020"},
         source="tracker",
     )
+    add_record(
+        "Milestones",
+        "MS020",
+        {"milestone_id": "MS020", "owner_member_id": "M020"},
+        source="tracker",
+    )
+    add_record(
+        "Experiments",
+        "EXP020",
+        {"experiment_id": "EXP020", "member_id": "M020"},
+        source="tracker",
+    )
     monkeypatch.setattr(
         "labapps.services.members.replace_table", fake_registry_replace
     )
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
 
-    with pytest.raises(ValueError, match="Reassign linked records"):
+    with pytest.raises(ValueError, match="Choose a different active member"):
         delete_member_record(
             "M020", actor="admin@nyu.edu", confirm_email="linked@nyu.edu"
         )
@@ -1209,6 +1243,26 @@ def test_registry_permanent_delete_requires_inactive_unreferenced_member(
     assert SheetRecord.objects.filter(
         source="registry", table_name="Members", record_id="M020"
     ).exists()
+
+    delete_member_record(
+        "M020",
+        actor="admin@nyu.edu",
+        confirm_email="linked@nyu.edu",
+        reassign_to_member_id="M001",
+    )
+
+    assert not SheetRecord.objects.filter(
+        source="registry", table_name="Members", record_id="M020"
+    ).exists()
+    assert SheetRecord.objects.get(
+        source="tracker", table_name="Projects", record_id="P020"
+    ).payload["owner_member_id"] == "M001"
+    assert SheetRecord.objects.get(
+        source="tracker", table_name="Milestones", record_id="MS020"
+    ).payload["owner_member_id"] == "M001"
+    assert SheetRecord.objects.get(
+        source="tracker", table_name="Experiments", record_id="EXP020"
+    ).payload["member_id"] == "M001"
 
 
 def test_portal_member_remove_revokes_all_access_and_slack(

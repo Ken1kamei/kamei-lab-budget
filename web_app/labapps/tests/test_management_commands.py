@@ -4,10 +4,53 @@ from unittest.mock import patch
 import pytest
 from django.core.management import call_command
 
-from labapps.models import KnowledgeRecord, LabAppAudit
+from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord
 
 
 pytestmark = pytest.mark.django_db
+
+
+def test_delete_registry_members_uses_active_reassignment_target(settings):
+    settings.PI_EMAIL = "pi@nyu.edu"
+    SheetRecord.objects.create(
+        source="registry",
+        table_name="Members",
+        record_id="M001",
+        payload={
+            "member_id": "M001",
+            "email": "pi@nyu.edu",
+            "active": "TRUE",
+        },
+    )
+    SheetRecord.objects.create(
+        source="registry",
+        table_name="Members",
+        record_id="M002",
+        payload={
+            "member_id": "M002",
+            "email": "test@example.edu",
+            "active": "FALSE",
+        },
+    )
+
+    with patch(
+        "labapps.management.commands.delete_registry_members.sync_all"
+    ), patch(
+        "labapps.management.commands.delete_registry_members.delete_member_record"
+    ) as delete:
+        call_command(
+            "delete_registry_members",
+            "test@example.edu",
+            actor="pi@nyu.edu",
+            reassign_to_email="pi@nyu.edu",
+        )
+
+    delete.assert_called_once_with(
+        "M002",
+        actor="pi@nyu.edu",
+        confirm_email="test@example.edu",
+        reassign_to_member_id="M001",
+    )
 
 
 def test_migrate_knowledge_originals_stores_and_extracts_local_source(

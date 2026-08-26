@@ -299,7 +299,35 @@ def remove_member_access(member_id, *, actor):
     return payload
 
 
-def delete_member_record(member_id, *, actor, confirm_email):
+MEMBER_REFERENCE_FIELDS = (
+    ("Projects", "owner_member_id"),
+    ("Milestones", "owner_member_id"),
+    ("Experiments", "member_id"),
+)
+
+
+def member_reference_summary(member_id):
+    member_id = str(member_id or "").strip()
+    return [
+        {
+            "table_name": table_name,
+            "count": sum(
+                1
+                for row in snapshot_rows(table_name)
+                if str(row.get(key) or "").strip() == member_id
+            ),
+        }
+        for table_name, key in MEMBER_REFERENCE_FIELDS
+    ]
+
+
+def delete_member_record(
+    member_id,
+    *,
+    actor,
+    confirm_email,
+    reassign_to_member_id="",
+):
     actor = normalize_member_email(actor)
     member = _member_by_id(member_id)
     if member is None:
@@ -316,38 +344,56 @@ def delete_member_record(member_id, *, actor, confirm_email):
     ).strip().lower() == "pi":
         raise ValueError("Principal Investigator records cannot be deleted.")
 
-    references = []
-    for table_name, key in (
-        ("Projects", "owner_member_id"),
-        ("Milestones", "owner_member_id"),
-        ("Experiments", "member_id"),
+    references = [row for row in member_reference_summary(member_id) if row["count"]]
+    reassign_to_member_id = str(reassign_to_member_id or "").strip()
+    target = _member_by_id(reassign_to_member_id) if reassign_to_member_id else None
+    if references and (
+        target is None
+        or reassign_to_member_id == str(member_id).strip()
+        or not truthy(target.get("active", "TRUE"))
     ):
-        count = sum(
-            1
-            for row in snapshot_rows(table_name)
-            if str(row.get(key) or "").strip() == str(member_id).strip()
-        )
-        if count:
-            references.append(f"{table_name} ({count})")
-    if references:
         raise ValueError(
-            "Reassign linked records before deletion: " + ", ".join(references) + "."
+            "Choose a different active member to receive linked tracker records: "
+            + ", ".join(
+                f"{row['table_name']} ({row['count']})" for row in references
+            )
+            + "."
         )
 
     before = dict(member)
+    for table_name, key in MEMBER_REFERENCE_FIELDS:
+        rows = snapshot_rows(table_name)
+        changed = False
+        output = []
+        for row in rows:
+            if str(row.get(key) or "").strip() == str(member_id).strip():
+                output.append({**row, key: reassign_to_member_id})
+                changed = True
+            else:
+                output.append(row)
+        if changed:
+            replace_table(
+                table_name,
+                output,
+                actor=actor,
+                action="reassign_before_member_delete",
+                target=f"Member:{member_id}->{reassign_to_member_id}",
+            )
     for table_name in ("App_Roles", "Member_Teams"):
+        original = snapshot_rows(table_name)
         rows = [
             row
-            for row in snapshot_rows(table_name)
+            for row in original
             if str(row.get("member_id") or "").strip() != str(member_id).strip()
         ]
-        replace_table(
-            table_name,
-            rows,
-            actor=actor,
-            action="delete_member_record",
-            target=f"Member:{member_id}",
-        )
+        if len(rows) != len(original):
+            replace_table(
+                table_name,
+                rows,
+                actor=actor,
+                action="delete_member_record",
+                target=f"Member:{member_id}",
+            )
     members = [
         row
         for row in snapshot_rows("Members")
@@ -368,6 +414,9 @@ def delete_member_record(member_id, *, actor, confirm_email):
         target_type="Member",
         target_id=str(member_id),
         before=before,
-        after={},
+        after={
+            "deleted": True,
+            "reassigned_to_member_id": reassign_to_member_id,
+        },
     )
     return before
