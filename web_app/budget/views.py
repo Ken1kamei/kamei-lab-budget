@@ -231,7 +231,15 @@ def _scoped_totals(member, fiscal_year):
             Decimal("0"),
         )
     )
+    actual_rows = [row for row in rows if row.status != "Planned"]
+    planned_rows = [row for row in rows if row.status == "Planned"]
     total_allocated = money(sum((row.amount_usd_equiv for row in rows), Decimal("0")))
+    total_actual_allocated = money(
+        sum((row.amount_usd_equiv for row in actual_rows), Decimal("0"))
+    )
+    total_planned = money(
+        sum((row.amount_usd_equiv for row in planned_rows), Decimal("0"))
+    )
     categories = {}
     for category in CATEGORIES:
         allocated = money(
@@ -247,6 +255,26 @@ def _scoped_totals(member, fiscal_year):
         categories[category] = {
             "budget": Decimal("0.00"),
             "allocated": allocated,
+            "actual_allocated": money(
+                sum(
+                    (
+                        row.amount_usd_equiv
+                        for row in actual_rows
+                        if row.category == category
+                    ),
+                    Decimal("0"),
+                )
+            ),
+            "planned": money(
+                sum(
+                    (
+                        row.amount_usd_equiv
+                        for row in planned_rows
+                        if row.category == category
+                    ),
+                    Decimal("0"),
+                )
+            ),
             "available": Decimal("0.00"),
         }
     teams = {}
@@ -264,11 +292,33 @@ def _scoped_totals(member, fiscal_year):
         teams[team.name] = {
             "budget": money(team.allocation_usd),
             "allocated": allocated,
+            "actual_allocated": money(
+                sum(
+                    (
+                        row.amount_usd_equiv
+                        for row in actual_rows
+                        if row.team == team.name
+                    ),
+                    Decimal("0"),
+                )
+            ),
+            "planned": money(
+                sum(
+                    (
+                        row.amount_usd_equiv
+                        for row in planned_rows
+                        if row.team == team.name
+                    ),
+                    Decimal("0"),
+                )
+            ),
             "available": money(team.allocation_usd - allocated),
         }
     return {
         "total_budget": team_budget,
         "total_allocated": total_allocated,
+        "total_actual_allocated": total_actual_allocated,
+        "total_planned": total_planned,
         "available": money(team_budget - total_allocated),
         "transaction_count": rows.count(),
         "categories": categories,
@@ -541,7 +591,7 @@ def transactions_view(request):
             "fiscal_year": fiscal_year,
             "transactions": transactions,
             "categories": CATEGORIES,
-            "statuses": ["Allocated", "Cancelled"],
+            "statuses": ["Allocated", "Planned", "Cancelled"],
             "team_names": _visible_team_names(request.lab_member, fiscal_year)
             if fiscal_year
             else [],

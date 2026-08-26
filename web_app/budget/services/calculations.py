@@ -50,7 +50,12 @@ def fiscal_year_for_date(value) -> str:
 
 
 def canonical_status(value) -> str:
-    return "Cancelled" if str(value or "").strip() == "Cancelled" else "Allocated"
+    status = str(value or "").strip()
+    if status == "Cancelled":
+        return "Cancelled"
+    if status == "Planned":
+        return "Planned"
+    return "Allocated"
 
 
 def split_emails(value) -> list[str]:
@@ -95,7 +100,13 @@ def snapshot_totals(snapshot: dict) -> dict:
     rates = {code: decimal_value(value) for code, value in snapshot.get("exchange_rates", {}).items()}
     aed_per_usd = decimal_value(snapshot.get("aed_per_usd"), str(DEFAULT_AED_PER_USD))
     categories = {
-        category: {"budget": Decimal("0.00"), "allocated": Decimal("0.00"), "available": Decimal("0.00")}
+        category: {
+            "budget": Decimal("0.00"),
+            "allocated": Decimal("0.00"),
+            "actual_allocated": Decimal("0.00"),
+            "planned": Decimal("0.00"),
+            "available": Decimal("0.00"),
+        }
         for category in CATEGORIES
     }
     for row in snapshot.get("summary", []):
@@ -104,15 +115,23 @@ def snapshot_totals(snapshot: dict) -> dict:
             categories[category]["budget"] = summary_budget_usd(row, aed_per_usd)
     active_count = 0
     for row in snapshot.get("transactions", []):
-        if canonical_status(row.get("Status")) == "Cancelled":
+        status = canonical_status(row.get("Status"))
+        if status == "Cancelled":
             continue
         active_count += 1
         category = str(row.get("Category", "")).strip()
         if category in categories:
-            categories[category]["allocated"] += transaction_usd_equivalent(row, rates)
+            amount = transaction_usd_equivalent(row, rates)
+            categories[category]["allocated"] += amount
+            if status == "Planned":
+                categories[category]["planned"] += amount
+            else:
+                categories[category]["actual_allocated"] += amount
     for values in categories.values():
         values["budget"] = money(values["budget"])
         values["allocated"] = money(values["allocated"])
+        values["actual_allocated"] = money(values["actual_allocated"])
+        values["planned"] = money(values["planned"])
         values["available"] = money(values["budget"] - values["allocated"])
     teams = {}
     for row in snapshot.get("teams", []):
@@ -125,21 +144,41 @@ def snapshot_totals(snapshot: dict) -> dict:
             allocation = decimal_value(row.get("Allocation (USD)"))
         else:
             allocation = decimal_value(row.get("Allocation (AED)")) / DEFAULT_AED_PER_USD
-        teams[name] = {"budget": money(allocation), "allocated": Decimal("0.00"), "available": Decimal("0.00")}
+        teams[name] = {
+            "budget": money(allocation),
+            "allocated": Decimal("0.00"),
+            "actual_allocated": Decimal("0.00"),
+            "planned": Decimal("0.00"),
+            "available": Decimal("0.00"),
+        }
     for row in snapshot.get("transactions", []):
-        if canonical_status(row.get("Status")) == "Cancelled":
+        status = canonical_status(row.get("Status"))
+        if status == "Cancelled":
             continue
         team_name = str(row.get("Team", "")).strip()
         if team_name in teams:
-            teams[team_name]["allocated"] += transaction_usd_equivalent(row, rates)
+            amount = transaction_usd_equivalent(row, rates)
+            teams[team_name]["allocated"] += amount
+            if status == "Planned":
+                teams[team_name]["planned"] += amount
+            else:
+                teams[team_name]["actual_allocated"] += amount
     for values in teams.values():
         values["allocated"] = money(values["allocated"])
+        values["actual_allocated"] = money(values["actual_allocated"])
+        values["planned"] = money(values["planned"])
         values["available"] = money(values["budget"] - values["allocated"])
     total_budget = money(sum((v["budget"] for v in categories.values()), Decimal("0")))
     total_allocated = money(sum((v["allocated"] for v in categories.values()), Decimal("0")))
+    total_actual_allocated = money(
+        sum((v["actual_allocated"] for v in categories.values()), Decimal("0"))
+    )
+    total_planned = money(sum((v["planned"] for v in categories.values()), Decimal("0")))
     return {
         "total_budget": total_budget,
         "total_allocated": total_allocated,
+        "total_actual_allocated": total_actual_allocated,
+        "total_planned": total_planned,
         "available": money(total_budget - total_allocated),
         "transaction_count": active_count,
         "categories": categories,

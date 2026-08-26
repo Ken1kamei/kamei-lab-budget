@@ -1,10 +1,17 @@
 from decimal import Decimal
 
 from budget.services.calculations import (
+    canonical_status,
     compare_totals,
     fiscal_year_for_date,
     snapshot_totals,
 )
+
+
+def test_canonical_status_preserves_planned_and_normalizes_legacy_statuses():
+    assert canonical_status("Planned") == "Planned"
+    assert canonical_status("Cancelled") == "Cancelled"
+    assert canonical_status("Paid") == "Allocated"
 
 
 def test_fiscal_year_starts_on_september_first():
@@ -54,6 +61,42 @@ def test_snapshot_totals_follow_allocated_status_and_currency_semantics():
     assert totals["available"] == Decimal("11500.00")
     assert totals["transaction_count"] == 2
     assert totals["categories"]["Consumables"]["allocated"] == Decimal("3500.00")
+
+
+def test_planned_amount_reduces_available_but_remains_separate_from_actual():
+    totals = snapshot_totals(
+        {
+            "summary": [
+                {"Category": "Consumables", "Budgeted (USD equiv)": "10000"}
+            ],
+            "teams": [
+                {"Team Name": "Diabetes", "Allocation (USD)": "10000", "Active": "Y"}
+            ],
+            "transactions": [
+                {
+                    "Category": "Consumables",
+                    "Team": "Diabetes",
+                    "Status": "Allocated",
+                    "Currency": "USD",
+                    "Amount": "2500",
+                },
+                {
+                    "Category": "Consumables",
+                    "Team": "Diabetes",
+                    "Status": "Planned",
+                    "Currency": "USD",
+                    "Amount": "1000",
+                },
+            ],
+        }
+    )
+
+    assert totals["total_actual_allocated"] == Decimal("2500.00")
+    assert totals["total_planned"] == Decimal("1000.00")
+    assert totals["total_allocated"] == Decimal("3500.00")
+    assert totals["available"] == Decimal("6500.00")
+    assert totals["categories"]["Consumables"]["planned"] == Decimal("1000.00")
+    assert totals["teams"]["Diabetes"]["planned"] == Decimal("1000.00")
 
 
 def test_compare_totals_uses_cent_tolerance_and_reports_material_differences():

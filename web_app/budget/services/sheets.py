@@ -805,8 +805,8 @@ class SheetsGateway:
             )
             or "Allocated"
         ).strip()
-        if status not in {"Allocated", "Cancelled"}:
-            raise ValueError("Status must be Allocated or Cancelled.")
+        if status not in {"Allocated", "Planned", "Cancelled"}:
+            raise ValueError("Status must be Allocated, Planned, or Cancelled.")
 
         amount_usd = money(amount * decimal_value(rates[currency]))
         amount_aed_equiv = money(amount_usd * aed_per_usd)

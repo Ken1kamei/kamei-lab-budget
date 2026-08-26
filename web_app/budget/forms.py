@@ -5,7 +5,11 @@ from django import forms
 from budget.services.calculations import CATEGORIES, SUPPORTED_CURRENCIES
 
 
-STATUS_CHOICES = [("Allocated", "Allocated"), ("Cancelled", "Cancelled")]
+STATUS_CHOICES = [
+    ("Allocated", "Allocated (actual)"),
+    ("Planned", "Planned (予定)"),
+    ("Cancelled", "Cancelled"),
+]
 
 
 class TransactionForm(forms.Form):

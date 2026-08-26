@@ -235,7 +235,7 @@ def test_member_add_expense_is_idempotent_and_audited(client, monkeypatch, setti
                 "currency": "USD",
                 "amount": Decimal("25"),
                 "amount_usd_equiv": Decimal("25"),
-                "status": "Allocated",
+                "status": "Planned",
                 "team": "Diabetes",
                 "entered_by": actor,
             },
@@ -255,7 +255,7 @@ def test_member_add_expense_is_idempotent_and_audited(client, monkeypatch, setti
         "invoice_number": "INV-1",
         "currency": "USD",
         "amount": "25.00",
-        "status": "Allocated",
+        "status": "Planned",
         "team": "Diabetes",
         "notes": "",
     }
@@ -270,6 +270,8 @@ def test_member_add_expense_is_idempotent_and_audited(client, monkeypatch, setti
     assert operation.status == "succeeded"
     assert operation.transaction.transaction_id.startswith("TXN-WEB-")
     assert calls[0][3] is True
+    assert calls[0][1]["status"] == "Planned"
+    assert operation.transaction.status == "Planned"
     assert TransactionAudit.objects.get().action == "created"
 
 

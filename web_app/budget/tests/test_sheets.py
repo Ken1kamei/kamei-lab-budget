@@ -719,7 +719,7 @@ def test_write_transaction_can_resume_an_identical_stable_id(settings, monkeypat
     assert len(annual.sheets["Transactions"].values) == 2
 
 
-def test_update_and_cancel_transaction_recalculate_and_reject_legacy_statuses(
+def test_update_planned_and_cancel_transaction_recalculate_and_reject_legacy_statuses(
     settings, monkeypatch
 ):
     gateway, _, _ = _mutation_gateway(settings, monkeypatch)
@@ -735,9 +735,14 @@ def test_update_and_cancel_transaction_recalculate_and_reject_legacy_statuses(
     assert updated["row"]["Amount (AED equiv)"] == "40.40"
     assert updated["row"]["Status"] == "Allocated"
 
+    planned = gateway.update_transaction(
+        "FY2026-27", created["transaction_id"], {"status": "Planned"}
+    )
+    assert planned["row"]["Status"] == "Planned"
+
     cancelled = gateway.cancel_transaction("FY2026-27", created["transaction_id"])
     assert cancelled["row"]["Status"] == "Cancelled"
-    with pytest.raises(ValueError, match="Allocated or Cancelled"):
+    with pytest.raises(ValueError, match="Allocated, Planned, or Cancelled"):
         gateway.update_transaction(
             "FY2026-27", created["transaction_id"], {"status": "Paid"}
         )

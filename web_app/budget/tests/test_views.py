@@ -5,6 +5,17 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 
 from budget.models import CategoryAllocation, FiscalYear, InvoiceDraft, LabMember, Team, Transaction
+from budget.forms import TransactionForm
+
+
+def test_transaction_form_offers_planned_status():
+    form = TransactionForm(year_choices=["FY2026-27"], team_choices=["Core Lab"])
+
+    assert list(form.fields["status"].choices) == [
+        ("Allocated", "Allocated (actual)"),
+        ("Planned", "Planned (予定)"),
+        ("Cancelled", "Cancelled"),
+    ]
 
 
 @pytest.fixture
@@ -28,6 +39,15 @@ def test_dashboard_renders_selected_fiscal_year_totals(pi_client):
         amount_usd_equiv=Decimal("2500"),
         status="Allocated",
     )
+    Transaction.objects.create(
+        fiscal_year=fy,
+        transaction_id="TXN-PLANNED",
+        category="Consumables",
+        currency="USD",
+        amount=Decimal("1000"),
+        amount_usd_equiv=Decimal("1000"),
+        status="Planned",
+    )
 
     response = pi_client.get(reverse("budget:dashboard"), {"fy": "FY2026-27"})
 
@@ -35,13 +55,26 @@ def test_dashboard_renders_selected_fiscal_year_totals(pi_client):
     assert b"FY2026-27" in response.content
     assert b"$10,000.00" in response.content
     assert b"$2,500.00" in response.content
-    assert b"$7,500.00" in response.content
+    assert b"$1,000.00" in response.content
+    assert b"$6,500.00" in response.content
+    assert response.context["totals"]["total_actual_allocated"] == Decimal("2500.00")
+    assert response.context["totals"]["total_planned"] == Decimal("1000.00")
     assert b"data:image/svg+xml" in response.content
     assert b"budget/favicon.svg" not in response.content
     assert b">All apps<" in response.content
     assert b">Transactions<" in response.content
     assert b">Project tracker<" not in response.content
     assert b">Notebooks / protocols<" not in response.content
+
+
+@pytest.mark.django_db
+def test_transactions_filter_offers_planned_status(pi_client):
+    FiscalYear.objects.create(label="FY2026-27", spreadsheet_id="sheet")
+
+    response = pi_client.get(reverse("budget:transactions"), {"fy": "FY2026-27"})
+
+    assert response.status_code == 200
+    assert response.context["statuses"] == ["Allocated", "Planned", "Cancelled"]
 
 
 @pytest.mark.django_db
