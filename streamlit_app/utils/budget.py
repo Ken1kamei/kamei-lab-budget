@@ -5,6 +5,7 @@ from utils.categories import CATEGORIES
 
 BUDGET_STATUSES = [
     "Allocated",
+    "Planned",
     "Cancelled",
 ]
 LIFECYCLE_STATUSES = BUDGET_STATUSES
@@ -18,7 +19,7 @@ LEGACY_ALLOCATED_STATUSES = {
     "Delivered",
     "Paid",
 }
-COMMITTED_STATUSES = LEGACY_ALLOCATED_STATUSES
+COMMITTED_STATUSES = LEGACY_ALLOCATED_STATUSES | {"Planned"}
 PAID_STATUSES = set()
 DEFAULT_AED_USD_EXCHANGE_RATE = 3.6725
 SUPPORTED_CURRENCIES = ["USD", "AED", "EUR", "JPY", "GBP"]
@@ -36,6 +37,8 @@ def canonical_budget_status(value: str) -> str:
     status = str(value or "").strip()
     if status == "Cancelled":
         return "Cancelled"
+    if status == "Planned":
+        return "Planned"
     if status in LEGACY_ALLOCATED_STATUSES:
         return "Allocated"
     return "Allocated"

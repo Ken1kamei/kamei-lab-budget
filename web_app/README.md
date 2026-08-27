@@ -76,6 +76,18 @@ Recommended Cloud Run job schedule after PostgreSQL is connected:
 - Each release: `python manage.py migrate --noinput`, then one `sync_sheets` and
   one `sync_lab_apps`
 
+After every Cloud Run web deployment, align the scheduled Sheet sync job with
+the deployed web image before executing it:
+
+```bash
+bash scripts/align_cloud_run_sync_job.sh
+gcloud run jobs execute kamei-budget-sync \
+  --project=kamei-lab-budget --region=me-central1 --wait
+```
+
+This is required when the transaction status model changes. A stale sync image
+can otherwise normalize a new Sheet status differently from the web service.
+
 The integrated-app parity and reversible release checks are:
 
 ```bash

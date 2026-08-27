@@ -54,10 +54,11 @@ def test_categories_include_requested_lab_categories():
         "Other",
     ]
 
-def test_budget_statuses_are_allocated_or_cancelled():
-    assert BUDGET_STATUSES == ["Allocated", "Cancelled"]
+def test_budget_statuses_preserve_planned_commitments():
+    assert BUDGET_STATUSES == ["Allocated", "Planned", "Cancelled"]
     assert canonical_budget_status("Paid") == "Allocated"
     assert canonical_budget_status("Pending Review") == "Allocated"
+    assert canonical_budget_status("Planned") == "Planned"
     assert canonical_budget_status("Cancelled") == "Cancelled"
 
 def test_category_summary_excludes_cancelled():
