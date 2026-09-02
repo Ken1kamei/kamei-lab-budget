@@ -224,9 +224,14 @@ class GanttImportForm(forms.Form):
         label="Default owner for unmatched names",
     )
     gantt_file = forms.FileField(
-        label="Gantt Excel file",
-        help_text="Upload the Kamei Lab template or a compatible .xlsx Gantt chart.",
-        widget=forms.ClearableFileInput(attrs={"accept": ".xlsx"}),
+        label="Gantt file",
+        help_text=(
+            "Upload the Kamei Lab template or a compatible Excel (.xlsx), "
+            "CSV (.csv), or Apple Numbers (.numbers) file."
+        ),
+        widget=forms.ClearableFileInput(
+            attrs={"accept": ".xlsx,.csv,.numbers"}
+        ),
     )
 
     def __init__(self, *args, projects=None, members=None, **kwargs):
@@ -245,10 +250,12 @@ class GanttImportForm(forms.Form):
 
     def clean_gantt_file(self):
         uploaded = self.cleaned_data["gantt_file"]
-        if not uploaded.name.casefold().endswith(".xlsx"):
-            raise forms.ValidationError("Upload an .xlsx Excel workbook.")
+        if not uploaded.name.casefold().endswith((".xlsx", ".csv", ".numbers")):
+            raise forms.ValidationError(
+                "Upload an Excel (.xlsx), CSV (.csv), or Apple Numbers (.numbers) file."
+            )
         if uploaded.size > 10 * 1024 * 1024:
-            raise forms.ValidationError("The Gantt workbook must be 10 MB or smaller.")
+            raise forms.ValidationError("The Gantt file must be 10 MB or smaller.")
         return uploaded
 
 

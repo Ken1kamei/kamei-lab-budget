@@ -1,16 +1,68 @@
 import json
 import secrets
+import tempfile
 from datetime import date, timedelta
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.test import Client, override_settings
 from django.utils import timezone
+from numbers_parser import Document
 
 from labapps.models import LabAppAudit, SheetRecord
 from labapps.permissions import truthy
+from labapps.services.gantt import parse_gantt_file
 from labapps.services.sheets import _live_table, replace_table, snapshot_rows
 from labapps.services.storage import delete_knowledge_file, read_knowledge_file, store_knowledge_file
+
+
+def _verify_gantt_file_parsers():
+    csv_upload = SimpleUploadedFile(
+        "verification-gantt.csv",
+        b"Task,Start Date,End Date\nCSV verification,2026-09-01,2026-09-03\n",
+        content_type="text/csv",
+    )
+    csv_result = parse_gantt_file(csv_upload)
+    if csv_result.errors or [row["task"] for row in csv_result.rows] != [
+        "CSV verification"
+    ]:
+        raise CommandError(f"CSV Gantt parser verification failed: {csv_result.errors}")
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        numbers_path = Path(temporary_directory) / "verification-gantt.numbers"
+        document = Document(
+            sheet_name="Gantt Import",
+            table_name="Gantt Import",
+            num_header_rows=1,
+            num_header_cols=0,
+            num_rows=2,
+            num_cols=3,
+        )
+        table = document.sheets[0].tables[0]
+        for row_number, row in enumerate(
+            (
+                ("Task", "Start Date", "End Date"),
+                ("Numbers verification", "2026-09-01", "2026-09-03"),
+            )
+        ):
+            for column_number, value in enumerate(row):
+                table.write(row_number, column_number, value)
+        document.save(numbers_path)
+        numbers_upload = SimpleUploadedFile(
+            numbers_path.name,
+            numbers_path.read_bytes(),
+            content_type="application/vnd.apple.numbers",
+        )
+    numbers_result = parse_gantt_file(numbers_upload)
+    if numbers_result.errors or [row["task"] for row in numbers_result.rows] != [
+        "Numbers verification"
+    ]:
+        raise CommandError(
+            f"Apple Numbers Gantt parser verification failed: {numbers_result.errors}"
+        )
 
 
 class Command(BaseCommand):
@@ -21,6 +73,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         actor = options["actor"].strip().lower()
+        _verify_gantt_file_parsers()
+        call_command("collectstatic", clear=True, interactive=False, verbosity=0)
         _, _, original_projects = _live_table("Projects")
         _, _, original_milestones = _live_table("Milestones")
         token = secrets.token_hex(5).upper()
@@ -212,6 +266,8 @@ class Command(BaseCommand):
                         "gantt_sheet_restored": True,
                         "private_storage_restored": True,
                         "tracker_ui_verified": True,
+                        "csv_gantt_parser_verified": True,
+                        "numbers_gantt_parser_verified": True,
                         "assigned_team_id": assigned_team["team_id"],
                         "assigned_member_id": assigned_member["member_id"],
                         "project_id": project_id,

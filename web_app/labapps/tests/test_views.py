@@ -9,6 +9,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
+from numbers_parser import Document
 from openpyxl import Workbook
 
 from budget.models import (
@@ -191,6 +192,61 @@ def invalid_gantt_upload():
         "invalid-gantt.xlsx",
         buffer.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def gantt_csv_upload():
+    return SimpleUploadedFile(
+        "project-gantt.csv",
+        (
+            "Phase,Task,Assigned to,Start Date,End Date,Progress %,Status,Next Action\n"
+            "Planning,CSV scope,kk4801@nyu.edu,2026-09-01,2026-09-05,50,In progress,Review scope\n"
+        ).encode(),
+        content_type="text/csv",
+    )
+
+
+def gantt_numbers_upload(tmp_path):
+    path = tmp_path / "project-gantt.numbers"
+    document = Document(
+        sheet_name="Gantt Import",
+        table_name="Gantt Import",
+        num_header_rows=1,
+        num_header_cols=0,
+        num_rows=2,
+        num_cols=8,
+    )
+    table = document.sheets[0].tables[0]
+    rows = [
+        [
+            "Phase",
+            "Task",
+            "Assigned to",
+            "Start Date",
+            "End Date",
+            "Progress %",
+            "Status",
+            "Next Action",
+        ],
+        [
+            "Planning",
+            "Numbers scope",
+            "kk4801@nyu.edu",
+            "2026-09-01",
+            "2026-09-05",
+            50,
+            "In progress",
+            "Review scope",
+        ],
+    ]
+    for row_number, row in enumerate(rows):
+        for column_number, value in enumerate(row):
+            table.write(row_number, column_number, value)
+    document.save(path)
+    return SimpleUploadedFile(
+        path.name,
+        path.read_bytes(),
+        content_type="application/vnd.apple.numbers",
     )
 
 
@@ -492,6 +548,64 @@ def test_gantt_upload_previews_then_replaces_only_imported_project_rows(mock_rep
         and row["milestone_id"].startswith("MS-GANTT-")
         for row in saved_rows
     )
+
+
+@pytest.mark.parametrize(
+    ("upload_factory", "expected_task"),
+    [
+        (lambda tmp_path: gantt_csv_upload(), "CSV scope"),
+        (gantt_numbers_upload, "Numbers scope"),
+    ],
+)
+@patch("labapps.views.replace_project_gantt")
+def test_csv_and_numbers_gantt_uploads_use_the_preview_flow(
+    mock_replace,
+    tmp_path,
+    upload_factory,
+    expected_task,
+):
+    seed_pi()
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Chip study",
+            "aim": "Model disease",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    client = signed_in_client()
+
+    preview = client.post(
+        "/tracker/",
+        {
+            "action": "gantt_preview",
+            "gantt-project_id": "P001",
+            "gantt-default_owner_member_id": "M001",
+            "gantt-gantt_file": upload_factory(tmp_path),
+        },
+    )
+
+    assert preview.status_code == 200
+    assert b"Import preview" in preview.content
+    assert expected_task.encode() in preview.content
+    stored = client.session["gantt_import_preview"]
+    assert stored["project_id"] == "P001"
+    assert stored["rows"][0]["milestone"] == expected_task
+
+    confirmed = client.post(
+        "/tracker/",
+        {
+            "action": "gantt_confirm",
+            "preview_token": stored["token"],
+        },
+    )
+
+    assert confirmed.status_code == 302
+    mock_replace.assert_called_once()
+    assert mock_replace.call_args.args[1][0]["milestone"] == expected_task
 
 
 @patch("labapps.views.replace_project_gantt")

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import re
+import tempfile
 import unicodedata
 import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime
+from pathlib import Path
 
+from numbers_parser import Document
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.utils.datetime import from_excel
@@ -43,6 +47,9 @@ MAX_WORKBOOK_BYTES = 10 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 2_000
 MAX_WORKSHEETS = 20
+MAX_TABLES = 100
+MAX_TABLE_ROWS = 5_000
+MAX_TABLE_COLUMNS = 256
 MAX_EMPTY_TASK_ROWS = 100
 
 
@@ -68,21 +75,27 @@ def _field_for_header(value) -> str:
     )
 
 
-def _parse_date(value, workbook) -> date | None:
+def _parse_date(value, workbook=None) -> date | None:
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float)) and workbook is not None:
         try:
             converted = from_excel(value, workbook.epoch)
             return converted.date() if isinstance(converted, datetime) else converted
         except (TypeError, ValueError, OverflowError):
             return None
     text = str(value).strip()
-    for pattern in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%d/%m/%Y"):
+    for pattern in (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%d/%m/%Y",
+    ):
         try:
             return datetime.strptime(text, pattern).date()
         except ValueError:
@@ -147,79 +160,31 @@ def _find_header(workbook):
     return None, 0, {}
 
 
-def parse_gantt_workbook(file_or_bytes) -> GanttImportResult:
-    if hasattr(file_or_bytes, "read"):
-        content = file_or_bytes.read()
-        if hasattr(file_or_bytes, "seek"):
-            file_or_bytes.seek(0)
-    else:
-        content = bytes(file_or_bytes)
-    if len(content) > MAX_WORKBOOK_BYTES:
-        return GanttImportResult(
-            sheet_name="",
-            header_row=0,
-            rows=[],
-            warnings=[],
-            errors=["The Gantt workbook must be 10 MB or smaller."],
-        )
-    try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            members = archive.infolist()
-            if len(members) > MAX_ARCHIVE_MEMBERS:
-                raise ValueError("The workbook contains too many internal files.")
-            if sum(member.file_size for member in members) > MAX_UNCOMPRESSED_BYTES:
-                raise ValueError("The workbook expands beyond the 100 MB safety limit.")
-        workbook = load_workbook(
-            io.BytesIO(content),
-            data_only=True,
-            read_only=True,
-            keep_links=False,
-        )
-    except (zipfile.BadZipFile, InvalidFileException, OSError, ValueError) as error:
-        return GanttImportResult(
-            sheet_name="",
-            header_row=0,
-            rows=[],
-            warnings=[],
-            errors=[f"The Excel workbook could not be read safely: {error}"],
-        )
-    if len(workbook.worksheets) > MAX_WORKSHEETS:
-        return GanttImportResult(
-            sheet_name="",
-            header_row=0,
-            rows=[],
-            warnings=[],
-            errors=[f"The Gantt workbook may contain at most {MAX_WORKSHEETS} worksheets."],
-        )
-    sheet, header_row, columns = _find_header(workbook)
-    if sheet is None:
-        return GanttImportResult(
-            sheet_name="",
-            header_row=0,
-            rows=[],
-            warnings=[],
-            errors=[
-                "No Gantt table was found. Include Task, Start Date, and End Date columns."
-            ],
-        )
+def _find_rows_header(rows):
+    for row_number, header_values in enumerate(rows[:40], start=1):
+        mapping = {}
+        for column_number, cell in enumerate(header_values[:MAX_TABLE_COLUMNS], start=1):
+            field = _field_for_header(cell)
+            if field and field not in mapping:
+                mapping[field] = column_number
+        if REQUIRED_FIELDS.issubset(mapping):
+            return row_number, mapping
+    return 0, {}
 
+
+def _parse_tabular_rows(row_entries, columns, *, workbook=None):
     rows = []
     warnings = []
     errors = []
     current_phase = ""
     empty_run = 0
-    data_rows = sheet.iter_rows(
-        min_row=header_row + 1,
-        max_row=1000,
-        max_col=max(columns.values()),
-        values_only=False,
-    )
-    for row_number, row_cells in enumerate(data_rows, start=header_row + 1):
-        row_dimensions = getattr(sheet, "row_dimensions", None)
-        if row_dimensions and row_dimensions[row_number].hidden:
-            continue
+    for row_number, row_values in row_entries:
         values = {
-            field: row_cells[column_number - 1].value
+            field: (
+                row_values[column_number - 1]
+                if column_number <= len(row_values)
+                else None
+            )
             for field, column_number in columns.items()
         }
         task = str(values.get("task") or "").strip()
@@ -271,15 +236,262 @@ def parse_gantt_workbook(file_or_bytes) -> GanttImportResult:
                 "next_action": str(values.get("next_action") or "").strip(),
             }
         )
-
     if not rows and not errors:
         errors.append("The Gantt table does not contain any importable task rows.")
+    return rows, warnings, errors
+
+
+def _archive_safety_check(content):
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        members = archive.infolist()
+        if len(members) > MAX_ARCHIVE_MEMBERS:
+            raise ValueError("The file contains too many internal files.")
+        if sum(member.file_size for member in members) > MAX_UNCOMPRESSED_BYTES:
+            raise ValueError("The file expands beyond the 100 MB safety limit.")
+
+
+def parse_gantt_workbook(file_or_bytes) -> GanttImportResult:
+    if hasattr(file_or_bytes, "read"):
+        content = file_or_bytes.read()
+        if hasattr(file_or_bytes, "seek"):
+            file_or_bytes.seek(0)
+    else:
+        content = bytes(file_or_bytes)
+    if len(content) > MAX_WORKBOOK_BYTES:
+        return GanttImportResult(
+            sheet_name="",
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=["The Gantt workbook must be 10 MB or smaller."],
+        )
+    try:
+        _archive_safety_check(content)
+        workbook = load_workbook(
+            io.BytesIO(content),
+            data_only=True,
+            read_only=True,
+            keep_links=False,
+        )
+    except (zipfile.BadZipFile, InvalidFileException, OSError, ValueError) as error:
+        return GanttImportResult(
+            sheet_name="",
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=[f"The Excel workbook could not be read safely: {error}"],
+        )
+    if len(workbook.worksheets) > MAX_WORKSHEETS:
+        return GanttImportResult(
+            sheet_name="",
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=[f"The Gantt workbook may contain at most {MAX_WORKSHEETS} worksheets."],
+        )
+    sheet, header_row, columns = _find_header(workbook)
+    if sheet is None:
+        return GanttImportResult(
+            sheet_name="",
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=[
+                "No Gantt table was found. Include Task, Start Date, and End Date columns."
+            ],
+        )
+
+    data_rows = sheet.iter_rows(
+        min_row=header_row + 1,
+        max_row=1000,
+        max_col=max(columns.values()),
+        values_only=False,
+    )
+    row_dimensions = getattr(sheet, "row_dimensions", None)
+    row_entries = (
+        (row_number, [cell.value for cell in row_cells])
+        for row_number, row_cells in enumerate(data_rows, start=header_row + 1)
+        if not row_dimensions or not row_dimensions[row_number].hidden
+    )
+    rows, warnings, errors = _parse_tabular_rows(
+        row_entries,
+        columns,
+        workbook=workbook,
+    )
     return GanttImportResult(
         sheet_name=sheet.title,
         header_row=header_row,
         rows=rows,
         warnings=warnings,
         errors=errors,
+    )
+
+
+def parse_gantt_csv(content, *, filename="Gantt CSV") -> GanttImportResult:
+    if len(content) > MAX_WORKBOOK_BYTES:
+        return GanttImportResult(
+            sheet_name=filename,
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=["The Gantt file must be 10 MB or smaller."],
+        )
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return GanttImportResult(
+            sheet_name=filename,
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=["The CSV file must use UTF-8 text encoding."],
+        )
+    try:
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    parsed_rows = []
+    try:
+        for row_number, row in enumerate(csv.reader(io.StringIO(text), dialect), start=1):
+            if len(row) > MAX_TABLE_COLUMNS:
+                raise ValueError(
+                    f"Row {row_number} contains more than {MAX_TABLE_COLUMNS} columns."
+                )
+            if row_number > MAX_TABLE_ROWS:
+                raise ValueError(
+                    f"The CSV file may contain at most {MAX_TABLE_ROWS} rows."
+                )
+            parsed_rows.append(row)
+    except (csv.Error, ValueError) as error:
+        return GanttImportResult(
+            sheet_name=filename,
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=[f"The CSV file could not be read safely: {error}"],
+        )
+    header_row, columns = _find_rows_header(parsed_rows)
+    if not columns:
+        return GanttImportResult(
+            sheet_name=filename,
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=[
+                "No Gantt table was found. Include Task, Start Date, and End Date columns."
+            ],
+        )
+    rows, warnings, errors = _parse_tabular_rows(
+        enumerate(parsed_rows[header_row:], start=header_row + 1),
+        columns,
+    )
+    return GanttImportResult(
+        sheet_name=filename,
+        header_row=header_row,
+        rows=rows,
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def parse_gantt_numbers(content) -> GanttImportResult:
+    if len(content) > MAX_WORKBOOK_BYTES:
+        return GanttImportResult(
+            sheet_name="",
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=["The Gantt file must be 10 MB or smaller."],
+        )
+    try:
+        _archive_safety_check(content)
+        with tempfile.NamedTemporaryFile(suffix=".numbers") as temporary:
+            temporary.write(content)
+            temporary.flush()
+            document = Document(temporary.name)
+        if len(document.sheets) > MAX_WORKSHEETS:
+            raise ValueError(
+                f"The Numbers file may contain at most {MAX_WORKSHEETS} sheets."
+            )
+        tables = [
+            (sheet, table)
+            for sheet in document.sheets
+            for table in sheet.tables
+        ]
+        if len(tables) > MAX_TABLES:
+            raise ValueError(
+                f"The Numbers file may contain at most {MAX_TABLES} tables."
+            )
+        tables.sort(
+            key=lambda item: (
+                item[0].name != "Gantt Import",
+                item[1].name != "Gantt Import",
+            )
+        )
+        for sheet, table in tables:
+            if table.num_rows > MAX_TABLE_ROWS:
+                raise ValueError(
+                    f"Table '{table.name}' contains more than {MAX_TABLE_ROWS} rows."
+                )
+            if table.num_cols > MAX_TABLE_COLUMNS:
+                raise ValueError(
+                    f"Table '{table.name}' contains more than {MAX_TABLE_COLUMNS} columns."
+                )
+            table_rows = table.rows(values_only=True)
+            header_row, columns = _find_rows_header(table_rows)
+            if not columns:
+                continue
+            rows, warnings, errors = _parse_tabular_rows(
+                enumerate(table_rows[header_row:], start=header_row + 1),
+                columns,
+            )
+            return GanttImportResult(
+                sheet_name=f"{sheet.name} / {table.name}",
+                header_row=header_row,
+                rows=rows,
+                warnings=warnings,
+                errors=errors,
+            )
+    except Exception as error:
+        return GanttImportResult(
+            sheet_name="",
+            header_row=0,
+            rows=[],
+            warnings=[],
+            errors=[f"The Apple Numbers file could not be read safely: {error}"],
+        )
+    return GanttImportResult(
+        sheet_name="",
+        header_row=0,
+        rows=[],
+        warnings=[],
+        errors=[
+            "No Gantt table was found. Include Task, Start Date, and End Date columns."
+        ],
+    )
+
+
+def parse_gantt_file(file_or_bytes) -> GanttImportResult:
+    filename = str(getattr(file_or_bytes, "name", "") or "")
+    if hasattr(file_or_bytes, "read"):
+        content = file_or_bytes.read()
+        if hasattr(file_or_bytes, "seek"):
+            file_or_bytes.seek(0)
+    else:
+        content = bytes(file_or_bytes)
+    suffix = Path(filename).suffix.casefold()
+    if suffix == ".csv":
+        return parse_gantt_csv(content, filename=Path(filename).name or "Gantt CSV")
+    if suffix == ".numbers":
+        return parse_gantt_numbers(content)
+    if suffix in ("", ".xlsx"):
+        return parse_gantt_workbook(content)
+    return GanttImportResult(
+        sheet_name="",
+        header_row=0,
+        rows=[],
+        warnings=[],
+        errors=["Upload an Excel (.xlsx), CSV (.csv), or Apple Numbers (.numbers) file."],
     )
 
 

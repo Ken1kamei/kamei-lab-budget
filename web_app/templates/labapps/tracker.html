@@ -19,7 +19,7 @@
 <section id="gantt" class="panel settings-section">
   <div class="panel-heading">
     <div><span>Project schedule</span><h2>Gantt chart</h2></div>
-    {% if can_edit %}<a class="button secondary" href="{% static 'labapps/Kamei_Lab_Gantt_Import_Template.xlsx' %}" download>Download Excel template</a>{% endif %}
+    {% if can_edit %}<a class="button secondary" href="{% static 'labapps/Kamei_Lab_Gantt_Import_Template.xlsx' %}" download>Download Gantt template (.xlsx)</a>{% endif %}
   </div>
   <form method="get" class="gantt-project-picker">
     {% if selected_team %}<input type="hidden" name="team" value="{{ selected_team }}">{% endif %}
@@ -56,7 +56,7 @@
     </div>
   </div>
   {% elif selected_gantt_project %}
-  <p class="empty">No scheduled milestones for this project yet. Import the Excel template or add milestones with start and due dates.</p>
+  <p class="empty">No scheduled milestones for this project yet. Import a Gantt file or add milestones with start and due dates.</p>
   {% else %}
   <p class="empty">Create a project before adding a Gantt chart.</p>
   {% endif %}
@@ -65,7 +65,7 @@
   <details class="gantt-import" {% if gantt_preview %}open{% endif %}>
     <summary>Import or update this project's Gantt chart</summary>
     <div class="gantt-import-body">
-      <p class="muted">The upload is previewed first. Confirming replaces only earlier Excel-imported Gantt tasks for the selected project; manually entered milestones remain unchanged.</p>
+      <p class="muted">Upload Excel (.xlsx), CSV (.csv), or Apple Numbers (.numbers). The file is previewed first. Confirming replaces only earlier file-imported Gantt tasks for the selected project; manually entered milestones remain unchanged.</p>
       <form method="post" enctype="multipart/form-data" class="form-grid single">
         {% csrf_token %}
         <input type="hidden" name="action" value="gantt_preview">

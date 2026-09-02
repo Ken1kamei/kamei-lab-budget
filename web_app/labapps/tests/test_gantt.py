@@ -1,11 +1,15 @@
 from io import BytesIO
 from pathlib import Path
 
+from numbers_parser import Document
 from openpyxl import Workbook, load_workbook
 
 from labapps.services.gantt import (
     build_gantt_context,
     merge_project_gantt,
+    parse_gantt_csv,
+    parse_gantt_file,
+    parse_gantt_numbers,
     parse_gantt_workbook,
     resolve_gantt_rows,
 )
@@ -51,6 +55,96 @@ def test_parse_rejects_non_excel_content():
     assert result.rows == []
     assert result.errors
     assert "could not be read safely" in result.errors[0]
+
+
+def test_parse_csv_exported_from_numbers_with_utf8_bom():
+    content = (
+        "\ufeffPhase;Task;Assigned to;Start Date;End Date;Progress %;Status;Next Action\n"
+        "Planning;Define scope;member@nyu.edu;2026/09/01;2026/09/05;50%;In progress;Review scope\n"
+        "Execution;Run pilot;;2026/09/06;2026/09/12;0;Not started;Run pilot\n"
+    ).encode("utf-8")
+
+    result = parse_gantt_csv(content, filename="project-gantt.csv")
+
+    assert result.errors == []
+    assert result.sheet_name == "project-gantt.csv"
+    assert result.header_row == 1
+    assert [row["task"] for row in result.rows] == ["Define scope", "Run pilot"]
+    assert result.rows[0]["assigned_to"] == "member@nyu.edu"
+    assert result.rows[0]["progress_percent"] == 50.0
+    assert result.rows[0]["start_date"] == "2026-09-01"
+
+
+def test_parse_apple_numbers_file(tmp_path):
+    path = tmp_path / "project-gantt.numbers"
+    document = Document(
+        sheet_name="Gantt Import",
+        table_name="Gantt Import",
+        num_header_rows=1,
+        num_header_cols=0,
+        num_rows=3,
+        num_cols=8,
+    )
+    table = document.sheets[0].tables[0]
+    table_rows = [
+        [
+            "Phase",
+            "Task",
+            "Assigned to",
+            "Start Date",
+            "End Date",
+            "Progress %",
+            "Status",
+            "Next Action",
+        ],
+        [
+            "Planning",
+            "Define scope",
+            "member@nyu.edu",
+            "2026-09-01",
+            "2026-09-05",
+            50,
+            "In progress",
+            "Review scope",
+        ],
+        [
+            "Execution",
+            "Run pilot",
+            "",
+            "2026-09-06",
+            "2026-09-12",
+            0,
+            "Not started",
+            "Run pilot",
+        ],
+    ]
+    for row_number, row in enumerate(table_rows):
+        for column_number, value in enumerate(row):
+            table.write(row_number, column_number, value)
+    document.save(path)
+
+    result = parse_gantt_numbers(path.read_bytes())
+
+    assert result.errors == []
+    assert result.sheet_name == "Gantt Import / Gantt Import"
+    assert result.header_row == 1
+    assert [row["task"] for row in result.rows] == ["Define scope", "Run pilot"]
+    assert result.rows[0]["assigned_to"] == "member@nyu.edu"
+    assert result.rows[0]["progress_percent"] == 50.0
+
+
+def test_parse_gantt_file_dispatches_by_uploaded_filename(tmp_path):
+    csv_path = tmp_path / "project-gantt.csv"
+    csv_path.write_text(
+        "Task,Start Date,End Date\nCSV task,2026-09-01,2026-09-03\n",
+        encoding="utf-8",
+    )
+
+    with csv_path.open("rb") as uploaded:
+        result = parse_gantt_file(uploaded)
+
+    assert result.errors == []
+    assert result.rows[0]["task"] == "CSV task"
 
 
 def test_distributed_template_has_dynamic_calendar_and_remains_importable():

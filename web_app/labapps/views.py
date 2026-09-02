@@ -45,7 +45,7 @@ from .permissions import (
 )
 from .services.gantt import (
     build_gantt_context,
-    parse_gantt_workbook,
+    parse_gantt_file,
     resolve_gantt_rows,
 )
 from .services.calendar import lab_calendar_week
@@ -780,7 +780,7 @@ def tracker(request):
                             "This project is outside your permitted team scope.",
                             status=403,
                         )
-                    parsed = parse_gantt_workbook(cleaned["gantt_file"])
+                    parsed = parse_gantt_file(cleaned["gantt_file"])
                     resolved_rows, resolution_warnings = resolve_gantt_rows(
                         parsed.rows,
                         project=project,

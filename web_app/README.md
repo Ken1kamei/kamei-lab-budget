@@ -42,8 +42,11 @@ The gateway requests a read-only Sheets scope unless `ENABLE_SHEET_WRITES=true`.
 - Member accounts must use `@nyu.edu`, except addresses explicitly listed in
   `LAB_MEMBER_EMAIL_EXCEPTIONS` (default: `nyuadkameilab@gmail.com`).
 - Project, milestone, experiment, review, and next-action workflows at `/tracker/`,
-  including per-project Team/Member assignments and Excel Gantt import, preview,
-  and timeline display. Assignment IDs are stored in the `Projects` sheet as
+  including per-project Team/Member assignments and Excel, CSV, or Apple Numbers
+  Gantt import, preview, and timeline display. The downloadable `.xlsx` template
+  can be edited directly in Excel or opened and saved in Apple Numbers; UTF-8 CSV
+  exports with `Task`, `Start Date`, and `End Date` columns are also accepted.
+  Assignment IDs are stored in the `Projects` sheet as
   semicolon-delimited `assigned_team_ids` and `assigned_member_ids` values.
 - Searchable protocol and notebook registry plus private uploads at `/knowledge/`.
 - Portal weekly view of the private lab Google Calendar using read-only service

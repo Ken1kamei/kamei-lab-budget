@@ -50,3 +50,13 @@ def test_cloud_source_rebuilds_portal_integration_static_assets():
     assert ".portal-integrations" in portal_css
     assert ".week-calendar" in portal_css
     assert ".slack-messages" in portal_css
+
+
+def test_sync_job_alignment_uses_the_buildpacks_launcher():
+    script = (REPO_ROOT / "scripts" / "align_cloud_run_sync_job.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--command=/cnb/lifecycle/launcher" in script
+    assert "--args=python,manage.py,sync_sheets" in script
+    assert "/usr/local/bin/python" not in script

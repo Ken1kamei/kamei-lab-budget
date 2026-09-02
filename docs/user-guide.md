@@ -90,6 +90,22 @@ and save the assignment to Google Sheets. The project owner is always retained
 as an assigned member. Existing projects without an explicit Team assignment
 continue to use the owner's Team until their assignments are edited.
 
+### Importing a project Gantt chart
+
+Open **Project Tracker → Gantt chart**, select the project, and expand **Import
+or update this project's Gantt chart**. The importer accepts:
+
+- Excel workbooks (`.xlsx`)
+- UTF-8 CSV files (`.csv`)
+- Apple Numbers files (`.numbers`)
+
+Use **Download Gantt template (.xlsx)** for the standard columns and dynamic
+calendar. On macOS, open that template in Numbers and save it as a Numbers file
+before uploading, or export it as CSV. Every file must include `Task`, `Start
+Date`, and `End Date`; the remaining template columns are optional. Review the
+preview before confirming. Confirmation replaces only earlier file-imported
+tasks for that project and leaves manually entered milestones unchanged.
+
 ---
 
 ## Gmail Auto-Import
