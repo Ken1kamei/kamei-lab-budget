@@ -6,6 +6,7 @@ from labapps.models import SheetRecord
 from labapps.permissions import (
     app_role,
     app_roles,
+    can_view_project,
     can_write,
     can_write_scope,
     current_registry_member,
@@ -107,3 +108,33 @@ def test_write_permission_is_checked_for_selected_team_scope():
     assert can_write(member, "project_tracker") is True
     assert can_write_scope(member, "project_tracker", "T001") is False
     assert can_write_scope(member, "project_tracker", "T002") is True
+
+
+def test_direct_member_assignment_does_not_expose_project_to_owner_team():
+    memberships = [
+        {"member_id": "M001", "team_id": "T001", "active": "TRUE"},
+        {"member_id": "M002", "team_id": "T001", "active": "TRUE"},
+        {"member_id": "M003", "team_id": "T002", "active": "TRUE"},
+    ]
+    project = {
+        "owner_member_id": "M001",
+        "assigned_team_ids": "",
+        "assigned_member_ids": "M003",
+    }
+
+    assert can_view_project({"member_id": "M003"}, project, memberships) is True
+    assert can_view_project({"member_id": "M002"}, project, memberships) is False
+
+
+def test_legacy_unassigned_project_uses_owner_team():
+    memberships = [
+        {"member_id": "M001", "team_id": "T001", "active": "TRUE"},
+        {"member_id": "M002", "team_id": "T001", "active": "TRUE"},
+    ]
+    project = {
+        "owner_member_id": "M001",
+        "assigned_team_ids": "",
+        "assigned_member_ids": "",
+    }
+
+    assert can_view_project({"member_id": "M002"}, project, memberships) is True

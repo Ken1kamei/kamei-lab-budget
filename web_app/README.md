@@ -102,8 +102,16 @@ python manage.py verify_lab_apps_roundtrip --actor kk4801@nyu.edu
 
 The round trip temporarily adds and removes one Project row with a real active
 Registry Team/Member assignment, verifies the assignment in Google Sheets,
-PostgreSQL, and rendered Tracker HTML, and checks private GCS storage. It fails
-unless the temporary data and both Sheet tables are restored exactly.
+PostgreSQL, and rendered Tracker HTML, verifies that an unassigned member cannot
+see its Gantt chart and an assigned team member can, and checks private GCS
+storage. It fails unless the temporary data and both Sheet tables are restored
+exactly.
+
+Project Tracker access is cumulative: the user must have an active Project
+Tracker app role, and non-admin users can only see projects they own, projects
+assigned directly to them, or projects assigned to one of their active teams.
+PI/admin users retain all-project visibility for lab administration. Projects
+created before explicit assignments were added inherit the owner's active teams.
 
 The scheduled job and web service must use the same database URL, service
 account, registry/Sheet configuration, and private invoice bucket. Alert on any

@@ -138,6 +138,13 @@ class Command(BaseCommand):
         object_key = ""
         verification_user = None
         created_verification_user = False
+        privacy_user = None
+        privacy_email = f"roundtrip-viewer-{token.lower()}@nyu.edu"
+        privacy_member_id = f"VERIFY-MEMBER-{token}"
+        privacy_role_id = f"VERIFY-ROLE-{token}"
+        privacy_membership_id = f"VERIFY-MT-{token}"
+        unassigned_project_hidden = False
+        assigned_team_project_visible = False
         try:
             replace_table(
                 "Projects", [*original_projects, project_probe], actor=actor,
@@ -178,6 +185,102 @@ class Command(BaseCommand):
                 source="tracker", table_name="Milestones", record_id=milestone_id
             ).exists():
                 raise CommandError("Temporary Gantt task was not mirrored to PostgreSQL.")
+
+            SheetRecord.objects.create(
+                source="registry",
+                table_name="Members",
+                record_id=privacy_member_id,
+                payload={
+                    "member_id": privacy_member_id,
+                    "email": privacy_email,
+                    "display_name": "Temporary privacy verifier",
+                    "global_role": "member",
+                    "active": "TRUE",
+                },
+            )
+            SheetRecord.objects.create(
+                source="registry",
+                table_name="App_Roles",
+                record_id=privacy_role_id,
+                payload={
+                    "app_role_id": privacy_role_id,
+                    "member_id": privacy_member_id,
+                    "app_id": "project_tracker",
+                    "app_role": "viewer",
+                    "scope_team_id": "",
+                    "active": "TRUE",
+                },
+            )
+            privacy_user = get_user_model().objects.create_user(
+                username=f"roundtrip-viewer-{token}",
+                email=privacy_email,
+            )
+            privacy_client = Client()
+            privacy_client.force_login(privacy_user)
+            privacy_session = privacy_client.session
+            privacy_session["gantt_import_preview"] = {
+                "token": token,
+                "actor": privacy_email,
+                "project_id": project_id,
+                "project": project_probe["project"],
+                "sheet_name": "verification-gantt.csv",
+                "header_row": 1,
+                "rows": [milestone_probe],
+                "warnings": [],
+                "errors": [],
+            }
+            privacy_session.save()
+            with override_settings(
+                IAP_EXPECTED_AUDIENCE="", ALLOWED_HOSTS=["testserver"]
+            ):
+                hidden_response = privacy_client.get(
+                    f"/tracker/?gantt_project={project_id}", secure=True
+                )
+            hidden_rendered = hidden_response.content.decode(
+                "utf-8", errors="replace"
+            )
+            if (
+                hidden_response.status_code != 200
+                or project_probe["project"] in hidden_rendered
+                or milestone_probe["milestone"] in hidden_rendered
+                or "gantt_import_preview" in privacy_client.session
+            ):
+                raise CommandError(
+                    "An unassigned member could see a private Project Gantt chart."
+                )
+            unassigned_project_hidden = True
+
+            SheetRecord.objects.create(
+                source="registry",
+                table_name="Member_Teams",
+                record_id=privacy_membership_id,
+                payload={
+                    "member_team_id": privacy_membership_id,
+                    "member_id": privacy_member_id,
+                    "team_id": assigned_team["team_id"],
+                    "team_role": "member",
+                    "active": "TRUE",
+                },
+            )
+            with override_settings(
+                IAP_EXPECTED_AUDIENCE="", ALLOWED_HOSTS=["testserver"]
+            ):
+                visible_response = privacy_client.get(
+                    f"/tracker/?gantt_project={project_id}", secure=True
+                )
+            visible_rendered = visible_response.content.decode(
+                "utf-8", errors="replace"
+            )
+            if (
+                visible_response.status_code != 200
+                or project_probe["project"] not in visible_rendered
+                or milestone_probe["milestone"] not in visible_rendered
+                or 'class="gantt-track"' not in visible_rendered
+            ):
+                raise CommandError(
+                    "An assigned team member could not see the Project Gantt chart."
+                )
+            assigned_team_project_visible = True
 
             verification_user = get_user_model().objects.create_user(
                 username=f"roundtrip-{token}",
@@ -283,6 +386,18 @@ class Command(BaseCommand):
                     action="verification_emergency_restore", target=f"Projects:{project_id}", before={},
                 )
             LabAppAudit.objects.exclude(id__in=audits_before).delete()
+            for table_name, record_id in (
+                ("Members", privacy_member_id),
+                ("App_Roles", privacy_role_id),
+                ("Member_Teams", privacy_membership_id),
+            ):
+                SheetRecord.objects.filter(
+                    source="registry",
+                    table_name=table_name,
+                    record_id=record_id,
+                ).delete()
+            if privacy_user is not None:
+                privacy_user.delete()
             if created_verification_user and verification_user is not None:
                 verification_user.delete()
         self.stdout.write(
@@ -294,6 +409,8 @@ class Command(BaseCommand):
                         "private_storage_restored": True,
                         "tracker_ui_verified": True,
                         "gantt_preview_chart_verified": True,
+                        "unassigned_project_hidden": unassigned_project_hidden,
+                        "assigned_team_project_visible": assigned_team_project_visible,
                         "csv_gantt_parser_verified": True,
                         "numbers_gantt_parser_verified": True,
                         "assigned_team_id": assigned_team["team_id"],

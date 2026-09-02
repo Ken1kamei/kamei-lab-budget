@@ -1618,6 +1618,198 @@ def test_scoped_tracker_role_cannot_switch_to_another_team():
     assert milestone.payload["review_status"] == "Pending"
 
 
+def test_tracker_only_shows_projects_assigned_to_members_team_or_member():
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "member@nyu.edu",
+            "display_name": "Assigned Member",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Members",
+        "M003",
+        {
+            "member_id": "M003",
+            "email": "other@nyu.edu",
+            "display_name": "Other Member",
+            "active": "TRUE",
+        },
+    )
+    for team_id, team_name in (("T001", "Core Lab"), ("T002", "Private Team")):
+        add_record(
+            "Teams",
+            team_id,
+            {"team_id": team_id, "team_name": team_name, "active": "TRUE"},
+        )
+    for member_id, team_id in (("M002", "T001"), ("M003", "T002")):
+        add_record(
+            "Member_Teams",
+            f"MT-{member_id}",
+            {
+                "member_team_id": f"MT-{member_id}",
+                "member_id": member_id,
+                "team_id": team_id,
+                "active": "TRUE",
+            },
+        )
+    add_record(
+        "App_Roles",
+        "AR002",
+        {
+            "app_role_id": "AR002",
+            "member_id": "M002",
+            "app_id": "project_tracker",
+            "app_role": "member",
+            "scope_team_id": "",
+            "active": "TRUE",
+        },
+    )
+    projects = (
+        (
+            "P-DIRECT",
+            "Directly assigned project",
+            "T002",
+            "M002",
+        ),
+        (
+            "P-TEAM",
+            "Team assigned project",
+            "T001",
+            "M003",
+        ),
+        (
+            "P-HIDDEN",
+            "Hidden private project",
+            "T002",
+            "M003",
+        ),
+    )
+    for project_id, title, team_ids, member_ids in projects:
+        add_record(
+            "Projects",
+            project_id,
+            {
+                "project_id": project_id,
+                "project": title,
+                "owner_member_id": "M003",
+                "assigned_team_ids": team_ids,
+                "assigned_member_ids": member_ids,
+            },
+            source="tracker",
+        )
+        add_record(
+            "Milestones",
+            f"MS-{project_id}",
+            {
+                "milestone_id": f"MS-{project_id}",
+                "project_id": project_id,
+                "milestone": f"{title} Gantt task",
+                "owner_member_id": "M003",
+                "start_date": "2026-09-01",
+                "due_date": "2026-09-05",
+                "status": "In progress",
+                "review_status": "Approved" if project_id != "P-HIDDEN" else "Pending",
+            },
+            source="tracker",
+        )
+
+    client = client_for("member@nyu.edu")
+    session = client.session
+    session["gantt_import_preview"] = {
+        "token": "hidden-token",
+        "actor": "member@nyu.edu",
+        "project_id": "P-HIDDEN",
+        "project": "Hidden private project",
+        "sheet_name": "hidden.xlsx",
+        "rows": [
+            {
+                "project_id": "P-HIDDEN",
+                "milestone": "Hidden preview task",
+                "start_date": "2026-09-01",
+                "due_date": "2026-09-05",
+            }
+        ],
+        "warnings": [],
+        "errors": [],
+    }
+    session.save()
+
+    response = client.get("/tracker/?gantt_project=P-HIDDEN")
+
+    assert response.status_code == 200
+    assert b"Directly assigned project" in response.content
+    assert b"Team assigned project" in response.content
+    assert b"Hidden private project" not in response.content
+    assert b"Hidden private project Gantt task" not in response.content
+    assert b"Hidden preview task" not in response.content
+    assert response.context["selected_gantt_project"]["project_id"] == "P-DIRECT"
+    assert "gantt_import_preview" not in client.session
+
+    update = client.post(
+        "/tracker/",
+        {
+            "action": "update",
+            "table_name": "Milestones",
+            "record_id": "MS-P-HIDDEN",
+            "status": "Completed",
+            "next_action": "Tampered",
+        },
+    )
+    assert update.status_code == 403
+    assert SheetRecord.objects.get(
+        source="tracker",
+        table_name="Milestones",
+        record_id="MS-P-HIDDEN",
+    ).payload["status"] == "In progress"
+
+    portal = client.get("/portal/")
+    action_counts = {
+        item["label"]: item["count"]
+        for item in portal.context["action_panel"]["items"]
+    }
+    assert action_counts["Blocked"] == 0
+    assert action_counts["Pending approval"] == 0
+
+
+def test_portal_admin_can_view_all_project_gantt_charts():
+    seed_pi()
+    add_record(
+        "Projects",
+        "P-PRIVATE",
+        {
+            "project_id": "P-PRIVATE",
+            "project": "Administratively visible project",
+            "owner_member_id": "M099",
+            "assigned_team_ids": "T099",
+            "assigned_member_ids": "M099",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Milestones",
+        "MS-PRIVATE",
+        {
+            "milestone_id": "MS-PRIVATE",
+            "project_id": "P-PRIVATE",
+            "milestone": "Administratively visible Gantt task",
+            "owner_member_id": "M099",
+            "start_date": "2026-09-01",
+            "due_date": "2026-09-05",
+        },
+        source="tracker",
+    )
+
+    response = signed_in_client().get("/tracker/?gantt_project=P-PRIVATE")
+
+    assert response.status_code == 200
+    assert b"Administratively visible project" in response.content
+    assert b"Administratively visible Gantt task" in response.content
+
+
 @patch("labapps.views.upsert_record")
 def test_project_assignments_save_multiple_teams_and_members(mock_upsert):
     seed_pi()

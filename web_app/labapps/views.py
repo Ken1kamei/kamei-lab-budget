@@ -41,6 +41,7 @@ from .permissions import (
     is_portal_admin,
     lab_app_access,
     registry_access,
+    scope_tracker_records,
     truthy,
 )
 from .services.gantt import (
@@ -138,6 +139,8 @@ def _project_team_ids(project, memberships):
     explicit = set(_assignment_ids(project.get("assigned_team_ids")))
     if explicit:
         return explicit
+    if _assignment_ids(project.get("assigned_member_ids")):
+        return set()
     return _member_team_ids(project.get("owner_member_id"), memberships)
 
 
@@ -670,6 +673,13 @@ def _scope_tracker_rows(request, projects, milestones, experiments):
     else:
         selected = sorted(allowed_team_ids)[0] if allowed_team_ids else ""
     memberships = _active(snapshot_rows("Member_Teams"))
+    projects, milestones, experiments = scope_tracker_records(
+        member,
+        projects,
+        milestones,
+        experiments,
+        memberships,
+    )
     if selected:
         member_ids = {
             row.get("member_id")
@@ -751,6 +761,14 @@ def tracker(request):
     )
     review_form = ReviewForm(prefix="review")
     gantt_preview = request.session.get("gantt_import_preview")
+    visible_project_ids = {row.get("project_id") for row in projects}
+    if gantt_preview and (
+        gantt_preview.get("actor") != actor
+        or gantt_preview.get("project_id") not in visible_project_ids
+    ):
+        request.session.pop("gantt_import_preview", None)
+        request.session.modified = True
+        gantt_preview = None
 
     if request.method == "POST":
         if not can_edit:

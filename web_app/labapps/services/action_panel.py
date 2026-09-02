@@ -6,7 +6,13 @@ from django.urls import reverse
 from django.utils import timezone
 
 from budget.models import FiscalYear, InvoiceDraft, LabMember, Team, Transaction
-from labapps.permissions import app_roles, is_portal_admin, truthy
+from labapps.permissions import (
+    app_roles,
+    is_portal_admin,
+    project_team_ids,
+    scope_tracker_records,
+    truthy,
+)
 from labapps.services.sheets import snapshot_rows
 
 
@@ -28,8 +34,21 @@ def _tracker_rows(member):
     unrestricted = is_portal_admin(member) or any(
         not role.get("scope_team_id") for role in roles
     )
+    projects = snapshot_rows("Projects")
     milestones = snapshot_rows("Milestones")
     experiments = snapshot_rows("Experiments")
+    memberships = [
+        row
+        for row in snapshot_rows("Member_Teams")
+        if truthy(row.get("active", "TRUE"))
+    ]
+    projects, milestones, experiments = scope_tracker_records(
+        member,
+        projects,
+        milestones,
+        experiments,
+        memberships,
+    )
     if unrestricted:
         return milestones, experiments
 
@@ -38,13 +57,13 @@ def _tracker_rows(member):
     }
     member_ids = {
         row.get("member_id")
-        for row in snapshot_rows("Member_Teams")
-        if truthy(row.get("active", "TRUE")) and row.get("team_id") in allowed_team_ids
+        for row in memberships
+        if row.get("team_id") in allowed_team_ids
     }
     projects = [
         row
-        for row in snapshot_rows("Projects")
-        if row.get("owner_member_id") in member_ids
+        for row in projects
+        if project_team_ids(row, memberships) & allowed_team_ids
     ]
     project_ids = {row.get("project_id") for row in projects}
     milestones = [
