@@ -2,10 +2,13 @@ import json
 import secrets
 from datetime import date, timedelta
 
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from labapps.models import LabAppAudit, SheetRecord
+from labapps.permissions import truthy
 from labapps.services.sheets import _live_table, replace_table, snapshot_rows
 from labapps.services.storage import delete_knowledge_file, read_knowledge_file, store_knowledge_file
 
@@ -24,6 +27,27 @@ class Command(BaseCommand):
         project_id = f"VERIFY-{token}"
         milestone_id = f"MS-GANTT-VERIFY-{token}"
         today = date.today()
+        _, _, live_members = _live_table("Members")
+        _, _, live_teams = _live_table("Teams")
+        registry_members = [
+            row for row in live_members if truthy(row.get("active", "TRUE"))
+        ]
+        registry_teams = [
+            row for row in live_teams if truthy(row.get("active", "TRUE"))
+        ]
+        assigned_member = next(
+            (
+                row
+                for row in registry_members
+                if str(row.get("email") or "").strip().lower() == actor
+            ),
+            registry_members[0] if registry_members else None,
+        )
+        assigned_team = registry_teams[0] if registry_teams else None
+        if not assigned_member or not assigned_team:
+            raise CommandError(
+                "At least one active Registry member and team are required for verification."
+            )
         project_probe = {
             "project_id": project_id,
             "project": "Temporary Web verification",
@@ -34,6 +58,8 @@ class Command(BaseCommand):
             "start_date": "",
             "target_date": "",
             "notes": token,
+            "assigned_team_ids": assigned_team["team_id"],
+            "assigned_member_ids": assigned_member["member_id"],
         }
         milestone_probe = {
             "milestone_id": milestone_id,
@@ -56,6 +82,8 @@ class Command(BaseCommand):
         audits_before = set(LabAppAudit.objects.values_list("id", flat=True))
         restored = False
         object_key = ""
+        verification_user = None
+        created_verification_user = False
         try:
             replace_table(
                 "Projects", [*original_projects, project_probe], actor=actor,
@@ -69,7 +97,12 @@ class Command(BaseCommand):
             )
             _, _, project_rows = _live_table("Projects")
             _, _, milestone_rows = _live_table("Milestones")
-            if not any(row.get("project_id") == project_id for row in project_rows):
+            if not any(
+                row.get("project_id") == project_id
+                and row.get("assigned_team_ids") == assigned_team["team_id"]
+                and row.get("assigned_member_ids") == assigned_member["member_id"]
+                for row in project_rows
+            ):
                 raise CommandError("Temporary Project was not read back from Google Sheets.")
             if not any(
                 row.get("milestone_id") == milestone_id
@@ -77,12 +110,50 @@ class Command(BaseCommand):
                 for row in milestone_rows
             ):
                 raise CommandError("Temporary Gantt task was not read back from Google Sheets.")
-            if not SheetRecord.objects.filter(source="tracker", table_name="Projects", record_id=project_id).exists():
+            project_mirror = SheetRecord.objects.filter(
+                source="tracker", table_name="Projects", record_id=project_id
+            ).first()
+            if not project_mirror or (
+                project_mirror.payload.get("assigned_team_ids")
+                != assigned_team["team_id"]
+                or project_mirror.payload.get("assigned_member_ids")
+                != assigned_member["member_id"]
+            ):
                 raise CommandError("Temporary Project was not mirrored to PostgreSQL.")
             if not SheetRecord.objects.filter(
                 source="tracker", table_name="Milestones", record_id=milestone_id
             ).exists():
                 raise CommandError("Temporary Gantt task was not mirrored to PostgreSQL.")
+
+            verification_user = get_user_model().objects.create_user(
+                username=f"roundtrip-{token}",
+                email=actor,
+            )
+            created_verification_user = True
+            client = Client()
+            client.force_login(verification_user)
+            # The job is not reached through Cloud Run's IAP proxy, so it has no
+            # signed IAP assertion. Exercise the authenticated view directly.
+            with override_settings(
+                IAP_EXPECTED_AUDIENCE="", ALLOWED_HOSTS=["testserver"]
+            ):
+                response = client.get("/tracker/", secure=True)
+            rendered = response.content.decode("utf-8", errors="replace")
+            member_name = (
+                assigned_member.get("display_name")
+                or assigned_member.get("name")
+                or assigned_member["member_id"]
+            )
+            team_name = assigned_team.get("team_name") or assigned_team["team_id"]
+            expected_values = (project_probe["project"], member_name, team_name)
+            missing_values = [
+                value for value in expected_values if value not in rendered
+            ]
+            if response.status_code != 200 or missing_values:
+                raise CommandError(
+                    "Temporary Project assignments were not visible in the Tracker HTML "
+                    f"(status={response.status_code}, missing={missing_values})."
+                )
 
             content = f"Kamei Lab private storage verification {token}".encode()
             object_key, digest = store_knowledge_file(project_id, "verification.txt", content, "text/plain")
@@ -131,6 +202,8 @@ class Command(BaseCommand):
                     action="verification_emergency_restore", target=f"Projects:{project_id}", before={},
                 )
             LabAppAudit.objects.exclude(id__in=audits_before).delete()
+            if created_verification_user and verification_user is not None:
+                verification_user.delete()
         self.stdout.write(
             self.style.SUCCESS(
                 json.dumps(
@@ -138,6 +211,9 @@ class Command(BaseCommand):
                         "sheet_restored": True,
                         "gantt_sheet_restored": True,
                         "private_storage_restored": True,
+                        "tracker_ui_verified": True,
+                        "assigned_team_id": assigned_team["team_id"],
+                        "assigned_member_id": assigned_member["member_id"],
                         "project_id": project_id,
                         "milestone_id": milestone_id,
                     }

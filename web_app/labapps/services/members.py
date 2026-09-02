@@ -39,6 +39,8 @@ def _next_member_identifier():
         ("Experiments", "member_id"),
     ):
         identifiers.extend(row.get(key) for row in snapshot_rows(table_name))
+    for row in snapshot_rows("Projects"):
+        identifiers.extend(_split_reference_ids(row.get("assigned_member_ids")))
     identifiers.extend(
         row.get("target_id")
         for row in snapshot_rows("Audit_Log")
@@ -306,9 +308,17 @@ MEMBER_REFERENCE_FIELDS = (
 )
 
 
+def _split_reference_ids(value):
+    return [
+        item.strip()
+        for item in str(value or "").replace(",", ";").replace("|", ";").split(";")
+        if item.strip()
+    ]
+
+
 def member_reference_summary(member_id):
     member_id = str(member_id or "").strip()
-    return [
+    summary = [
         {
             "table_name": table_name,
             "count": sum(
@@ -319,6 +329,16 @@ def member_reference_summary(member_id):
         }
         for table_name, key in MEMBER_REFERENCE_FIELDS
     ]
+    summary.append(
+        {
+            "table_name": "Project assignments",
+            "count": sum(
+                member_id in _split_reference_ids(row.get("assigned_member_ids"))
+                for row in snapshot_rows("Projects")
+            ),
+        }
+    )
+    return summary
 
 
 def delete_member_record(
@@ -379,6 +399,28 @@ def delete_member_record(
                 action="reassign_before_member_delete",
                 target=f"Member:{member_id}->{reassign_to_member_id}",
             )
+    projects = snapshot_rows("Projects")
+    reassigned_projects = []
+    assignments_changed = False
+    for row in projects:
+        assigned = _split_reference_ids(row.get("assigned_member_ids"))
+        if str(member_id).strip() in assigned:
+            assigned = [
+                reassign_to_member_id if value == str(member_id).strip() else value
+                for value in assigned
+            ]
+            assigned = list(dict.fromkeys(value for value in assigned if value))
+            row = {**row, "assigned_member_ids": ";".join(assigned)}
+            assignments_changed = True
+        reassigned_projects.append(row)
+    if assignments_changed:
+        replace_table(
+            "Projects",
+            reassigned_projects,
+            actor=actor,
+            action="reassign_before_member_delete",
+            target=f"Member:{member_id}->{reassign_to_member_id}",
+        )
     for table_name in ("App_Roles", "Member_Teams"):
         original = snapshot_rows(table_name)
         rows = [

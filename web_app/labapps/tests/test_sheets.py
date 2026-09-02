@@ -10,6 +10,13 @@ from labapps.services.sheets import TRACKER_HEADERS, replace_project_gantt
 pytestmark = pytest.mark.django_db
 
 
+def test_projects_sheet_has_assignment_columns():
+    assert TRACKER_HEADERS["Projects"][-2:] == [
+        "assigned_team_ids",
+        "assigned_member_ids",
+    ]
+
+
 class FakeGateway:
     @staticmethod
     def _column_label(column):

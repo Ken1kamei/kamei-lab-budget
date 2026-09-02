@@ -118,14 +118,70 @@ class ProjectForm(forms.Form):
     project = forms.CharField(max_length=240)
     aim = forms.CharField(max_length=500)
     owner_member_id = forms.ChoiceField(choices=[])
+    assigned_team_ids = forms.MultipleChoiceField(
+        choices=[],
+        required=False,
+        label="Assigned teams",
+        widget=forms.CheckboxSelectMultiple,
+    )
+    assigned_member_ids = forms.MultipleChoiceField(
+        choices=[],
+        required=False,
+        label="Assigned lab members",
+        widget=forms.CheckboxSelectMultiple,
+    )
     start_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
     target_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}), required=False)
     notes = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), required=False)
 
-    def __init__(self, *args, members=None, **kwargs):
+    def __init__(self, *args, members=None, teams=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["owner_member_id"].choices = [
+        member_choices = [
             (row["member_id"], row.get("display_name") or row.get("name") or row["member_id"])
+            for row in (members or [])
+        ]
+        self.fields["owner_member_id"].choices = member_choices
+        self.fields["assigned_member_ids"].choices = member_choices
+        self.fields["assigned_team_ids"].choices = [
+            (row["team_id"], row.get("team_name") or row["team_id"])
+            for row in (teams or [])
+        ]
+
+    def clean(self):
+        cleaned = super().clean()
+        owner_member_id = cleaned.get("owner_member_id")
+        assigned_member_ids = list(cleaned.get("assigned_member_ids") or [])
+        if owner_member_id and owner_member_id not in assigned_member_ids:
+            assigned_member_ids.append(owner_member_id)
+        cleaned["assigned_member_ids"] = assigned_member_ids
+        return cleaned
+
+
+class ProjectAssignmentForm(forms.Form):
+    assigned_team_ids = forms.MultipleChoiceField(
+        choices=[],
+        required=False,
+        label="Assigned teams",
+        widget=forms.CheckboxSelectMultiple,
+    )
+    assigned_member_ids = forms.MultipleChoiceField(
+        choices=[],
+        required=False,
+        label="Assigned lab members",
+        widget=forms.CheckboxSelectMultiple,
+    )
+
+    def __init__(self, *args, members=None, teams=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["assigned_team_ids"].choices = [
+            (row["team_id"], row.get("team_name") or row["team_id"])
+            for row in (teams or [])
+        ]
+        self.fields["assigned_member_ids"].choices = [
+            (
+                row["member_id"],
+                row.get("display_name") or row.get("name") or row["member_id"],
+            )
             for row in (members or [])
         ]
 

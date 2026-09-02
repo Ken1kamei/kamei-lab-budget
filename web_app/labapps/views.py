@@ -1,6 +1,7 @@
 import hashlib
 import json
 import mimetypes
+import re
 import secrets
 from datetime import date
 
@@ -25,6 +26,7 @@ from .forms import (
     MemberDeleteForm,
     MemberForm,
     MilestoneForm,
+    ProjectAssignmentForm,
     ProjectForm,
     ReviewForm,
     TeamForm,
@@ -110,6 +112,56 @@ def _team_lookup():
 def _display_member(member_id, members):
     row = members.get(member_id, {})
     return row.get("display_name") or row.get("name") or member_id
+
+
+def _assignment_ids(value):
+    if isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = re.split(r"[;,|\n]+", str(value or ""))
+    return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
+
+
+def _assignment_value(values):
+    return ";".join(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+
+def _member_team_ids(member_id, memberships):
+    return {
+        row.get("team_id")
+        for row in memberships
+        if row.get("member_id") == member_id and row.get("team_id")
+    }
+
+
+def _project_team_ids(project, memberships):
+    explicit = set(_assignment_ids(project.get("assigned_team_ids")))
+    if explicit:
+        return explicit
+    return _member_team_ids(project.get("owner_member_id"), memberships)
+
+
+def _decorate_projects(projects, members, teams, memberships):
+    member_lookup = {row.get("member_id"): row for row in members}
+    team_lookup = {row.get("team_id"): row for row in teams}
+    output = []
+    for source in projects:
+        row = dict(source)
+        team_ids = sorted(_project_team_ids(row, memberships))
+        member_ids = _assignment_ids(row.get("assigned_member_ids"))
+        if not member_ids and row.get("owner_member_id"):
+            member_ids = [row["owner_member_id"]]
+        row["assigned_team_ids_list"] = team_ids
+        row["assigned_member_ids_list"] = member_ids
+        row["assigned_team_names"] = [
+            team_lookup.get(team_id, {}).get("team_name") or team_id
+            for team_id in team_ids
+        ]
+        row["assigned_member_names"] = [
+            _display_member(member_id, member_lookup) for member_id in member_ids
+        ]
+        output.append(row)
+    return output
 
 
 def _registry_member_rows(rows, request):
@@ -617,23 +669,34 @@ def _scope_tracker_rows(request, projects, milestones, experiments):
         selected = requested
     else:
         selected = sorted(allowed_team_ids)[0] if allowed_team_ids else ""
-    member_ids = None
+    memberships = _active(snapshot_rows("Member_Teams"))
     if selected:
         member_ids = {
             row.get("member_id")
-            for row in _active(snapshot_rows("Member_Teams"))
+            for row in memberships
             if row.get("team_id") == selected
         }
-        projects = [row for row in projects if row.get("owner_member_id") in member_ids]
+        projects = [
+            row for row in projects
+            if selected in _project_team_ids(row, memberships)
+        ]
         project_ids = {row.get("project_id") for row in projects}
         milestones = [
             row for row in milestones
-            if row.get("owner_member_id") in member_ids or row.get("project_id") in project_ids
+            if (
+                row.get("project_id") in project_ids
+                if row.get("project_id")
+                else row.get("owner_member_id") in member_ids
+            )
         ]
         milestone_ids = {row.get("milestone_id") for row in milestones}
         experiments = [
             row for row in experiments
-            if row.get("member_id") in member_ids or row.get("milestone_id") in milestone_ids
+            if (
+                row.get("milestone_id") in milestone_ids
+                if row.get("milestone_id")
+                else row.get("member_id") in member_ids
+            )
         ]
     return projects, milestones, experiments, selected
 
@@ -642,8 +705,11 @@ def _scope_tracker_rows(request, projects, milestones, experiments):
 def tracker(request):
     actor = _email(request)
     member = current_registry_member(request)
-    members = _active(snapshot_rows("Members"))
-    teams = _active(snapshot_rows("Teams"))
+    all_members = _active(snapshot_rows("Members"))
+    all_teams = _active(snapshot_rows("Teams"))
+    memberships = _active(snapshot_rows("Member_Teams"))
+    members = list(all_members)
+    teams = list(all_teams)
     projects = snapshot_rows("Projects")
     milestones = snapshot_rows("Milestones")
     experiments = snapshot_rows("Experiments")
@@ -663,14 +729,19 @@ def tracker(request):
     if selected_team:
         scoped_member_ids = {
             row.get("member_id")
-            for row in _active(snapshot_rows("Member_Teams"))
+            for row in memberships
             if row.get("team_id") == selected_team
         }
         members = [row for row in members if row.get("member_id") in scoped_member_ids]
     if scope_locked:
         teams = [row for row in teams if row.get("team_id") in allowed_team_ids]
 
-    project_form = ProjectForm(prefix="project", members=members)
+    project_form = ProjectForm(
+        prefix="project",
+        members=members,
+        teams=teams,
+        initial={"assigned_team_ids": [selected_team] if selected_team else []},
+    )
     milestone_form = MilestoneForm(prefix="milestone", projects=projects, members=members)
     experiment_form = ExperimentForm(prefix="experiment", milestones=milestones, members=members)
     gantt_import_form = GanttImportForm(
@@ -778,13 +849,20 @@ def tracker(request):
                 request.session.modified = True
                 return redirect(f"{reverse('labapps:tracker')}#gantt")
             elif action == "project":
-                project_form = ProjectForm(request.POST, prefix="project", members=members)
+                project_form = ProjectForm(
+                    request.POST,
+                    prefix="project",
+                    members=members,
+                    teams=teams,
+                )
                 if project_form.is_valid():
                     cleaned = project_form.cleaned_data
                     payload = {
                         "project_id": next_identifier("Projects", "P"),
                         "project": cleaned["project"], "aim": cleaned["aim"],
                         "owner_member_id": cleaned["owner_member_id"],
+                        "assigned_team_ids": _assignment_value(cleaned["assigned_team_ids"]),
+                        "assigned_member_ids": _assignment_value(cleaned["assigned_member_ids"]),
                         "start_date": cleaned["start_date"].isoformat(),
                         "target_date": cleaned["target_date"].isoformat() if cleaned["target_date"] else "",
                         "notes": cleaned["notes"],
@@ -792,6 +870,64 @@ def tracker(request):
                     upsert_record("Projects", payload, actor=actor, action="create_project")
                     messages.success(request, "Project saved and verified in Google Sheets.")
                     return redirect("labapps:tracker")
+            elif action == "project_assignment":
+                project_id = str(request.POST.get("project_id") or "").strip()
+                current = next(
+                    (row for row in projects if row.get("project_id") == project_id),
+                    None,
+                )
+                if current is None:
+                    return HttpResponse(
+                        "This project is outside your permitted team scope.",
+                        status=403,
+                    )
+                assignment_form = ProjectAssignmentForm(
+                    request.POST,
+                    prefix=f"assignment-{project_id}",
+                    members=members,
+                    teams=teams,
+                )
+                if assignment_form.is_valid():
+                    cleaned = assignment_form.cleaned_data
+                    visible_team_ids = {row.get("team_id") for row in teams}
+                    visible_member_ids = {row.get("member_id") for row in members}
+                    active_team_ids = {row.get("team_id") for row in all_teams}
+                    active_member_ids = {row.get("member_id") for row in all_members}
+                    retained_team_ids = [
+                        value
+                        for value in _assignment_ids(current.get("assigned_team_ids"))
+                        if value in active_team_ids and value not in visible_team_ids
+                    ]
+                    retained_member_ids = [
+                        value
+                        for value in _assignment_ids(current.get("assigned_member_ids"))
+                        if value in active_member_ids and value not in visible_member_ids
+                    ]
+                    assigned_member_ids = [
+                        *cleaned["assigned_member_ids"],
+                        *retained_member_ids,
+                    ]
+                    owner_member_id = current.get("owner_member_id")
+                    if owner_member_id and owner_member_id not in assigned_member_ids:
+                        assigned_member_ids.append(owner_member_id)
+                    updated = {
+                        **current,
+                        "assigned_team_ids": _assignment_value(
+                            [*cleaned["assigned_team_ids"], *retained_team_ids]
+                        ),
+                        "assigned_member_ids": _assignment_value(assigned_member_ids),
+                    }
+                    upsert_record(
+                        "Projects",
+                        updated,
+                        actor=actor,
+                        action="update_project_assignments",
+                    )
+                    messages.success(
+                        request,
+                        "Project assignments saved and verified in Google Sheets.",
+                    )
+                    return redirect(f"{reverse('labapps:tracker')}#projects")
             elif action == "milestone":
                 milestone_form = MilestoneForm(
                     request.POST, prefix="milestone", projects=projects, members=members
@@ -946,11 +1082,40 @@ def tracker(request):
         for member_id in member_lookup
     }
     gantt = build_gantt_context(selected_gantt_project, milestones, member_display)
+    decorated_projects = _decorate_projects(
+        projects,
+        all_members,
+        all_teams,
+        memberships,
+    )
+    assignment_forms = [
+        {
+            "project": project,
+            "form": ProjectAssignmentForm(
+                prefix=f"assignment-{project['project_id']}",
+                members=members,
+                teams=teams,
+                initial={
+                    "assigned_team_ids": [
+                        value
+                        for value in project["assigned_team_ids_list"]
+                        if value in {row.get("team_id") for row in teams}
+                    ],
+                    "assigned_member_ids": [
+                        value
+                        for value in project["assigned_member_ids_list"]
+                        if value in {row.get("member_id") for row in members}
+                    ],
+                },
+            ),
+        }
+        for project in decorated_projects
+    ]
     return render(
         request,
         "labapps/tracker.html",
         {
-            "projects": projects, "milestones": milestones, "experiments": experiments,
+            "projects": decorated_projects, "milestones": milestones, "experiments": experiments,
             "pending": pending, "teams": teams, "selected_team": selected_team,
             "scope_locked": scope_locked,
             "members": member_lookup, "can_edit": can_edit,
@@ -961,6 +1126,7 @@ def tracker(request):
             "gantt_preview": gantt_preview,
             "gantt": gantt,
             "selected_gantt_project": selected_gantt_project,
+            "assignment_forms": assignment_forms,
         },
     )
 

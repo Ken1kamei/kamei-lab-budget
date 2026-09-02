@@ -42,7 +42,9 @@ The gateway requests a read-only Sheets scope unless `ENABLE_SHEET_WRITES=true`.
 - Member accounts must use `@nyu.edu`, except addresses explicitly listed in
   `LAB_MEMBER_EMAIL_EXCEPTIONS` (default: `nyuadkameilab@gmail.com`).
 - Project, milestone, experiment, review, and next-action workflows at `/tracker/`,
-  including per-project Excel Gantt import, preview, and timeline display.
+  including per-project Team/Member assignments and Excel Gantt import, preview,
+  and timeline display. Assignment IDs are stored in the `Projects` sheet as
+  semicolon-delimited `assigned_team_ids` and `assigned_member_ids` values.
 - Searchable protocol and notebook registry plus private uploads at `/knowledge/`.
 - Portal weekly view of the private lab Google Calendar using read-only service
   account access.
@@ -95,8 +97,10 @@ python manage.py verify_lab_apps_parity
 python manage.py verify_lab_apps_roundtrip --actor kk4801@nyu.edu
 ```
 
-The round trip temporarily adds and removes one Project row and one private GCS
-object. It fails unless both sources are restored exactly.
+The round trip temporarily adds and removes one Project row with a real active
+Registry Team/Member assignment, verifies the assignment in Google Sheets,
+PostgreSQL, and rendered Tracker HTML, and checks private GCS storage. It fails
+unless the temporary data and both Sheet tables are restored exactly.
 
 The scheduled job and web service must use the same database URL, service
 account, registry/Sheet configuration, and private invoice bucket. Alert on any

@@ -23,6 +23,7 @@ from labapps.models import KnowledgeRecord, LabAppAudit, SheetRecord, SlackConne
 from labapps.services.knowledge_catalog import refresh_knowledge_indexes
 from labapps.services.members import (
     delete_member_record,
+    member_reference_summary,
     remove_member_access,
     sync_registry_member_mirror,
     upsert_member_access,
@@ -1493,6 +1494,281 @@ def test_scoped_tracker_role_cannot_switch_to_another_team():
     milestone = SheetRecord.objects.get(table_name="Milestones", record_id="MS001")
     assert milestone.payload["status"] == "In progress"
     assert milestone.payload["review_status"] == "Pending"
+
+
+@patch("labapps.views.upsert_record")
+def test_project_assignments_save_multiple_teams_and_members(mock_upsert):
+    seed_pi()
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "member@nyu.edu",
+            "display_name": "Research Member",
+            "active": "TRUE",
+        },
+    )
+    for team_id, team_name in (("T001", "Core Lab"), ("T002", "Diabetes")):
+        add_record(
+            "Teams",
+            team_id,
+            {"team_id": team_id, "team_name": team_name, "active": "TRUE"},
+        )
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Assigned project",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+
+    response = signed_in_client().post(
+        "/tracker/",
+        {
+            "action": "project_assignment",
+            "project_id": "P001",
+            "assignment-P001-assigned_team_ids": ["T001", "T002"],
+            "assignment-P001-assigned_member_ids": ["M002"],
+        },
+    )
+
+    assert response.status_code == 302
+    assert response["Location"].endswith("/tracker/#projects")
+    payload = mock_upsert.call_args.args[1]
+    assert payload["assigned_team_ids"] == "T001;T002"
+    assert payload["assigned_member_ids"] == "M002;M001"
+    assert mock_upsert.call_args.kwargs["action"] == "update_project_assignments"
+
+
+@patch("labapps.views.upsert_record")
+def test_scoped_assignment_edit_preserves_other_team_collaborators(mock_upsert):
+    add_record(
+        "Members",
+        "M002",
+        {
+            "member_id": "M002",
+            "email": "lead@nyu.edu",
+            "display_name": "Diabetes Lead",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Members",
+        "M003",
+        {
+            "member_id": "M003",
+            "email": "collaborator@nyu.edu",
+            "display_name": "Core Collaborator",
+            "active": "TRUE",
+        },
+    )
+    for team_id, team_name in (("T001", "Core Lab"), ("T002", "Diabetes")):
+        add_record(
+            "Teams",
+            team_id,
+            {"team_id": team_id, "team_name": team_name, "active": "TRUE"},
+        )
+    for member_id, team_id in (("M002", "T002"), ("M003", "T001")):
+        add_record(
+            "Member_Teams",
+            f"MT-{member_id}",
+            {
+                "member_team_id": f"MT-{member_id}",
+                "member_id": member_id,
+                "team_id": team_id,
+                "active": "TRUE",
+            },
+        )
+    add_record(
+        "App_Roles",
+        "AR002",
+        {
+            "app_role_id": "AR002",
+            "member_id": "M002",
+            "app_id": "project_tracker",
+            "app_role": "lead",
+            "scope_team_id": "T002",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Cross-team project",
+            "owner_member_id": "M002",
+            "assigned_team_ids": "T001;T002",
+            "assigned_member_ids": "M002;M003",
+        },
+        source="tracker",
+    )
+
+    response = client_for("lead@nyu.edu").post(
+        "/tracker/?team=T002",
+        {
+            "action": "project_assignment",
+            "project_id": "P001",
+            "assignment-P001-assigned_team_ids": ["T002"],
+            "assignment-P001-assigned_member_ids": ["M002"],
+        },
+    )
+
+    assert response.status_code == 302
+    payload = mock_upsert.call_args.args[1]
+    assert set(payload["assigned_team_ids"].split(";")) == {"T001", "T002"}
+    assert set(payload["assigned_member_ids"].split(";")) == {"M002", "M003"}
+
+
+def test_team_filter_prefers_explicit_project_assignments_over_owner_team():
+    add_record(
+        "Members",
+        "M002",
+        {"member_id": "M002", "email": "lead@nyu.edu", "active": "TRUE"},
+    )
+    add_record(
+        "Members",
+        "M003",
+        {"member_id": "M003", "email": "other@nyu.edu", "active": "TRUE"},
+    )
+    for team_id, team_name in (("T001", "Core Lab"), ("T002", "Diabetes")):
+        add_record(
+            "Teams",
+            team_id,
+            {"team_id": team_id, "team_name": team_name, "active": "TRUE"},
+        )
+    for member_id, team_id in (("M002", "T002"), ("M003", "T001")):
+        add_record(
+            "Member_Teams",
+            f"MT-{member_id}",
+            {
+                "member_team_id": f"MT-{member_id}",
+                "member_id": member_id,
+                "team_id": team_id,
+                "active": "TRUE",
+            },
+        )
+    add_record(
+        "App_Roles",
+        "AR002",
+        {
+            "app_role_id": "AR002",
+            "member_id": "M002",
+            "app_id": "project_tracker",
+            "app_role": "lead",
+            "scope_team_id": "T002",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Projects",
+        "P-CROSS",
+        {
+            "project_id": "P-CROSS",
+            "project": "Explicit Diabetes project",
+            "owner_member_id": "M003",
+            "assigned_team_ids": "T002",
+            "assigned_member_ids": "M002;M003",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Projects",
+        "P-OTHER",
+        {
+            "project_id": "P-OTHER",
+            "project": "Explicit Core project",
+            "owner_member_id": "M002",
+            "assigned_team_ids": "T001",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Milestones",
+        "MS-OTHER",
+        {
+            "milestone_id": "MS-OTHER",
+            "project_id": "P-OTHER",
+            "milestone": "Hidden Core milestone",
+            "owner_member_id": "M002",
+            "status": "In progress",
+            "review_status": "Pending",
+        },
+        source="tracker",
+    )
+
+    response = client_for("lead@nyu.edu").get("/tracker/?team=T002")
+
+    assert response.status_code == 200
+    assert b"Explicit Diabetes project" in response.content
+    assert b"Explicit Core project" not in response.content
+    assert b"Hidden Core milestone" not in response.content
+    assert b"other@nyu.edu" not in response.content
+
+
+def test_project_assignment_is_reassigned_before_member_deletion(
+    monkeypatch,
+    settings,
+):
+    settings.ENABLE_SHEET_WRITES = True
+    settings.SHEET_WRITE_ALLOWED_EMAILS = {"*"}
+    add_record(
+        "Members",
+        "M001",
+        {
+            "member_id": "M001",
+            "email": "owner@nyu.edu",
+            "global_role": "admin",
+            "active": "TRUE",
+        },
+    )
+    add_record(
+        "Members",
+        "M020",
+        {
+            "member_id": "M020",
+            "email": "former@nyu.edu",
+            "global_role": "member",
+            "active": "FALSE",
+        },
+    )
+    add_record(
+        "Projects",
+        "P020",
+        {
+            "project_id": "P020",
+            "owner_member_id": "M001",
+            "assigned_member_ids": "M020;M001",
+        },
+        source="tracker",
+    )
+    monkeypatch.setattr("labapps.services.members.replace_table", fake_registry_replace)
+    monkeypatch.setattr(
+        "labapps.services.members.append_registry_audit", lambda **kwargs: None
+    )
+
+    reference = next(
+        row
+        for row in member_reference_summary("M020")
+        if row["table_name"] == "Project assignments"
+    )
+    assert reference["count"] == 1
+
+    delete_member_record(
+        "M020",
+        actor="admin@nyu.edu",
+        confirm_email="former@nyu.edu",
+        reassign_to_member_id="M001",
+    )
+
+    project = SheetRecord.objects.get(
+        source="tracker", table_name="Projects", record_id="P020"
+    )
+    assert project.payload["assigned_member_ids"] == "M001"
 
 
 def test_tracker_member_with_two_scoped_roles_can_switch_between_both_teams():

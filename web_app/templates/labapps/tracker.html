@@ -105,7 +105,43 @@
   {% endif %}
 </section>
 
-<section id="projects" class="panel settings-section"><div class="panel-heading"><div><span>Portfolio</span><h2>Projects</h2></div></div><div class="table-panel"><table><thead><tr><th>Project</th><th>Aim</th><th>Owner</th><th>Start</th><th>Target</th></tr></thead><tbody>{% for row in projects %}<tr><td><strong>{{ row.project }}</strong><small>{{ row.project_id }}</small></td><td>{{ row.aim }}</td><td>{{ members|get_item:row.owner_member_id }}</td><td>{{ row.start_date }}</td><td>{{ row.target_date }}</td></tr>{% empty %}<tr><td colspan="5" class="empty">No projects in this scope.</td></tr>{% endfor %}</tbody></table></div></section>
+<section id="projects" class="panel settings-section">
+  <div class="panel-heading"><div><span>Portfolio</span><h2>Projects and assignments</h2></div></div>
+  <div class="table-panel">
+    <table class="project-table">
+      <thead><tr><th>Project</th><th>Aim</th><th>Owner</th><th>Teams</th><th>Lab members</th><th>Dates</th>{% if can_edit %}<th>Action</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for row in projects %}
+        <tr>
+          <td><strong>{{ row.project }}</strong><small>{{ row.project_id }}</small></td>
+          <td>{{ row.aim }}</td>
+          <td>{{ members|get_item:row.owner_member_id }}</td>
+          <td><div class="assignment-tags">{% for name in row.assigned_team_names %}<span>{{ name }}</span>{% empty %}<small>Not assigned</small>{% endfor %}</div></td>
+          <td><div class="assignment-tags members">{% for name in row.assigned_member_names %}<span>{{ name }}</span>{% empty %}<small>Not assigned</small>{% endfor %}</div></td>
+          <td>{{ row.start_date }}<small>Target: {{ row.target_date|default:"Not set" }}</small></td>
+          {% if can_edit %}
+          <td>
+            {% for item in assignment_forms %}{% if item.project.project_id == row.project_id %}
+            <details class="assignment-editor">
+              <summary>Edit assignments</summary>
+              <form method="post" class="assignment-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="project_assignment">
+                <input type="hidden" name="project_id" value="{{ row.project_id }}">
+                <fieldset><legend>{{ item.form.assigned_team_ids.label }}</legend>{{ item.form.assigned_team_ids.errors }}{{ item.form.assigned_team_ids }}</fieldset>
+                <fieldset><legend>{{ item.form.assigned_member_ids.label }}</legend>{{ item.form.assigned_member_ids.errors }}{{ item.form.assigned_member_ids }}</fieldset>
+                <button class="button primary" type="submit">Save assignments</button>
+              </form>
+            </details>
+            {% endif %}{% endfor %}
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}<tr><td colspan="7" class="empty">No projects in this scope.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 
 <section id="milestones" class="panel settings-section"><div class="panel-heading"><div><span>Delivery</span><h2>Milestones</h2></div></div><div class="table-panel"><table><thead><tr><th>Milestone</th><th>Owner</th><th>Status</th><th>Progress</th><th>Review</th><th>Next action / blocker</th><th>Due</th></tr></thead><tbody>{% for row in milestones %}<tr><td><strong>{{ row.milestone }}</strong><small>{{ row.project }} · {{ row.milestone_id }}</small></td><td>{{ members|get_item:row.owner_member_id }}</td><td><span class="status">{{ row.status }}</span></td><td>{{ row.progress_percent|default:"0" }}%</td><td>{{ row.review_status }}</td><td>{{ row.next_action }}{% if row.blocker_reason %}<small>Blocked: {{ row.blocker_reason }}</small>{% endif %}{% if row.help_needed_from %}<small>Help: {{ row.help_needed_from }}</small>{% endif %}{% if can_edit %}<details><summary>Update</summary><form method="post" class="mini-form">{% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="table_name" value="Milestones"><input type="hidden" name="record_id" value="{{ row.milestone_id }}"><select name="status"><option>{{ row.status }}</option><option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option></select><input type="number" name="progress_percent" min="0" max="100" step="1" value="{{ row.progress_percent|default:"0" }}" aria-label="Progress percent"><input name="next_action" value="{{ row.next_action }}" placeholder="Next action"><textarea name="blocker_reason" placeholder="Blocker reason">{{ row.blocker_reason }}</textarea><input name="help_needed_from" value="{{ row.help_needed_from }}" placeholder="Help needed from"><input name="update_note" placeholder="Update note"><button class="button secondary" type="submit">Save</button></form></details>{% endif %}</td><td>{{ row.due_date }}</td></tr>{% empty %}<tr><td colspan="7" class="empty">No milestones.</td></tr>{% endfor %}</tbody></table></div></section>
 

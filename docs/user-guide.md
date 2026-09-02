@@ -81,6 +81,17 @@ Go to **Reports** to see:
 
 ---
 
+## Project Tracker assignments
+
+Open **Project Tracker → Projects** to see the Teams and lab members assigned to
+each project. Users with Lead, Manager, or Owner access can expand **Edit
+assignments**, select multiple active Teams and lab members from Lab Registry,
+and save the assignment to Google Sheets. The project owner is always retained
+as an assigned member. Existing projects without an explicit Team assignment
+continue to use the owner's Team until their assignments are edited.
+
+---
+
 ## Gmail Auto-Import
 
 To import an invoice that arrived by email:

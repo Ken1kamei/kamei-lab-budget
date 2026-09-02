@@ -44,7 +44,7 @@ REGISTRY_HEADERS = {
 TRACKER_HEADERS = {
     "Projects": [
         "project_id", "project", "aim", "owner_member_id", "start_date",
-        "target_date", "notes",
+        "target_date", "notes", "assigned_team_ids", "assigned_member_ids",
     ],
     "Milestones": [
         "milestone_id", "project_id", "project", "aim", "milestone", "time_window",
