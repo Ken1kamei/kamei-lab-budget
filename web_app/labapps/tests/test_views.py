@@ -524,8 +524,14 @@ def test_gantt_upload_previews_then_replaces_only_imported_project_rows(mock_rep
     )
 
     assert preview.status_code == 200
-    assert b"Import preview" in preview.content
+    assert b"Gantt chart preview" in preview.content
     assert b"Define scope" in preview.content
+    assert b"Save 1 task and show chart" in preview.content
+    assert b'class="gantt-track"' in preview.content
+    assert b"Review imported task details (1)" in preview.content
+    assert preview.content.index(b"Save 1 task and show chart") < preview.content.index(
+        b'class="gantt-preview-chart"'
+    ) < preview.content.index(b"Review imported task details (1)")
     stored = client.session["gantt_import_preview"]
     assert stored["project_id"] == "P001"
     assert stored["actor"] == "kk4801@nyu.edu"
@@ -589,8 +595,10 @@ def test_csv_and_numbers_gantt_uploads_use_the_preview_flow(
     )
 
     assert preview.status_code == 200
-    assert b"Import preview" in preview.content
+    assert b"Gantt chart preview" in preview.content
     assert expected_task.encode() in preview.content
+    assert b"Save 1 task and show chart" in preview.content
+    assert b'class="gantt-track"' in preview.content
     stored = client.session["gantt_import_preview"]
     assert stored["project_id"] == "P001"
     assert stored["rows"][0]["milestone"] == expected_task

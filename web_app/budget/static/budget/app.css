@@ -250,6 +250,12 @@ details summary { color: var(--cyan); cursor: pointer; margin-top: 6px; }
 .gantt-import-body { max-width: 980px; padding-top: 18px; }
 .gantt-preview { margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--border); }
 .gantt-preview .panel-heading h3 { margin: 4px 0 0; color: var(--text); font-size: 22px; }
+.gantt-preview-actions { margin: 14px 0 18px; }
+.gantt-preview-chart .gantt-scroll { max-height: 720px; overflow: auto; }
+.gantt-preview-chart .gantt-label-heading, .gantt-preview-chart .gantt-axis { position: sticky; top: 0; z-index: 2; }
+.gantt-preview-details { margin-top: 18px; }
+.gantt-preview-details > summary { font-weight: 750; }
+.gantt-preview-details .table-panel { margin-top: 14px; }
 .gantt-preview-table { min-width: 920px; }
 .project-table { min-width: 1120px; }
 .assignment-tags { display: flex; flex-wrap: wrap; gap: 5px; min-width: 130px; }

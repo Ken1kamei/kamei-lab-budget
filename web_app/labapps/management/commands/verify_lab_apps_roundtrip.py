@@ -186,6 +186,19 @@ class Command(BaseCommand):
             created_verification_user = True
             client = Client()
             client.force_login(verification_user)
+            session = client.session
+            session["gantt_import_preview"] = {
+                "token": token,
+                "actor": actor,
+                "project_id": project_id,
+                "project": project_probe["project"],
+                "sheet_name": "verification-gantt.csv",
+                "header_row": 1,
+                "rows": [milestone_probe],
+                "warnings": [],
+                "errors": [],
+            }
+            session.save()
             # The job is not reached through Cloud Run's IAP proxy, so it has no
             # signed IAP assertion. Exercise the authenticated view directly.
             with override_settings(
@@ -207,6 +220,20 @@ class Command(BaseCommand):
                 raise CommandError(
                     "Temporary Project assignments were not visible in the Tracker HTML "
                     f"(status={response.status_code}, missing={missing_values})."
+                )
+            preview_markers = (
+                "Gantt chart preview",
+                "Save 1 task and show chart",
+                "Review imported task details (1)",
+                'class="gantt-track"',
+            )
+            missing_preview_markers = [
+                marker for marker in preview_markers if marker not in rendered
+            ]
+            if missing_preview_markers:
+                raise CommandError(
+                    "The imported Gantt chart preview was not rendered in the Tracker "
+                    f"HTML (missing={missing_preview_markers})."
                 )
 
             content = f"Kamei Lab private storage verification {token}".encode()
@@ -266,6 +293,7 @@ class Command(BaseCommand):
                         "gantt_sheet_restored": True,
                         "private_storage_restored": True,
                         "tracker_ui_verified": True,
+                        "gantt_preview_chart_verified": True,
                         "csv_gantt_parser_verified": True,
                         "numbers_gantt_parser_verified": True,
                         "assigned_team_id": assigned_team["team_id"],

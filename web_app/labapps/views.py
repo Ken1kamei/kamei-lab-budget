@@ -1082,6 +1082,17 @@ def tracker(request):
         for member_id in member_lookup
     }
     gantt = build_gantt_context(selected_gantt_project, milestones, member_display)
+    gantt_preview_chart = {"project": None, "rows": [], "ticks": []}
+    if gantt_preview and gantt_preview.get("rows"):
+        preview_project = {
+            "project_id": gantt_preview.get("project_id", ""),
+            "project": gantt_preview.get("project", ""),
+        }
+        gantt_preview_chart = build_gantt_context(
+            preview_project,
+            gantt_preview["rows"],
+            member_display,
+        )
     decorated_projects = _decorate_projects(
         projects,
         all_members,
@@ -1124,6 +1135,7 @@ def tracker(request):
             "experiment_form": experiment_form, "review_form": review_form,
             "gantt_import_form": gantt_import_form,
             "gantt_preview": gantt_preview,
+            "gantt_preview_chart": gantt_preview_chart,
             "gantt": gantt,
             "selected_gantt_project": selected_gantt_project,
             "assignment_forms": assignment_forms,

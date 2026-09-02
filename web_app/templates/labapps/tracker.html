@@ -35,26 +35,7 @@
     <strong>{{ gantt.project.project }}</strong>
     <span>{{ gantt.start_date }} to {{ gantt.end_date }} · {{ gantt.rows|length }} tasks</span>
   </div>
-  <div class="gantt-scroll">
-    <div class="gantt-grid">
-      <div class="gantt-label gantt-label-heading">Task and owner</div>
-      <div class="gantt-axis">
-        {% for tick in gantt.ticks %}<span style="--tick-left: {{ tick.left }}%">{{ tick.label }}</span>{% endfor %}
-      </div>
-      {% for row in gantt.rows %}
-      <div class="gantt-label">
-        <strong>{{ row.milestone }}</strong>
-        <span>{{ row.phase }} · {{ row.owner }}</span>
-      </div>
-      <div class="gantt-track" aria-label="{{ row.milestone }}: {{ row.start }} to {{ row.end }}, {{ row.progress }} percent complete">
-        <div class="gantt-bar" style="--bar-left: {{ row.left }}%; --bar-width: {{ row.width }}%">
-          <span style="--progress-width: {{ row.progress_width }}%"></span>
-          <small>{{ row.progress_width }}%</small>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
+  {% include "labapps/_gantt_chart.html" with chart=gantt %}
   {% elif selected_gantt_project %}
   <p class="empty">No scheduled milestones for this project yet. Import a Gantt file or add milestones with start and due dates.</p>
   {% else %}
@@ -75,29 +56,36 @@
       {% if gantt_preview %}
       <div class="gantt-preview">
         <div class="panel-heading">
-          <div><span>Import preview</span><h3>{{ gantt_preview.project }}</h3></div>
+          <div><span>Gantt chart preview</span><h3>{{ gantt_preview.project }}</h3></div>
           <span>{{ gantt_preview.rows|length }} tasks · {{ gantt_preview.sheet_name }}</span>
         </div>
         {% for error in gantt_preview.errors %}<p class="notice error">{{ error }}</p>{% endfor %}
         {% for warning in gantt_preview.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
         {% if gantt_preview.rows %}
-        <div class="table-panel">
-          <table class="gantt-preview-table">
-            <thead><tr><th>Phase</th><th>Task</th><th>Owner</th><th>Progress</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
-            <tbody>
-              {% for row in gantt_preview.rows %}
-              <tr><td>{{ row.time_window }}</td><td>{{ row.milestone }}</td><td>{{ members|get_item:row.owner_member_id }}</td><td>{{ row.progress_percent }}%</td><td>{{ row.start_date }}</td><td>{{ row.due_date }}</td><td>{{ row.status }}</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endif %}
-        <div class="form-actions">
+        <p class="notice">This is a chart preview. Save it to add these tasks to the selected project.</p>
+        <div class="form-actions gantt-preview-actions">
           {% if not gantt_preview.errors %}
-          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="gantt_confirm"><input type="hidden" name="preview_token" value="{{ gantt_preview.token }}"><button class="button primary" type="submit">Confirm and save to Google Sheets</button></form>
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="gantt_confirm"><input type="hidden" name="preview_token" value="{{ gantt_preview.token }}"><button class="button primary" type="submit">Save {{ gantt_preview.rows|length }} task{{ gantt_preview.rows|length|pluralize }} and show chart</button></form>
           {% endif %}
           <form method="post">{% csrf_token %}<input type="hidden" name="action" value="gantt_cancel"><button class="button secondary" type="submit">Cancel preview</button></form>
         </div>
+        <div class="gantt-preview-chart">
+          {% include "labapps/_gantt_chart.html" with chart=gantt_preview_chart %}
+        </div>
+        <details class="gantt-preview-details">
+          <summary>Review imported task details ({{ gantt_preview.rows|length }})</summary>
+          <div class="table-panel">
+            <table class="gantt-preview-table">
+              <thead><tr><th>Phase</th><th>Task</th><th>Owner</th><th>Progress</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
+              <tbody>
+                {% for row in gantt_preview.rows %}
+                <tr><td>{{ row.time_window }}</td><td>{{ row.milestone }}</td><td>{{ members|get_item:row.owner_member_id }}</td><td>{{ row.progress_percent }}%</td><td>{{ row.start_date }}</td><td>{{ row.due_date }}</td><td>{{ row.status }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+        {% endif %}
       </div>
       {% endif %}
     </div>

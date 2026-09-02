@@ -1,0 +1,20 @@
+<div class="gantt-scroll">
+  <div class="gantt-grid">
+    <div class="gantt-label gantt-label-heading">Task and owner</div>
+    <div class="gantt-axis">
+      {% for tick in chart.ticks %}<span style="--tick-left: {{ tick.left }}%">{{ tick.label }}</span>{% endfor %}
+    </div>
+    {% for row in chart.rows %}
+    <div class="gantt-label">
+      <strong>{{ row.milestone }}</strong>
+      <span>{{ row.phase }} · {{ row.owner }}</span>
+    </div>
+    <div class="gantt-track" aria-label="{{ row.milestone }}: {{ row.start }} to {{ row.end }}, {{ row.progress }} percent complete">
+      <div class="gantt-bar" style="--bar-left: {{ row.left }}%; --bar-width: {{ row.width }}%">
+        <span style="--progress-width: {{ row.progress_width }}%"></span>
+        {% if row.show_progress_label %}<small>{{ row.progress_width }}%</small>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>

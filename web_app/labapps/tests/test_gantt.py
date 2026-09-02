@@ -83,7 +83,9 @@ def test_parse_apple_numbers_file(tmp_path):
         num_header_rows=1,
         num_header_cols=0,
         num_rows=3,
-        num_cols=8,
+        # Numbers Gantt templates include timeline display columns after the
+        # import fields. The parser should safely ignore those extra columns.
+        num_cols=381,
     )
     table = document.sheets[0].tables[0]
     table_rows = [
@@ -308,3 +310,29 @@ def test_build_gantt_context_uses_project_specific_rows():
     assert gantt["rows"][0]["progress_width"] == 60.0
     assert gantt["start_date"].isoformat() == "2026-09-01"
     assert gantt["end_date"].isoformat() == "2026-09-10"
+
+
+def test_build_gantt_context_hides_labels_that_do_not_fit_short_bars():
+    project = {"project_id": "P001", "project": "Chip study"}
+    milestones = [
+        {
+            "project_id": "P001",
+            "milestone": "One day task",
+            "start_date": "2026-09-01",
+            "due_date": "2026-09-01",
+            "progress_percent": "50",
+        },
+        {
+            "project_id": "P001",
+            "milestone": "Long task",
+            "start_date": "2026-09-01",
+            "due_date": "2026-12-31",
+            "progress_percent": "50",
+        },
+    ]
+
+    gantt = build_gantt_context(project, milestones, {})
+    rows = {row["milestone"]: row for row in gantt["rows"]}
+
+    assert rows["One day task"]["show_progress_label"] is False
+    assert rows["Long task"]["show_progress_label"] is True

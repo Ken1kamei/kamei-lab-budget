@@ -50,6 +50,7 @@ MAX_WORKSHEETS = 20
 MAX_TABLES = 100
 MAX_TABLE_ROWS = 5_000
 MAX_TABLE_COLUMNS = 256
+MAX_NUMBERS_TABLE_COLUMNS = 1_024
 MAX_EMPTY_TASK_ROWS = 100
 
 
@@ -433,9 +434,10 @@ def parse_gantt_numbers(content) -> GanttImportResult:
                 raise ValueError(
                     f"Table '{table.name}' contains more than {MAX_TABLE_ROWS} rows."
                 )
-            if table.num_cols > MAX_TABLE_COLUMNS:
+            if table.num_cols > MAX_NUMBERS_TABLE_COLUMNS:
                 raise ValueError(
-                    f"Table '{table.name}' contains more than {MAX_TABLE_COLUMNS} columns."
+                    f"Table '{table.name}' contains more than "
+                    f"{MAX_NUMBERS_TABLE_COLUMNS} columns."
                 )
             table_rows = table.rows(values_only=True)
             header_row, columns = _find_rows_header(table_rows)
@@ -625,6 +627,7 @@ def build_gantt_context(project, milestones, member_lookup):
             4,
         )
         row["progress_width"] = round(row["progress"], 1)
+        row["show_progress_label"] = row["width"] >= 7
 
     tick_count = min(6, total_days)
     ticks = []
