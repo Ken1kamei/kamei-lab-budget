@@ -23,8 +23,8 @@ gcloud run jobs update "$JOB" \
   --project="$PROJECT_ID" \
   --region="$REGION" \
   --image="$IMAGE" \
-  --command=/cnb/lifecycle/launcher \
-  --args=python,manage.py,sync_sheets
+  --command=/usr/local/bin/python \
+  --args=manage.py,sync_sheets
 
 JOB_IMAGE="$({
   gcloud run jobs describe "$JOB" \

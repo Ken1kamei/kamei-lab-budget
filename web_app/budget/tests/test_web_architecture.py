@@ -52,11 +52,11 @@ def test_cloud_source_rebuilds_portal_integration_static_assets():
     assert ".slack-messages" in portal_css
 
 
-def test_sync_job_alignment_uses_the_buildpacks_launcher():
+def test_sync_job_alignment_uses_the_docker_python_runtime():
     script = (REPO_ROOT / "scripts" / "align_cloud_run_sync_job.sh").read_text(
         encoding="utf-8"
     )
 
-    assert "--command=/cnb/lifecycle/launcher" in script
-    assert "--args=python,manage.py,sync_sheets" in script
-    assert "/usr/local/bin/python" not in script
+    assert "--command=/usr/local/bin/python" in script
+    assert "--args=manage.py,sync_sheets" in script
+    assert "/cnb/lifecycle/launcher" not in script
