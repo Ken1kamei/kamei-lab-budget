@@ -21,11 +21,11 @@
     <div><span>Project schedule</span><h2>Gantt chart</h2></div>
     {% if can_edit %}<a class="button secondary" href="{% static 'labapps/Kamei_Lab_Gantt_Import_Template.xlsx' %}" download>Download Gantt template (.xlsx)</a>{% endif %}
   </div>
-  <form method="get" class="gantt-project-picker">
+  <form method="get" action="{% url 'labapps:tracker' %}#gantt" class="gantt-project-picker">
     {% if selected_team %}<input type="hidden" name="team" value="{{ selected_team }}">{% endif %}
     <label for="gantt-project">Project
-      <select id="gantt-project" name="gantt_project" onchange="this.form.submit()">
-        {% for row in projects %}<option value="{{ row.project_id }}" {% if selected_gantt_project and row.project_id == selected_gantt_project.project_id %}selected{% endif %}>{{ row.project }}</option>{% endfor %}
+      <select id="gantt-project" name="project" onchange="this.form.submit()">
+        {% for row in projects %}<option value="{{ row.project_id }}" {% if selected_project and row.project_id == selected_project.project_id %}selected{% endif %}>{{ row.project }}</option>{% endfor %}
       </select>
     </label>
   </form>
@@ -36,7 +36,7 @@
     <span>{{ gantt.start_date }} to {{ gantt.end_date }} · {{ gantt.rows|length }} tasks</span>
   </div>
   {% include "labapps/_gantt_chart.html" with chart=gantt %}
-  {% elif selected_gantt_project %}
+  {% elif selected_project %}
   <p class="empty">No scheduled milestones for this project yet. Import a Gantt file or add milestones with start and due dates.</p>
   {% else %}
   <p class="empty">Create a project before adding a Gantt chart.</p>
@@ -131,7 +131,74 @@
   </div>
 </section>
 
-<section id="milestones" class="panel settings-section"><div class="panel-heading"><div><span>Delivery</span><h2>Milestones</h2></div></div><div class="table-panel"><table><thead><tr><th>Milestone</th><th>Owner</th><th>Status</th><th>Progress</th><th>Review</th><th>Next action / blocker</th><th>Due</th></tr></thead><tbody>{% for row in milestones %}<tr><td><strong>{{ row.milestone }}</strong><small>{{ row.project }} · {{ row.milestone_id }}</small></td><td>{{ members|get_item:row.owner_member_id }}</td><td><span class="status">{{ row.status }}</span></td><td>{{ row.progress_percent|default:"0" }}%</td><td>{{ row.review_status }}</td><td>{{ row.next_action }}{% if row.blocker_reason %}<small>Blocked: {{ row.blocker_reason }}</small>{% endif %}{% if row.help_needed_from %}<small>Help: {{ row.help_needed_from }}</small>{% endif %}{% if can_edit %}<details><summary>Update</summary><form method="post" class="mini-form">{% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="table_name" value="Milestones"><input type="hidden" name="record_id" value="{{ row.milestone_id }}"><select name="status"><option>{{ row.status }}</option><option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option></select><input type="number" name="progress_percent" min="0" max="100" step="1" value="{{ row.progress_percent|default:"0" }}" aria-label="Progress percent"><input name="next_action" value="{{ row.next_action }}" placeholder="Next action"><textarea name="blocker_reason" placeholder="Blocker reason">{{ row.blocker_reason }}</textarea><input name="help_needed_from" value="{{ row.help_needed_from }}" placeholder="Help needed from"><input name="update_note" placeholder="Update note"><button class="button secondary" type="submit">Save</button></form></details>{% endif %}</td><td>{{ row.due_date }}</td></tr>{% empty %}<tr><td colspan="7" class="empty">No milestones.</td></tr>{% endfor %}</tbody></table></div></section>
+<section id="milestones" class="panel settings-section"{% if selected_project %} data-project-id="{{ selected_project.project_id }}"{% endif %}>
+  <div class="panel-heading milestone-heading">
+    <div><span>Delivery</span><h2>Milestones</h2></div>
+    {% if selected_project %}<span>{{ selected_milestones|length }} for {{ selected_project.project }}</span>{% endif %}
+  </div>
+  <form method="get" action="{% url 'labapps:tracker' %}#milestones" class="gantt-project-picker milestone-project-picker">
+    {% if selected_team %}<input type="hidden" name="team" value="{{ selected_team }}">{% endif %}
+    <label for="milestone-project">Project
+      <select id="milestone-project" name="project" onchange="this.form.submit()">
+        {% for row in projects %}<option value="{{ row.project_id }}" {% if selected_project and row.project_id == selected_project.project_id %}selected{% endif %}>{{ row.project }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+  <div class="table-panel">
+    <table class="milestone-table">
+      <thead><tr><th>Milestone</th><th>Owner</th><th>Status</th><th>Progress</th><th>Review</th><th>Next action / blocker</th><th>Due</th></tr></thead>
+      <tbody>
+        {% for row in selected_milestones %}
+        <tr data-milestone-id="{{ row.milestone_id }}">
+          <td><strong>{{ row.milestone }}</strong><small>{{ row.project }} · {{ row.milestone_id }}</small></td>
+          <td>{{ members|get_item:row.owner_member_id }}</td>
+          <td><span class="status">{{ row.status }}</span></td>
+          <td>
+            <div class="milestone-progress" aria-label="{{ row.progress_percent|default:'0' }} percent complete">
+              <span style="--progress-width: {{ row.progress_percent|default:'0' }}%"></span>
+            </div>
+            <small>{{ row.progress_percent|default:"0" }}%</small>
+          </td>
+          <td>{{ row.review_status }}</td>
+          <td>
+            {{ row.next_action }}
+            {% if row.blocker_reason %}<small>Blocked: {{ row.blocker_reason }}</small>{% endif %}
+            {% if row.help_needed_from %}<small>Help: {{ row.help_needed_from }}</small>{% endif %}
+            {% if can_edit %}
+            <details>
+              <summary>Update progress</summary>
+              <form method="post" class="mini-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update">
+                <input type="hidden" name="table_name" value="Milestones">
+                <input type="hidden" name="record_id" value="{{ row.milestone_id }}">
+                <label>Status
+                  <select name="status">
+                    <option selected>{{ row.status }}</option>
+                    <option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option>
+                  </select>
+                </label>
+                <label>Progress (%)
+                  <input type="number" name="progress_percent" min="0" max="100" step="1" value="{{ row.progress_percent|default:'0' }}" required>
+                </label>
+                <label>Next action<input name="next_action" value="{{ row.next_action }}"></label>
+                <label>Blocker reason<textarea name="blocker_reason">{{ row.blocker_reason }}</textarea></label>
+                <label>Help needed from<input name="help_needed_from" value="{{ row.help_needed_from }}"></label>
+                <label>Update note<input name="update_note"></label>
+                <button class="button secondary" type="submit">Save progress</button>
+              </form>
+            </details>
+            {% endif %}
+          </td>
+          <td>{{ row.due_date }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="empty">No milestones for this project.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 
 <section id="experiments" class="panel settings-section"><div class="panel-heading"><div><span>Execution</span><h2>Experiments</h2></div></div><div class="table-panel"><table><thead><tr><th>Experiment</th><th>Researcher</th><th>Status</th><th>Review</th><th>Next action / blocker</th><th>Due</th></tr></thead><tbody>{% for row in experiments %}<tr><td><strong>{{ row.experiment_title }}</strong><small>{{ row.experiment_id }}</small>{% if row.experiment_data_link %}<small><a class="text-link" href="{{ row.experiment_data_link }}" target="_blank" rel="noopener">Experiment data</a></small>{% endif %}</td><td>{{ members|get_item:row.member_id }}</td><td>{{ row.status }}</td><td>{{ row.review_status }}</td><td>{{ row.next_action }}{% if row.blocker_reason %}<small>Blocked: {{ row.blocker_reason }}</small>{% endif %}{% if row.help_needed_from %}<small>Help: {{ row.help_needed_from }}</small>{% endif %}{% if can_edit %}<details><summary>Update</summary><form method="post" class="mini-form">{% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="table_name" value="Experiments"><input type="hidden" name="record_id" value="{{ row.experiment_id }}"><select name="status"><option>{{ row.status }}</option><option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option></select><input name="next_action" value="{{ row.next_action }}" placeholder="Next action"><textarea name="blocker_reason" placeholder="Blocker reason">{{ row.blocker_reason }}</textarea><input name="help_needed_from" value="{{ row.help_needed_from }}" placeholder="Help needed from"><input type="url" name="experiment_data_link" value="{{ row.experiment_data_link }}" placeholder="Experiment data link"><input name="update_note" placeholder="Update note"><button class="button secondary" type="submit">Save</button></form></details>{% endif %}</td><td>{{ row.due_date }}</td></tr>{% empty %}<tr><td colspan="6" class="empty">No experiments.</td></tr>{% endfor %}</tbody></table></div></section>
 

@@ -4,6 +4,7 @@ import mimetypes
 import re
 import secrets
 from datetime import date
+from urllib.parse import urlencode
 
 from django import forms as django_forms
 from django.conf import settings
@@ -968,7 +969,12 @@ def tracker(request):
                     upsert_record("Milestones", payload, actor=actor, action="create_milestone")
                     append_history(record_type="Milestone", record_id=payload["milestone_id"], actor=actor, new_status=payload["status"], review_status="Pending")
                     messages.success(request, "Milestone saved and verified in Google Sheets.")
-                    return redirect("labapps:tracker")
+                    query = {"project": project["project_id"]}
+                    if selected_team:
+                        query["team"] = selected_team
+                    return redirect(
+                        f"{reverse('labapps:tracker')}?{urlencode(query)}#milestones"
+                    )
             elif action == "experiment":
                 experiment_form = ExperimentForm(
                     request.POST, prefix="experiment", milestones=milestones, members=members
@@ -1048,7 +1054,16 @@ def tracker(request):
                     new_status=updated["status"], review_status="Pending",
                 )
                 messages.success(request, "Progress update saved and verified in Google Sheets.")
-                return redirect("labapps:tracker")
+                query = {}
+                if selected_team:
+                    query["team"] = selected_team
+                if table_name == "Milestones" and current.get("project_id"):
+                    query["project"] = current["project_id"]
+                target = reverse("labapps:tracker")
+                if query:
+                    target = f"{target}?{urlencode(query)}"
+                fragment = "milestones" if table_name == "Milestones" else "experiments"
+                return redirect(f"{target}#{fragment}")
             elif action == "review":
                 review_form = ReviewForm(request.POST, prefix="review")
                 if review_form.is_valid():
@@ -1081,25 +1096,30 @@ def tracker(request):
         for row in experiments if row.get("review_status") == "Pending"
     ]
     blocked = sum(row.get("status") == "Blocked" for row in [*milestones, *experiments])
-    requested_gantt_project_id = (
+    requested_project_id = (
         request.POST.get("gantt-project_id", "")
         if request.method == "POST" and request.POST.get("action") == "gantt_preview"
-        else request.GET.get("gantt_project", "")
+        else request.GET.get("project", "") or request.GET.get("gantt_project", "")
     )
-    selected_gantt_project = next(
+    selected_project = next(
         (
             project
             for project in projects
-            if project.get("project_id") == requested_gantt_project_id
+            if project.get("project_id") == requested_project_id
         ),
         projects[0] if projects else None,
     )
+    selected_milestones = [
+        row
+        for row in milestones
+        if selected_project and row.get("project_id") == selected_project.get("project_id")
+    ]
     member_lookup = _member_lookup()
     member_display = {
         member_id: _display_member(member_id, member_lookup)
         for member_id in member_lookup
     }
-    gantt = build_gantt_context(selected_gantt_project, milestones, member_display)
+    gantt = build_gantt_context(selected_project, selected_milestones, member_display)
     gantt_preview_chart = {"project": None, "rows": [], "ticks": []}
     if gantt_preview and gantt_preview.get("rows"):
         preview_project = {
@@ -1144,7 +1164,9 @@ def tracker(request):
         request,
         "labapps/tracker.html",
         {
-            "projects": decorated_projects, "milestones": milestones, "experiments": experiments,
+            "projects": decorated_projects, "milestones": milestones,
+            "selected_milestones": selected_milestones,
+            "experiments": experiments,
             "pending": pending, "teams": teams, "selected_team": selected_team,
             "scope_locked": scope_locked,
             "members": member_lookup, "can_edit": can_edit,
@@ -1155,7 +1177,9 @@ def tracker(request):
             "gantt_preview": gantt_preview,
             "gantt_preview_chart": gantt_preview_chart,
             "gantt": gantt,
-            "selected_gantt_project": selected_gantt_project,
+            "selected_project": selected_project,
+            # Compatibility for older links and tests that used gantt_project.
+            "selected_gantt_project": selected_project,
             "assignment_forms": assignment_forms,
         },
     )

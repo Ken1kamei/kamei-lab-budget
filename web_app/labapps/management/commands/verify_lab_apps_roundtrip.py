@@ -15,7 +15,12 @@ from numbers_parser import Document
 from labapps.models import LabAppAudit, SheetRecord
 from labapps.permissions import truthy
 from labapps.services.gantt import parse_gantt_file
-from labapps.services.sheets import _live_table, replace_table, snapshot_rows
+from labapps.services.sheets import (
+    _live_table,
+    replace_table,
+    snapshot_rows,
+    upsert_record,
+)
 from labapps.services.storage import delete_knowledge_file, read_knowledge_file, store_knowledge_file
 
 
@@ -79,7 +84,9 @@ class Command(BaseCommand):
         _, _, original_milestones = _live_table("Milestones")
         token = secrets.token_hex(5).upper()
         project_id = f"VERIFY-{token}"
+        sibling_project_id = f"VERIFY-SIBLING-{token}"
         milestone_id = f"MS-GANTT-VERIFY-{token}"
+        sibling_milestone_id = f"MS-GANTT-SIBLING-{token}"
         today = date.today()
         _, _, live_members = _live_table("Members")
         _, _, live_teams = _live_table("Teams")
@@ -115,6 +122,11 @@ class Command(BaseCommand):
             "assigned_team_ids": assigned_team["team_id"],
             "assigned_member_ids": assigned_member["member_id"],
         }
+        sibling_project_probe = {
+            **project_probe,
+            "project_id": sibling_project_id,
+            "project": "Temporary sibling verification",
+        }
         milestone_probe = {
             "milestone_id": milestone_id,
             "project_id": project_id,
@@ -133,6 +145,14 @@ class Command(BaseCommand):
             "progress_percent": "50",
             "updated_at": timezone.now().isoformat(timespec="seconds"),
         }
+        sibling_milestone_probe = {
+            **milestone_probe,
+            "milestone_id": sibling_milestone_id,
+            "project_id": sibling_project_id,
+            "project": sibling_project_probe["project"],
+            "milestone": "Temporary sibling milestone that must stay filtered",
+            "review_status": "Approved",
+        }
         audits_before = set(LabAppAudit.objects.values_list("id", flat=True))
         restored = False
         object_key = ""
@@ -145,14 +165,24 @@ class Command(BaseCommand):
         privacy_membership_id = f"VERIFY-MT-{token}"
         unassigned_project_hidden = False
         assigned_team_project_visible = False
+        milestone_project_filter_verified = False
+        gantt_progress_update_verified = False
         try:
             replace_table(
-                "Projects", [*original_projects, project_probe], actor=actor,
+                "Projects",
+                [*original_projects, project_probe, sibling_project_probe],
+                actor=actor,
                 action="verification_create", target=f"Projects:{project_id}",
                 before={"rows": original_projects},
             )
             replace_table(
-                "Milestones", [*original_milestones, milestone_probe], actor=actor,
+                "Milestones",
+                [
+                    *original_milestones,
+                    milestone_probe,
+                    sibling_milestone_probe,
+                ],
+                actor=actor,
                 action="verification_gantt_create", target=f"Milestones:{milestone_id}",
                 before={"rows": original_milestones},
             )
@@ -171,6 +201,13 @@ class Command(BaseCommand):
                 for row in milestone_rows
             ):
                 raise CommandError("Temporary Gantt task was not read back from Google Sheets.")
+            if not any(
+                row.get("milestone_id") == sibling_milestone_id
+                for row in milestone_rows
+            ):
+                raise CommandError(
+                    "Temporary sibling milestone was not read back from Google Sheets."
+                )
             project_mirror = SheetRecord.objects.filter(
                 source="tracker", table_name="Projects", record_id=project_id
             ).first()
@@ -339,6 +376,69 @@ class Command(BaseCommand):
                     f"HTML (missing={missing_preview_markers})."
                 )
 
+            with override_settings(
+                IAP_EXPECTED_AUDIENCE="", ALLOWED_HOSTS=["testserver"]
+            ):
+                selected_response = client.get(
+                    f"/tracker/?project={project_id}", secure=True
+                )
+            selected_rendered = selected_response.content.decode(
+                "utf-8", errors="replace"
+            )
+            if (
+                selected_response.status_code != 200
+                or f'data-project-id="{project_id}"' not in selected_rendered
+                or f'data-milestone-id="{milestone_id}"' not in selected_rendered
+                or f'data-milestone-id="{sibling_milestone_id}"' in selected_rendered
+            ):
+                raise CommandError(
+                    "The milestone table did not remain filtered to the selected project."
+                )
+            milestone_project_filter_verified = True
+
+            updated_milestone_probe = {
+                **milestone_probe,
+                "progress_percent": "73",
+                "updated_at": timezone.now().isoformat(timespec="seconds"),
+            }
+            upsert_record(
+                "Milestones",
+                updated_milestone_probe,
+                actor=actor,
+                action="verification_progress_update",
+            )
+            _, _, updated_milestones = _live_table("Milestones")
+            updated_mirror = SheetRecord.objects.filter(
+                source="tracker",
+                table_name="Milestones",
+                record_id=milestone_id,
+            ).first()
+            with override_settings(
+                IAP_EXPECTED_AUDIENCE="", ALLOWED_HOSTS=["testserver"]
+            ):
+                progress_response = client.get(
+                    f"/tracker/?project={project_id}", secure=True
+                )
+            progress_rendered = progress_response.content.decode(
+                "utf-8", errors="replace"
+            )
+            if (
+                not any(
+                    row.get("milestone_id") == milestone_id
+                    and row.get("progress_percent") == "73"
+                    for row in updated_milestones
+                )
+                or not updated_mirror
+                or updated_mirror.payload.get("progress_percent") != "73"
+                or progress_response.status_code != 200
+                or "--progress-width: 73.0%" not in progress_rendered
+                or 'name="progress_percent"' not in progress_rendered
+            ):
+                raise CommandError(
+                    "Milestone progress did not match across Sheet, PostgreSQL, and Gantt UI."
+                )
+            gantt_progress_update_verified = True
+
             content = f"Kamei Lab private storage verification {token}".encode()
             object_key, digest = store_knowledge_file(project_id, "verification.txt", content, "text/plain")
             if read_knowledge_file(object_key) != content:
@@ -347,12 +447,24 @@ class Command(BaseCommand):
             replace_table(
                 "Milestones", original_milestones, actor=actor,
                 action="verification_gantt_restore", target=f"Milestones:{milestone_id}",
-                before={"rows": [*original_milestones, milestone_probe]},
+                before={
+                    "rows": [
+                        *original_milestones,
+                        updated_milestone_probe,
+                        sibling_milestone_probe,
+                    ]
+                },
             )
             replace_table(
                 "Projects", original_projects, actor=actor,
                 action="verification_restore", target=f"Projects:{project_id}",
-                before={"rows": [*original_projects, project_probe]},
+                before={
+                    "rows": [
+                        *original_projects,
+                        project_probe,
+                        sibling_project_probe,
+                    ]
+                },
             )
             _, _, restored_projects = _live_table("Projects")
             _, _, restored_milestones = _live_table("Milestones")
@@ -411,6 +523,8 @@ class Command(BaseCommand):
                         "gantt_preview_chart_verified": True,
                         "unassigned_project_hidden": unassigned_project_hidden,
                         "assigned_team_project_visible": assigned_team_project_visible,
+                        "milestone_project_filter_verified": milestone_project_filter_verified,
+                        "gantt_progress_update_verified": gantt_progress_update_verified,
                         "csv_gantt_parser_verified": True,
                         "numbers_gantt_parser_verified": True,
                         "assigned_team_id": assigned_team["team_id"],

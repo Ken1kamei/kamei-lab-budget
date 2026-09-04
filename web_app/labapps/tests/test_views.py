@@ -298,6 +298,127 @@ def test_portal_tracker_and_knowledge_pages_render():
     assert b"Prepare buffer" in protocol.content
 
 
+def test_tracker_milestones_are_filtered_by_selected_project():
+    seed_pi()
+    for project_id, project_name in (
+        ("P001", "First project"),
+        ("P002", "Selected project"),
+    ):
+        add_record(
+            "Projects",
+            project_id,
+            {
+                "project_id": project_id,
+                "project": project_name,
+                "owner_member_id": "M001",
+            },
+            source="tracker",
+        )
+        add_record(
+            "Milestones",
+            f"MS-{project_id}",
+            {
+                "milestone_id": f"MS-{project_id}",
+                "project_id": project_id,
+                "project": project_name,
+                "milestone": f"{project_name} milestone",
+                "owner_member_id": "M001",
+                "start_date": "2026-09-01",
+                "due_date": "2026-09-05",
+                "status": "In progress",
+                "review_status": "Approved",
+                "progress_percent": "40",
+            },
+            source="tracker",
+        )
+
+    response = signed_in_client().get("/tracker/?project=P002#milestones")
+
+    assert response.status_code == 200
+    assert response.context["selected_project"]["project_id"] == "P002"
+    assert [
+        row["milestone_id"] for row in response.context["selected_milestones"]
+    ] == ["MS-P002"]
+    assert b'data-project-id="P002"' in response.content
+    assert b'data-milestone-id="MS-P002"' in response.content
+    assert b'data-milestone-id="MS-P001"' not in response.content
+
+
+@patch("labapps.views.append_history")
+@patch("labapps.views.upsert_record")
+def test_milestone_progress_update_returns_to_project_and_updates_gantt(
+    mock_upsert,
+    mock_history,
+):
+    seed_pi()
+    add_record(
+        "Projects",
+        "P002",
+        {
+            "project_id": "P002",
+            "project": "Progress project",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    add_record(
+        "Milestones",
+        "MS-PROGRESS",
+        {
+            "milestone_id": "MS-PROGRESS",
+            "project_id": "P002",
+            "project": "Progress project",
+            "milestone": "Measure progress",
+            "owner_member_id": "M001",
+            "start_date": "2026-09-01",
+            "due_date": "2026-09-05",
+            "status": "Not started",
+            "review_status": "Approved",
+            "next_action": "Begin",
+            "progress_percent": "0",
+        },
+        source="tracker",
+    )
+    client = signed_in_client()
+
+    update = client.post(
+        "/tracker/?project=P002",
+        {
+            "action": "update",
+            "table_name": "Milestones",
+            "record_id": "MS-PROGRESS",
+            "status": "In progress",
+            "progress_percent": "65",
+            "next_action": "Continue",
+            "blocker_reason": "",
+            "help_needed_from": "",
+            "update_note": "Weekly update",
+        },
+    )
+
+    assert update.status_code == 302
+    assert update["Location"] == "/tracker/?project=P002#milestones"
+    saved = mock_upsert.call_args.args[1]
+    assert saved["project_id"] == "P002"
+    assert saved["status"] == "In progress"
+    assert saved["progress_percent"] == "65.0"
+    assert mock_history.called
+
+    record = SheetRecord.objects.get(
+        source="tracker",
+        table_name="Milestones",
+        record_id="MS-PROGRESS",
+    )
+    record.payload = saved
+    record.save(update_fields=["payload"])
+    rendered = client.get("/tracker/?project=P002")
+
+    assert rendered.status_code == 200
+    assert rendered.context["gantt"]["rows"][0]["progress_width"] == 65.0
+    assert b"--progress-width: 65.0%" in rendered.content
+    assert b"65.0%" in rendered.content
+
+
 def test_portal_uses_integrated_routes_even_with_legacy_registry_urls():
     seed_pi()
     legacy_urls = {
