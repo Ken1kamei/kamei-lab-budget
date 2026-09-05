@@ -344,6 +344,46 @@ def test_tracker_milestones_are_filtered_by_selected_project():
     assert b'data-milestone-id="MS-P001"' not in response.content
 
 
+def test_tracker_review_queue_shows_four_then_collapses_the_remainder():
+    seed_pi()
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Review project",
+            "owner_member_id": "M001",
+        },
+        source="tracker",
+    )
+    for number in range(1, 7):
+        milestone_id = f"MS-REVIEW-{number}"
+        add_record(
+            "Milestones",
+            milestone_id,
+            {
+                "milestone_id": milestone_id,
+                "project_id": "P001",
+                "project": "Review project",
+                "milestone": f"Review milestone {number}",
+                "owner_member_id": "M001",
+                "status": "In progress",
+                "review_status": "Pending",
+                "next_action": "Review this milestone",
+            },
+            source="tracker",
+        )
+
+    response = signed_in_client().get("/tracker/?project=P001#review")
+
+    assert response.status_code == 200
+    assert response.content.count(b'data-review-group="initial"') == 4
+    assert response.content.count(b'data-review-group="overflow"') == 2
+    assert b'data-review-overflow-count="2"' in response.content
+    assert b"Show 2 more" in response.content
+    assert b"Show fewer" in response.content
+
+
 @patch("labapps.views.append_history")
 @patch("labapps.views.upsert_record")
 def test_milestone_progress_update_returns_to_project_and_updates_gantt(

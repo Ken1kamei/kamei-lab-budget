@@ -225,6 +225,13 @@ td small { display: block; margin-top: 4px; color: var(--muted); }
 .forms-row > form { align-content: start; background: var(--surface-2); border: 1px solid var(--border); padding: 20px; }
 .forms-row h3 { margin: 0 0 8px; }
 .review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.review-overflow { margin-top: 16px; }
+.review-overflow > summary.review-overflow-toggle { display: inline-flex; width: auto; min-height: 42px; margin: 0; list-style: none; }
+.review-overflow > summary.review-overflow-toggle::-webkit-details-marker { display: none; }
+.review-toggle-open { display: none; }
+.review-overflow[open] .review-toggle-closed { display: none; }
+.review-overflow[open] .review-toggle-open { display: inline; }
+.review-grid-overflow { margin-top: 14px; }
 .mini-form { display: grid; gap: 10px; min-width: 280px; padding: 12px 0; }
 .mini-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 details summary { color: var(--cyan); cursor: pointer; margin-top: 6px; }

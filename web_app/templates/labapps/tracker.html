@@ -202,7 +202,36 @@
 
 <section id="experiments" class="panel settings-section"><div class="panel-heading"><div><span>Execution</span><h2>Experiments</h2></div></div><div class="table-panel"><table><thead><tr><th>Experiment</th><th>Researcher</th><th>Status</th><th>Review</th><th>Next action / blocker</th><th>Due</th></tr></thead><tbody>{% for row in experiments %}<tr><td><strong>{{ row.experiment_title }}</strong><small>{{ row.experiment_id }}</small>{% if row.experiment_data_link %}<small><a class="text-link" href="{{ row.experiment_data_link }}" target="_blank" rel="noopener">Experiment data</a></small>{% endif %}</td><td>{{ members|get_item:row.member_id }}</td><td>{{ row.status }}</td><td>{{ row.review_status }}</td><td>{{ row.next_action }}{% if row.blocker_reason %}<small>Blocked: {{ row.blocker_reason }}</small>{% endif %}{% if row.help_needed_from %}<small>Help: {{ row.help_needed_from }}</small>{% endif %}{% if can_edit %}<details><summary>Update</summary><form method="post" class="mini-form">{% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="table_name" value="Experiments"><input type="hidden" name="record_id" value="{{ row.experiment_id }}"><select name="status"><option>{{ row.status }}</option><option>Not started</option><option>In progress</option><option>Blocked</option><option>Completed</option></select><input name="next_action" value="{{ row.next_action }}" placeholder="Next action"><textarea name="blocker_reason" placeholder="Blocker reason">{{ row.blocker_reason }}</textarea><input name="help_needed_from" value="{{ row.help_needed_from }}" placeholder="Help needed from"><input type="url" name="experiment_data_link" value="{{ row.experiment_data_link }}" placeholder="Experiment data link"><input name="update_note" placeholder="Update note"><button class="button secondary" type="submit">Save</button></form></details>{% endif %}</td><td>{{ row.due_date }}</td></tr>{% empty %}<tr><td colspan="6" class="empty">No experiments.</td></tr>{% endfor %}</tbody></table></div></section>
 
-<section id="review" class="panel settings-section"><div class="panel-heading"><div><span>Quality gate</span><h2>Review queue</h2></div><span>{{ pending|length }} pending</span></div>{% if can_edit %}<div class="review-grid">{% for row in pending %}<article class="draft-card"><span class="status review">{{ row.record_type }}</span><h2>{{ row.title }}</h2><p class="muted">{{ row.record_id }} · {{ row.next_action }}</p><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="review"><input type="hidden" name="review-record_type" value="{{ row.record_type }}"><input type="hidden" name="review-record_id" value="{{ row.record_id }}"><label>Decision<select name="review-review_status"><option value="Approved">Approved</option><option value="Revision requested">Revision requested</option></select></label><label>Review note<textarea name="review-review_note" required></textarea></label><button class="button primary" type="submit">Submit review</button></form></article>{% empty %}<p class="empty">No pending reviews.</p>{% endfor %}</div>{% else %}<p class="empty">Your role can view review status but cannot submit decisions.</p>{% endif %}</section>
+<section id="review" class="panel settings-section" data-review-limit="4">
+  <div class="panel-heading">
+    <div><span>Quality gate</span><h2>Review queue</h2></div>
+    <span>{{ pending|length }} pending</span>
+  </div>
+  {% if can_edit %}
+  <div class="review-grid" data-review-list="initial">
+    {% for row in pending|slice:":4" %}
+      {% include "labapps/_review_card.html" with row=row review_group="initial" %}
+    {% empty %}
+      <p class="empty">No pending reviews.</p>
+    {% endfor %}
+  </div>
+  {% if pending|length > 4 %}
+  <details class="review-overflow" data-review-overflow-count="{{ pending|length|add:'-4' }}">
+    <summary class="button secondary review-overflow-toggle">
+      <span class="review-toggle-closed">Show {{ pending|length|add:"-4" }} more</span>
+      <span class="review-toggle-open">Show fewer</span>
+    </summary>
+    <div class="review-grid review-grid-overflow" data-review-list="overflow">
+      {% for row in pending|slice:"4:" %}
+        {% include "labapps/_review_card.html" with row=row review_group="overflow" %}
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+  {% else %}
+  <p class="empty">Your role can view review status but cannot submit decisions.</p>
+  {% endif %}
+</section>
 
 {% if can_edit %}<section id="new" class="panel settings-section"><div class="panel-heading"><div><span>Write-through forms</span><h2>Add tracker records</h2></div></div><div class="three-column forms-row"><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="project"><h3>Project</h3>{{ project_form.as_div }}<button class="button primary" type="submit">Add project</button></form><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="milestone"><h3>Milestone</h3>{{ milestone_form.as_div }}<button class="button primary" type="submit">Add milestone</button></form><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="experiment"><h3>Experiment</h3>{{ experiment_form.as_div }}<button class="button primary" type="submit">Add experiment</button></form></div></section>{% endif %}
 {% endblock %}

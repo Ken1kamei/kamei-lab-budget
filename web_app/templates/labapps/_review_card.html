@@ -1,0 +1,19 @@
+<article class="draft-card" data-review-id="{{ row.record_id }}" data-review-group="{{ review_group }}">
+  <span class="status review">{{ row.record_type }}</span>
+  <h2>{{ row.title }}</h2>
+  <p class="muted">{{ row.record_id }} · {{ row.next_action }}</p>
+  <form method="post" class="form-grid single">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="review">
+    <input type="hidden" name="review-record_type" value="{{ row.record_type }}">
+    <input type="hidden" name="review-record_id" value="{{ row.record_id }}">
+    <label>Decision
+      <select name="review-review_status">
+        <option value="Approved">Approved</option>
+        <option value="Revision requested">Revision requested</option>
+      </select>
+    </label>
+    <label>Review note<textarea name="review-review_note" required></textarea></label>
+    <button class="button primary" type="submit">Submit review</button>
+  </form>
+</article>
