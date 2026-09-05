@@ -2019,6 +2019,39 @@ def test_project_assignments_save_multiple_teams_and_members(mock_upsert):
     assert mock_upsert.call_args.kwargs["action"] == "update_project_assignments"
 
 
+def test_project_assignment_choices_render_as_collapsible_dropdowns():
+    seed_pi()
+    add_record(
+        "Teams",
+        "T001",
+        {"team_id": "T001", "team_name": "Core Lab", "active": "TRUE"},
+    )
+    add_record(
+        "Projects",
+        "P001",
+        {
+            "project_id": "P001",
+            "project": "Assigned project",
+            "owner_member_id": "M001",
+            "assigned_team_ids": "T001",
+            "assigned_member_ids": "M001",
+        },
+        source="tracker",
+    )
+
+    response = signed_in_client().get("/tracker/")
+
+    assert response.status_code == 200
+    assert response.content.count(b'data-assignment-dropdown="teams"') == 2
+    assert response.content.count(b'data-assignment-dropdown="members"') == 2
+    assert b'name="project-assigned_team_ids"' in response.content
+    assert b'name="project-assigned_member_ids"' in response.content
+    assert b'name="assignment-P001-assigned_team_ids"' in response.content
+    assert b'name="assignment-P001-assigned_member_ids"' in response.content
+    assert b"1 selected" in response.content
+    assert b"labapps/assignment-dropdown.js" in response.content
+
+
 @patch("labapps.views.upsert_record")
 def test_scoped_assignment_edit_preserves_other_team_collaborators(mock_upsert):
     add_record(

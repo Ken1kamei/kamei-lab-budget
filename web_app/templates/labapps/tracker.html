@@ -116,8 +116,8 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="project_assignment">
                 <input type="hidden" name="project_id" value="{{ row.project_id }}">
-                <fieldset><legend>{{ item.form.assigned_team_ids.label }}</legend>{{ item.form.assigned_team_ids.errors }}{{ item.form.assigned_team_ids }}</fieldset>
-                <fieldset><legend>{{ item.form.assigned_member_ids.label }}</legend>{{ item.form.assigned_member_ids.errors }}{{ item.form.assigned_member_ids }}</fieldset>
+                {% include "labapps/_assignment_dropdown.html" with field=item.form.assigned_team_ids kind="teams" %}
+                {% include "labapps/_assignment_dropdown.html" with field=item.form.assigned_member_ids kind="members" %}
                 <button class="button primary" type="submit">Save assignments</button>
               </form>
             </details>
@@ -233,5 +233,29 @@
   {% endif %}
 </section>
 
-{% if can_edit %}<section id="new" class="panel settings-section"><div class="panel-heading"><div><span>Write-through forms</span><h2>Add tracker records</h2></div></div><div class="three-column forms-row"><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="project"><h3>Project</h3>{{ project_form.as_div }}<button class="button primary" type="submit">Add project</button></form><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="milestone"><h3>Milestone</h3>{{ milestone_form.as_div }}<button class="button primary" type="submit">Add milestone</button></form><form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="experiment"><h3>Experiment</h3>{{ experiment_form.as_div }}<button class="button primary" type="submit">Add experiment</button></form></div></section>{% endif %}
+{% if can_edit %}
+<section id="new" class="panel settings-section">
+  <div class="panel-heading"><div><span>Write-through forms</span><h2>Add tracker records</h2></div></div>
+  <div class="three-column forms-row">
+    <form method="post" class="form-grid single">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="project">
+      <h3>Project</h3>
+      {{ project_form.non_field_errors }}
+      <div>{{ project_form.project.errors }}{{ project_form.project.label_tag }}{{ project_form.project }}</div>
+      <div>{{ project_form.aim.errors }}{{ project_form.aim.label_tag }}{{ project_form.aim }}</div>
+      <div>{{ project_form.owner_member_id.errors }}{{ project_form.owner_member_id.label_tag }}{{ project_form.owner_member_id }}</div>
+      {% include "labapps/_assignment_dropdown.html" with field=project_form.assigned_team_ids kind="teams" %}
+      {% include "labapps/_assignment_dropdown.html" with field=project_form.assigned_member_ids kind="members" %}
+      <div>{{ project_form.start_date.errors }}{{ project_form.start_date.label_tag }}{{ project_form.start_date }}</div>
+      <div>{{ project_form.target_date.errors }}{{ project_form.target_date.label_tag }}{{ project_form.target_date }}</div>
+      <div>{{ project_form.notes.errors }}{{ project_form.notes.label_tag }}{{ project_form.notes }}</div>
+      <button class="button primary" type="submit">Add project</button>
+    </form>
+    <form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="milestone"><h3>Milestone</h3>{{ milestone_form.as_div }}<button class="button primary" type="submit">Add milestone</button></form>
+    <form method="post" class="form-grid single">{% csrf_token %}<input type="hidden" name="action" value="experiment"><h3>Experiment</h3>{{ experiment_form.as_div }}<button class="button primary" type="submit">Add experiment</button></form>
+  </div>
+</section>
+{% endif %}
 {% endblock %}
+{% block scripts %}<script src="{% static 'labapps/assignment-dropdown.js' %}" defer></script>{% endblock %}

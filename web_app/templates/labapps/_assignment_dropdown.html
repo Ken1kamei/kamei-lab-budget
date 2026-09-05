@@ -1,0 +1,10 @@
+<details class="assignment-dropdown" data-assignment-dropdown="{{ kind }}">
+  <summary>
+    <span>{{ field.label }}</span>
+    <small data-assignment-summary>{% if field.value %}{{ field.value|length }} selected{% else %}None selected{% endif %}</small>
+  </summary>
+  <div class="assignment-dropdown-options">
+    {{ field.errors }}
+    {{ field }}
+  </div>
+</details>
